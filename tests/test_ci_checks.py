@@ -25,9 +25,12 @@ name=AgenticGIS
 qgisMinimumVersion=3.22
 qgisMaximumVersion=4.99
 description=An in-QGIS agentic chat assistant.
+about=AgenticGIS adds a chat dock to QGIS.
 version=0.4.6
 author=Test Author
 email=author@example.invalid
+tracker=https://example.invalid/issues
+repository=https://example.invalid/repo
 icon=resources/icon.png
 """
 
@@ -54,6 +57,7 @@ def _build_valid_zip(dest: Path, extra_entries: list[tuple[str, bytes, int]] | N
     omit = omit_members or set()
     base_entries: list[tuple[str, bytes, int]] = [
         ("AgenticGIS/__init__.py", VALID_INIT.encode("utf-8"), stat.S_IFREG | 0o644),
+        ("AgenticGIS/LICENSE", b"GPL-2.0-or-later\n", stat.S_IFREG | 0o644),
         ("AgenticGIS/metadata.txt", metadata_override or VALID_METADATA.encode("utf-8"), stat.S_IFREG | 0o644),
         ("AgenticGIS/plugin.py", b"class AgenticGisPlugin:\n    pass\n", stat.S_IFREG | 0o644),
         ("AgenticGIS/resources/icon.png", b"\x89PNG\r\n\x1a\n", stat.S_IFREG | 0o644),
@@ -236,6 +240,58 @@ class ArchiveCheckTests(unittest.TestCase):
             # Extracted files must not inherit executable or setuid bits.
             extracted_mode = (extract_dir / "AgenticGIS" / "helper.sh").stat().st_mode
             self.assertEqual(extracted_mode & (stat.S_ISUID | stat.S_IXUSR), 0)
+
+    def test_validator_parity_crc_size_license_urls_and_deprecated_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+
+            # Missing LICENSE is rejected
+            no_lic = _build_valid_zip(tmp_dir / "no_lic.zip", omit_members={"AgenticGIS/LICENSE"})
+            rep_lic = check_plugin.validate_and_extract_archive(no_lic, tmp_dir / "ext_lic")
+            self.assertFalse(rep_lic["ok"])
+            self.assertTrue(any("LICENSE" in e for e in rep_lic["blocking_errors"]))
+
+            # Size cap exceeded is rejected
+            sized = _build_valid_zip(tmp_dir / "sized.zip")
+            with patch.object(check_plugin, "PLUGIN_MAX_UPLOAD_SIZE", 10):
+                rep_size = check_plugin.validate_and_extract_archive(sized, tmp_dir / "ext_size")
+            self.assertFalse(rep_size["ok"])
+            self.assertTrue(any("exceeds limit" in e for e in rep_size["blocking_errors"]))
+
+            # Corrupt CRC is rejected before extraction
+            crc_zip = _build_valid_zip(tmp_dir / "crc.zip")
+            raw = bytearray(crc_zip.read_bytes())
+            idx = raw.find(b"AgenticGisPlugin")
+            self.assertNotEqual(idx, -1)
+            raw[idx] ^= 0xFF
+            crc_zip.write_bytes(bytes(raw))
+            rep_crc = check_plugin.validate_and_extract_archive(crc_zip, tmp_dir / "ext_crc")
+            self.assertFalse(rep_crc["ok"])
+            self.assertTrue(any("CRC check failed" in e for e in rep_crc["blocking_errors"]))
+
+            # Slash in author & placeholder URL are rejected
+            bad_author_meta = VALID_METADATA.replace("author=Test Author", "author=Test/Author").encode("utf-8")
+            bad_author = _build_valid_zip(tmp_dir / "bad_author.zip", metadata_override=bad_author_meta)
+            rep_author = check_plugin.validate_and_extract_archive(bad_author, tmp_dir / "ext_author")
+            self.assertFalse(rep_author["ok"])
+            self.assertTrue(any("author" in e for e in rep_author["blocking_errors"]))
+
+            bad_url_meta = VALID_METADATA.replace(
+                "tracker=https://example.invalid/issues", "tracker=http://bugs"
+            ).encode("utf-8")
+            bad_url = _build_valid_zip(tmp_dir / "bad_url.zip", metadata_override=bad_url_meta)
+            rep_url = check_plugin.validate_and_extract_archive(bad_url, tmp_dir / "ext_url")
+            self.assertFalse(rep_url["ok"])
+            self.assertTrue(any("tracker" in e for e in rep_url["blocking_errors"]))
+
+            # Deprecated supportsQt6 produces informational warning without blocking
+            qt6_meta = (VALID_METADATA + "supportsQt6=True\n").encode("utf-8")
+            qt6_zip = _build_valid_zip(tmp_dir / "qt6_warn.zip", metadata_override=qt6_meta)
+            rep_qt6 = check_plugin.validate_and_extract_archive(qt6_zip, tmp_dir / "ext_qt6")
+            self.assertTrue(rep_qt6["ok"], rep_qt6["blocking_errors"])
+            self.assertTrue(
+                any(f["category"] == "METADATA_DEPRECATED" for f in rep_qt6["file_findings"])
+            )
 
 
 class ScannerAdapterTests(unittest.TestCase):
@@ -448,10 +504,112 @@ class ScannerAdapterTests(unittest.TestCase):
                 report = check_plugin.run_scans(target, "flake8", None)
             self.assertFalse(report["ok"])
 
-            # Compile catches syntax error
+            # Compile catches syntax error and Python 3.9 syntax floor violations
+            (target / "py310_only.py").write_text(
+                "def check(x):\n    match x:\n        case 1:\n            return 1\n",
+                encoding="utf-8",
+            )
+            py39_report = check_plugin.run_scans(target, "compile", None)
+            self.assertFalse(py39_report["ok"])
+
+            (target / "py310_only.py").unlink()
             (target / "broken.py").write_text("def broken(:\n", encoding="utf-8")
             compile_report = check_plugin.run_scans(target, "compile", None)
             self.assertFalse(compile_report["ok"])
+
+    def test_static_ast_dependency_and_qt_compat_guards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._make_target(tmp)
+            # Guarded optional import and sibling fallback pass
+            (target / "guarded.py").write_text(
+                "from qgis.PyQt.QtCore import Qt\n"
+                "try:\n"
+                "    import ee\n"
+                "except ImportError:\n"
+                "    ee = None\n"
+                "try:\n"
+                "    from . import helper\n"
+                "except ImportError:\n"
+                "    import helper\n",
+                encoding="utf-8",
+            )
+            (target / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
+            ok_rep = check_plugin.run_scans(target, "static", None)
+            self.assertTrue(ok_rep["ok"], ok_rep)
+
+            # Unguarded optional import fails
+            (target / "unguarded_ee.py").write_text("import ee\n", encoding="utf-8")
+            ee_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(ee_rep["ok"])
+            (target / "unguarded_ee.py").unlink()
+
+            # Third-party dependency fails
+            (target / "dep.py").write_text("import requests\n", encoding="utf-8")
+            dep_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(dep_rep["ok"])
+            (target / "dep.py").unlink()
+
+            # Direct PyQt5/6 import and .exec_() fail
+            (target / "qt_bad.py").write_text(
+                "from PyQt5.QtCore import QObject\n"
+                "def run(dlg):\n"
+                "    return dlg.exec_()\n",
+                encoding="utf-8",
+            )
+            qt_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(qt_rep["ok"])
+            rules = {f["rule"] for f in qt_rep["checks"][0]["blocking_findings"]}
+            self.assertEqual(rules, {"QT_COMPAT"})
+
+    def test_manifest_verification_and_release_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            zip_path = _build_valid_zip(tmp_dir / "AgenticGIS.zip")
+            sha = check_plugin._sha256_file(zip_path)
+            manifest = tmp_dir / "package-manifest.json"
+            manifest.write_text(
+                json.dumps({"commit_sha": "abc123", "zip_sha256": sha}),
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                check_plugin.verify_manifest(zip_path, manifest, "abc123", sha)["ok"]
+            )
+            self.assertFalse(
+                check_plugin.verify_manifest(zip_path, manifest, "wrong", sha)["ok"]
+            )
+            self.assertFalse(
+                check_plugin.verify_manifest(zip_path, manifest, "abc123", "0" * 64)["ok"]
+            )
+
+            meta_path = tmp_dir / "metadata.txt"
+            meta_path.write_text(
+                VALID_METADATA + "experimental=False\ndeprecated=False\nchangelog=0.4.6 initial\n",
+                encoding="utf-8",
+            )
+            ok_rel = check_plugin.validate_release_metadata(meta_path, "v0.4.6")
+            self.assertTrue(ok_rel["ok"], ok_rel)
+            self.assertFalse(ok_rel["prerelease"])
+
+            self.assertFalse(check_plugin.validate_release_metadata(meta_path, "v0.4.7")["ok"])
+            self.assertFalse(check_plugin.validate_release_metadata(meta_path, "0.4.6")["ok"])
+            self.assertFalse(check_plugin.validate_release_metadata(meta_path, "v0.4.6-rc.1")["ok"])
+
+            pre_meta = tmp_dir / "pre_metadata.txt"
+            pre_meta.write_text(
+                VALID_METADATA.replace("version=0.4.6", "version=0.5.0-rc.1")
+                + "experimental=True\ndeprecated=False\n",
+                encoding="utf-8",
+            )
+            ok_pre = check_plugin.validate_release_metadata(pre_meta, "v0.5.0-rc.1")
+            self.assertTrue(ok_pre["ok"], ok_pre)
+            self.assertTrue(ok_pre["prerelease"])
+
+            dep_meta = tmp_dir / "dep_metadata.txt"
+            dep_meta.write_text(
+                VALID_METADATA + "experimental=False\ndeprecated=True\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(check_plugin.validate_release_metadata(dep_meta, "v0.4.6")["ok"])
 
 
 class RealScannerIntegrationTests(unittest.TestCase):

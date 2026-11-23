@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import sys
@@ -9,8 +10,9 @@ import traceback
 from pathlib import Path
 
 from qgis.PyQt.QtCore import QT_VERSION_STR, QCoreApplication, QSettings, QTimer
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QLabel
-from qgis.core import Qgis
+from qgis.core import Qgis, QgsApplication
 
 
 def _write_result(result_path: str | None, payload: dict) -> None:
@@ -23,12 +25,48 @@ def _write_result(result_path: str | None, payload: dict) -> None:
     tmp.replace(target)
 
 
+def _message_level(name: str, fallback: int) -> int:
+    level = getattr(Qgis, name, None)
+    if level is None:
+        level = getattr(getattr(Qgis, "MessageLevel", Qgis), name, fallback)
+    return int(level)
+
+
+def _import_all_packaged_modules(plugin_dir: Path) -> int:
+    imported = 0
+    for py_path in sorted(plugin_dir.rglob("*.py")):
+        if any(part in py_path.parts for part in ("__pycache__", "tests", "ci", "docs", ".git")):
+            continue
+        rel = py_path.relative_to(plugin_dir).with_suffix("")
+        parts = ["AgenticGIS"] + [part for part in rel.parts if part != "__init__"]
+        importlib.import_module(".".join(parts))
+        imported += 1
+    return imported
+
+
 def _run_smoke() -> None:
     result_path = os.environ.get("AGENTICGIS_SMOKE_RESULT")
     zip_path = os.environ.get("AGENTICGIS_SMOKE_ZIP")
     expect_qgis = os.environ.get("AGENTICGIS_EXPECT_QGIS_MAJOR")
     expect_qt = os.environ.get("AGENTICGIS_EXPECT_QT_MAJOR")
 
+    log_errors: list[dict[str, str]] = []
+    critical_level = _message_level("Critical", 2)
+    warning_level = _message_level("Warning", 1)
+    message_log = QgsApplication.messageLog()
+
+    def _on_message(message, tag, level) -> None:
+        level_int = int(level)
+        if (level_int == critical_level and tag in ("AgenticGIS", "Python error")) or (
+            level_int == warning_level and tag == "Python warning"
+        ):
+            log_errors.append({
+                "tag": str(tag),
+                "level": str(level_int),
+                "message": str(message),
+            })
+
+    message_log.messageReceived.connect(_on_message)
     try:
         qgis_version = Qgis.QGIS_VERSION
         qt_version = QT_VERSION_STR
@@ -75,6 +113,15 @@ def _run_smoke() -> None:
         if getattr(plugin, "_server", "missing") is not None:
             raise AssertionError("MCP server should remain stopped when mcp_enabled=False")
 
+        plugin_dir = Path(sys.modules["AgenticGIS"].__file__).resolve().parent
+        if "plugins" not in plugin_dir.parts or (plugin_dir / "tests").exists() or (plugin_dir / "ci").exists():
+            raise AssertionError(
+                f"AgenticGIS loaded from unexpected directory instead of installed ZIP: {plugin_dir}"
+            )
+        icon_file = plugin_dir / "resources" / "icon.png"
+        if not icon_file.is_file() or QIcon(str(icon_file)).isNull():
+            raise AssertionError(f"Plugin icon failed to load as non-null QIcon: {icon_file}")
+
         all_plugins = installer_plugins.all()
         if "AgenticGIS" not in all_plugins:
             raise AssertionError("AgenticGIS missing from Plugin Manager metadata registry")
@@ -113,6 +160,10 @@ def _run_smoke() -> None:
         if dock is None:
             raise AssertionError("plugin._ensure_dock() returned None")
 
+        imported_modules = _import_all_packaged_modules(plugin_dir)
+        if imported_modules <= 0:
+            raise AssertionError("No packaged modules imported during smoke check")
+
         if not qgis.utils.unloadPlugin("AgenticGIS"):
             raise AssertionError("qgis.utils.unloadPlugin('AgenticGIS') returned False")
         if qgis.utils.isPluginLoaded("AgenticGIS"):
@@ -126,6 +177,9 @@ def _run_smoke() -> None:
                 f"Expected English fallback after unload, got Ready={ready_en!r}, Settings={settings_en!r}"
             )
 
+        if log_errors:
+            raise AssertionError(f"Unexpected QgsMessageLog errors/warnings: {log_errors!r}")
+
         _write_result(
             result_path,
             {
@@ -133,6 +187,8 @@ def _run_smoke() -> None:
                 "marker": "AGENTICGIS_SMOKE_OK",
                 "qgis_version": qgis_version,
                 "qt_version": qt_version,
+                "imported_modules": imported_modules,
+                "log_errors": log_errors,
             },
         )
         print("AGENTICGIS_SMOKE_OK", flush=True)
@@ -148,9 +204,15 @@ def _run_smoke() -> None:
                 "ok": False,
                 "marker": "AGENTICGIS_SMOKE_FAIL",
                 "error": str(exc),
+                "log_errors": log_errors,
             },
         )
         QTimer.singleShot(100, lambda: os._exit(1))
+    finally:
+        try:
+            message_log.messageReceived.disconnect(_on_message)
+        except Exception:  # nosec B110
+            pass
 
 
 QTimer.singleShot(0, _run_smoke)

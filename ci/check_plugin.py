@@ -18,8 +18,10 @@ import xml.etree.ElementTree as ET
 import zipfile
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 EXPECTED_ROOT = "AgenticGIS"
+PLUGIN_MAX_UPLOAD_SIZE = 25_000_000
 QM_MAGIC = b"\x3c\xb8\x64\x18\xca\xef\x9c\x95\xcd\x21\x1c\xbf\x60\xa1\xbd\xdd"
 HIDDEN_ALLOWLIST = frozenset({
     ".bandit",
@@ -74,12 +76,34 @@ FORBIDDEN_FILENAMES = frozenset({".coverage"})
 FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".pyd", ".db")
 REQUIRED_METADATA_KEYS = (
     "name",
-    "qgisMinimumVersion",
     "description",
     "version",
+    "qgisMinimumVersion",
     "author",
     "email",
+    "about",
+    "tracker",
+    "repository",
 )
+FORBIDDEN_PLACEHOLDER_URLS = frozenset({
+    "http://bugs",
+    "http://repo",
+    "http://homepage",
+})
+ALLOWED_TOP_LEVEL_IMPORTS = frozenset({
+    "qgis",
+    "osgeo",
+    "processing",
+    "AgenticGIS",
+})
+OPTIONAL_GUARDED_IMPORTS = frozenset({
+    "PIL",
+    "ee",
+    "ee_plugin",
+})
+FORBIDDEN_QT_IMPORTS = frozenset({"PyQt5", "PyQt6", "sip"})
+FORBIDDEN_QT_METHODS = frozenset({"exec_", "print_"})
+RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)(-(?:alpha|beta|rc)\.?\d+)?$")
 BINARY_SECRET_SUFFIXES = (".pyc", ".pyo", ".so", ".dll", ".exe")
 FLAKE8_LINE_RE = re.compile(
     r"^(?P<path>.+?):(?P<row>\d+):(?P<col>\d+):(?P<code>[A-Z]\d+):(?P<text>.*)$"
@@ -183,26 +207,58 @@ def _check_unix_mode(info: zipfile.ZipInfo) -> tuple[str | None, list[dict[str, 
     return None, findings
 
 
-def _validate_metadata(raw_bytes: bytes, file_members: set[str]) -> list[str]:
+def _is_valid_http_url(raw_url: str) -> bool:
+    url = raw_url.strip()
+    if url.rstrip("/").lower() in FORBIDDEN_PLACEHOLDER_URLS:
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+def _validate_metadata(
+    raw_bytes: bytes,
+    file_members: set[str] | None,
+) -> tuple[list[str], list[dict[str, str]]]:
     errors: list[str] = []
+    warnings: list[dict[str, str]] = []
     try:
         text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
-        return [f"metadata.txt is not valid UTF-8: {exc}"]
+        return [f"metadata.txt is not valid UTF-8: {exc}"], warnings
 
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read_string(text, source="metadata.txt")
     except configparser.Error as exc:
-        return [f"Malformed metadata.txt: {exc}"]
+        return [f"Malformed metadata.txt: {exc}"], warnings
 
     if not parser.has_section("general"):
-        return ["metadata.txt is missing required [general] section"]
+        return ["metadata.txt is missing required [general] section"], warnings
 
     general = parser["general"]
     for key in REQUIRED_METADATA_KEYS:
         if not general.get(key, "").strip():
             errors.append(f"metadata.txt [general] is missing required non-empty '{key}'")
+
+    author = general.get("author", "")
+    if "/" in author:
+        errors.append("metadata.txt [general] 'author' cannot contain '/'")
+
+    for url_key in ("tracker", "repository"):
+        val = general.get(url_key, "").strip()
+        if val and not _is_valid_http_url(val):
+            errors.append(f"metadata.txt [general] '{url_key}' must be a valid http(s) URL: {val!r}")
+
+    homepage = general.get("homepage", "").strip()
+    if homepage and not _is_valid_http_url(homepage):
+        errors.append(f"metadata.txt [general] 'homepage' must be a valid http(s) URL: {homepage!r}")
+
+    if "supportsqt6" in general:
+        warnings.append({
+            "category": "METADATA_DEPRECATED",
+            "path": f"{EXPECTED_ROOT}/metadata.txt",
+            "message": "Deprecated metadata key 'supportsQt6' present",
+        })
 
     min_raw = general.get("qgisMinimumVersion", "").strip()
     min_ver = _parse_qgis_version(min_raw) if min_raw else None
@@ -223,12 +279,12 @@ def _validate_metadata(raw_bytes: bytes, file_members: set[str]) -> list[str]:
     if icon_rel:
         if "\\" in icon_rel or icon_rel.startswith("/") or ".." in icon_rel.split("/"):
             errors.append(f"Invalid metadata.txt icon path: {icon_rel!r}")
-        else:
+        elif file_members is not None:
             expected_icon = f"{EXPECTED_ROOT}/{icon_rel.lstrip('./')}"
             if expected_icon not in file_members:
                 errors.append(f"metadata.txt icon target not found in archive: {expected_icon}")
 
-    return errors
+    return errors, warnings
 
 
 def _validate_init_entrypoint(raw_bytes: bytes) -> list[str]:
@@ -279,6 +335,11 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
             return report
 
     report["zip_sha256"] = _sha256_file(zip_path)
+    if zip_path.stat().st_size > PLUGIN_MAX_UPLOAD_SIZE:
+        report["blocking_errors"].append(
+            f"Archive size ({zip_path.stat().st_size} bytes) exceeds limit ({PLUGIN_MAX_UPLOAD_SIZE} bytes)"
+        )
+        return report
 
     try:
         zf = zipfile.ZipFile(zip_path, "r")
@@ -287,6 +348,13 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
         return report
 
     with zf:
+        bad_member = zf.testzip()
+        if bad_member is not None:
+            report["blocking_errors"].append(
+                f"Corrupt ZIP member (CRC check failed): {bad_member}"
+            )
+            return report
+
         infos = zf.infolist()
         if not infos:
             report["blocking_errors"].append("Archive is empty")
@@ -355,16 +423,19 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
         metadata_member = f"{EXPECTED_ROOT}/metadata.txt"
         init_member = f"{EXPECTED_ROOT}/__init__.py"
+        license_member = f"{EXPECTED_ROOT}/LICENSE"
         if metadata_member not in file_members:
             report["blocking_errors"].append(f"Missing required plugin manifest: {metadata_member}")
         if init_member not in file_members:
             report["blocking_errors"].append(f"Missing required plugin entry point: {init_member}")
+        if license_member not in file_members:
+            report["blocking_errors"].append(f"Missing required license file: {license_member}")
 
         # Verify metadata, entry point, and translation catalogs from archive bytes before writing.
         if metadata_member in file_members:
-            report["blocking_errors"].extend(
-                _validate_metadata(zf.read(metadata_member), file_members)
-            )
+            meta_errors, meta_warnings = _validate_metadata(zf.read(metadata_member), file_members)
+            report["blocking_errors"].extend(meta_errors)
+            report["file_findings"].extend(meta_warnings)
         if init_member in file_members:
             report["blocking_errors"].extend(
                 _validate_init_entrypoint(zf.read(init_member))
@@ -678,12 +749,168 @@ def _run_compile(target_dir: Path) -> dict:
         try:
             source = py_file.read_text(encoding="utf-8")
             compile(source, rel, "exec")
+            ast.parse(source, filename=rel, feature_version=(3, 9))
         except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
             result["blocking_findings"].append({
                 "file": rel,
                 "line": getattr(exc, "lineno", 0) or 0,
                 "message": str(exc),
             })
+
+    result["ok"] = not result["blocking_findings"] and not result["errors"]
+    return result
+
+
+def _is_import_guard_try(node: ast.Try) -> bool:
+    for handler in node.handlers:
+        if handler.type is None:
+            return True
+        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        for typ in types:
+            if isinstance(typ, ast.Name) and typ.id in ("ImportError", "ModuleNotFoundError", "Exception"):
+                return True
+    return False
+
+
+def _is_sibling_import_try(node: ast.Try) -> bool:
+    for handler in node.handlers:
+        if handler.type is None:
+            continue
+        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        for typ in types:
+            if isinstance(typ, ast.Name) and typ.id in ("ImportError", "ModuleNotFoundError"):
+                return True
+    return False
+
+
+def _walk_static_ast(
+    node: ast.AST,
+    py_file: Path,
+    rel_path: str,
+    stdlib: set[str] | frozenset[str],
+    findings: list[dict],
+    in_guard: bool,
+    in_import_fallback: bool,
+) -> None:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for child in node.body:
+            _walk_static_ast(child, py_file, rel_path, stdlib, findings, True, in_import_fallback)
+        return
+    if isinstance(node, ast.Try):
+        guard_try = _is_import_guard_try(node)
+        sibling_try = _is_sibling_import_try(node)
+        for child in node.body:
+            _walk_static_ast(
+                child, py_file, rel_path, stdlib, findings,
+                in_guard or guard_try, in_import_fallback,
+            )
+        for handler in node.handlers:
+            for child in handler.body:
+                _walk_static_ast(
+                    child, py_file, rel_path, stdlib, findings,
+                    in_guard, in_import_fallback or sibling_try,
+                )
+        for child in node.orelse + node.finalbody:
+            _walk_static_ast(child, py_file, rel_path, stdlib, findings, in_guard, in_import_fallback)
+        return
+
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            top = alias.name.split(".")[0]
+            _check_import_name(
+                top, alias.name, node.lineno, py_file, rel_path,
+                stdlib, findings, in_guard, in_import_fallback,
+            )
+    elif isinstance(node, ast.ImportFrom):
+        if node.level == 0 and node.module:
+            top = node.module.split(".")[0]
+            _check_import_name(
+                top, node.module, node.lineno, py_file, rel_path,
+                stdlib, findings, in_guard, in_import_fallback,
+            )
+    elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if node.func.attr in FORBIDDEN_QT_METHODS:
+            findings.append({
+                "file": rel_path,
+                "line": node.lineno,
+                "rule": "QT_COMPAT",
+                "message": f"Forbidden Qt5-only method '.{node.func.attr}()'",
+            })
+
+    for child in ast.iter_child_nodes(node):
+        _walk_static_ast(child, py_file, rel_path, stdlib, findings, in_guard, in_import_fallback)
+
+
+def _check_import_name(
+    top: str,
+    full_name: str,
+    lineno: int,
+    py_file: Path,
+    rel_path: str,
+    stdlib: set[str] | frozenset[str],
+    findings: list[dict],
+    in_guard: bool,
+    in_import_fallback: bool,
+) -> None:
+    if top in FORBIDDEN_QT_IMPORTS:
+        findings.append({
+            "file": rel_path,
+            "line": lineno,
+            "rule": "QT_COMPAT",
+            "message": f"Direct Qt binding import '{full_name}' forbidden; use 'qgis.PyQt'",
+        })
+        return
+    if top in stdlib or top in ALLOWED_TOP_LEVEL_IMPORTS:
+        return
+    if top in OPTIONAL_GUARDED_IMPORTS:
+        if not in_guard:
+            findings.append({
+                "file": rel_path,
+                "line": lineno,
+                "rule": "UNGUARDED_OPTIONAL_IMPORT",
+                "message": f"Optional runtime import '{full_name}' must be guarded against ImportError",
+            })
+        return
+    if in_import_fallback and (py_file.parent / f"{top}.py").is_file():
+        return
+    findings.append({
+        "file": rel_path,
+        "line": lineno,
+        "rule": "UNEXPECTED_DEPENDENCY",
+        "message": f"Unexpected third-party import '{full_name}' (plugin must stay zero-dependency)",
+    })
+
+
+def _run_static(target_dir: Path) -> dict:
+    result = {
+        "name": "static",
+        "blocking": True,
+        "ok": False,
+        "files_checked": 0,
+        "blocking_findings": [],
+        "errors": [],
+    }
+    py_files = _collect_python_files(target_dir)
+    result["files_checked"] = len(py_files)
+    if not py_files:
+        result["errors"].append("No Python files found for static AST checks")
+        return result
+
+    stdlib = sys.stdlib_module_names | {"__future__"}
+    for py_file in py_files:
+        rel = _rel_display(str(py_file), target_dir)
+        try:
+            source = py_file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=rel)
+        except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
+            result["blocking_findings"].append({
+                "file": rel,
+                "line": getattr(exc, "lineno", 0) or 0,
+                "rule": "SYNTAX",
+                "message": str(exc),
+            })
+            continue
+        _walk_static_ast(tree, py_file, rel, stdlib, result["blocking_findings"], False, False)
 
     result["ok"] = not result["blocking_findings"] and not result["errors"]
     return result
@@ -779,12 +1006,13 @@ def run_scans(
         }
 
     selected = {
-        "all": ["bandit", "secrets", "compile", "flake8"],
+        "all": ["bandit", "secrets", "compile", "static", "flake8"],
         "bandit": ["bandit"],
         "secrets": ["secrets"],
         "compile": ["compile"],
+        "static": ["static"],
         "flake8": ["flake8"],
-        "quality": ["compile", "flake8"],
+        "quality": ["compile", "static", "flake8"],
     }[check_mode]
 
     checks: list[dict] = []
@@ -795,6 +1023,8 @@ def run_scans(
             checks.append(_run_secrets(target_dir, exclude_metadata=not include_metadata_in_secrets))
         elif name == "compile":
             checks.append(_run_compile(target_dir))
+        elif name == "static":
+            checks.append(_run_static(target_dir))
         elif name == "flake8":
             checks.append(_run_flake8(target_dir, flake8_config))
 
@@ -967,7 +1197,8 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
 
     from qgis.PyQt.QtCore import QCoreApplication, QTranslator
 
-    _app = QCoreApplication.instance() or QCoreApplication([])
+    app = QCoreApplication.instance() or QCoreApplication([])
+    app.applicationName()
     translator = QTranslator()
     if not translator.load(str(tracked_qm)):
         report["errors"].append(f"QTranslator failed to load {tracked_qm}")
@@ -1059,6 +1290,15 @@ def _format_scan_summary(report: dict) -> str:
             )
             for f in check["blocking_findings"][:20]:
                 lines.append(f"  - BLOCKING `{f['file']}:{f['line']}`: {f['message']}")
+        elif name == "static":
+            lines.append(
+                f"- **Static guards (AST deps & Qt5/6)**: {'PASSED' if check['ok'] else 'FAILED'} "
+                f"({check['files_checked']} files; {len(check['blocking_findings'])} finding(s))"
+            )
+            for f in check["blocking_findings"][:20]:
+                lines.append(
+                    f"  - BLOCKING `{f['rule']}` `{f['file']}:{f['line']}`: {f['message']}"
+                )
         elif name == "flake8":
             lines.append(
                 f"- **Flake8 (advisory)**: {len(check['advisory_findings'])} finding(s) "
@@ -1110,6 +1350,177 @@ def _write_optional_outputs(
             handle.write(summary_text)
 
 
+def verify_manifest(
+    zip_path: Path,
+    manifest_path: Path,
+    expected_commit: str | None = None,
+    expected_sha256: str | None = None,
+) -> dict:
+    """Verify a downloaded ZIP matches package-manifest.json and expected commit/SHA-256."""
+    report: dict = {
+        "zip_path": str(zip_path),
+        "manifest_path": str(manifest_path),
+        "zip_sha256": None,
+        "commit_sha": None,
+        "errors": [],
+        "ok": False,
+    }
+    if not zip_path.is_file():
+        report["errors"].append(f"Archive does not exist: {zip_path}")
+        return report
+    if not manifest_path.is_file():
+        report["errors"].append(f"Manifest does not exist: {manifest_path}")
+        return report
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        report["errors"].append(f"Invalid package manifest JSON: {exc}")
+        return report
+
+    if not isinstance(manifest, dict):
+        report["errors"].append("Package manifest root must be a JSON object")
+        return report
+
+    manifest_sha = manifest.get("zip_sha256")
+    manifest_commit = manifest.get("commit_sha")
+    if not isinstance(manifest_sha, str) or not manifest_sha:
+        report["errors"].append("Package manifest missing 'zip_sha256'")
+        return report
+    if not isinstance(manifest_commit, str) or not manifest_commit:
+        report["errors"].append("Package manifest missing 'commit_sha'")
+        return report
+
+    actual_sha = _sha256_file(zip_path)
+    report["zip_sha256"] = actual_sha
+    report["commit_sha"] = manifest_commit
+
+    if actual_sha != manifest_sha:
+        report["errors"].append(
+            f"ZIP SHA-256 mismatch: actual {actual_sha} != manifest {manifest_sha}"
+        )
+    if expected_sha256 and actual_sha != expected_sha256:
+        report["errors"].append(
+            f"ZIP SHA-256 mismatch: actual {actual_sha} != expected {expected_sha256}"
+        )
+    if expected_commit and manifest_commit != expected_commit:
+        report["errors"].append(
+            f"Commit SHA mismatch: manifest {manifest_commit} != expected {expected_commit}"
+        )
+
+    report["ok"] = not report["errors"]
+    return report
+
+
+def _parse_metadata_bool(raw: str, key: str) -> tuple[bool | None, str | None]:
+    val = raw.strip().lower()
+    if val in ("true", "yes", "1"):
+        return True, None
+    if val in ("false", "no", "0", ""):
+        return False, None
+    return None, f"Invalid boolean value for '{key}' in metadata.txt: {raw!r}"
+
+
+def validate_release_metadata(metadata_path: Path, tag: str) -> dict:
+    """Validate release tag format, metadata.txt version, and experimental/deprecated flags."""
+    report: dict = {
+        "metadata_path": str(metadata_path),
+        "tag": tag,
+        "version": None,
+        "prerelease": False,
+        "warnings": [],
+        "errors": [],
+        "ok": False,
+    }
+    match = RELEASE_TAG_RE.fullmatch(tag.strip())
+    if not match:
+        report["errors"].append(
+            f"Tag {tag!r} must match vX.Y.Z or vX.Y.Z-{{alpha|beta|rc}}.N"
+        )
+        return report
+
+    expected_version = tag.strip()[1:]
+    prerelease = match.group(2) is not None
+    report["version"] = expected_version
+    report["prerelease"] = prerelease
+
+    if not metadata_path.is_file():
+        report["errors"].append(f"metadata.txt not found: {metadata_path}")
+        return report
+
+    raw_bytes = metadata_path.read_bytes()
+    meta_errors, meta_warnings = _validate_metadata(raw_bytes, None)
+    report["errors"].extend(meta_errors)
+    report["warnings"].extend(w["message"] for w in meta_warnings)
+    if meta_errors:
+        return report
+
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(raw_bytes.decode("utf-8"), source=str(metadata_path))
+    general = parser["general"]
+
+    meta_version = general.get("version", "").strip()
+    if meta_version != expected_version:
+        report["errors"].append(
+            f"metadata.txt version ({meta_version!r}) does not match tag version ({expected_version!r})"
+        )
+
+    deprecated, dep_err = _parse_metadata_bool(general.get("deprecated", "False"), "deprecated")
+    if dep_err:
+        report["errors"].append(dep_err)
+    elif deprecated:
+        report["errors"].append("metadata.txt 'deprecated' must be False for releases")
+
+    experimental, exp_err = _parse_metadata_bool(general.get("experimental", "False"), "experimental")
+    if exp_err:
+        report["errors"].append(exp_err)
+    elif prerelease and not experimental:
+        report["errors"].append(
+            f"Prerelease tag {tag!r} requires metadata.txt experimental=True"
+        )
+    elif not prerelease and experimental:
+        report["errors"].append(
+            f"Stable tag {tag!r} requires metadata.txt experimental=False"
+        )
+
+    changelog = general.get("changelog", "").strip()
+    if not changelog:
+        report["warnings"].append("Advisory: metadata.txt has no 'changelog' entry")
+    elif expected_version not in changelog:
+        report["warnings"].append(
+            f"Advisory: metadata.txt 'changelog' does not mention version {expected_version}"
+        )
+
+    report["ok"] = not report["errors"]
+    return report
+
+
+def _format_manifest_summary(report: dict) -> str:
+    status = "PASSED" if report["ok"] else "FAILED"
+    lines = [
+        f"## Manifest Verification: {status}",
+        f"- ZIP SHA-256: `{report['zip_sha256'] or 'N/A'}`",
+        f"- Commit SHA: `{report['commit_sha'] or 'N/A'}`",
+    ]
+    for err in report["errors"]:
+        lines.append(f"- ERROR: {err}")
+    return "\n".join(lines) + "\n"
+
+
+def _format_release_meta_summary(report: dict) -> str:
+    status = "PASSED" if report["ok"] else "FAILED"
+    lines = [
+        f"## Release Metadata Check: {status}",
+        f"- Tag: `{report['tag']}`",
+        f"- Version: `{report['version'] or 'N/A'}`",
+        f"- Prerelease: `{report['prerelease']}`",
+    ]
+    for warn in report["warnings"]:
+        lines.append(f"- WARNING: {warn}")
+    for err in report["errors"]:
+        lines.append(f"- ERROR: {err}")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="AgenticGIS CI plugin checks")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1124,7 +1535,7 @@ def main(argv: list[str] | None = None) -> int:
     p_scan.add_argument("extracted_plugin", type=Path)
     p_scan.add_argument(
         "--check",
-        choices=("all", "bandit", "secrets", "compile", "flake8", "quality"),
+        choices=("all", "bandit", "secrets", "compile", "static", "flake8", "quality"),
         default="all",
     )
     p_scan.add_argument("--flake8-config", type=Path, default=None)
@@ -1142,6 +1553,21 @@ def main(argv: list[str] | None = None) -> int:
     p_i18n.add_argument("--json-out")
     p_i18n.add_argument("--summary-out")
 
+    p_manifest = sub.add_parser("verify-manifest", help="Verify ZIP checksum and manifest commit")
+    p_manifest.add_argument("zip_path", type=Path)
+    p_manifest.add_argument("manifest_path", type=Path)
+    p_manifest.add_argument("--expected-commit")
+    p_manifest.add_argument("--expected-sha256")
+    p_manifest.add_argument("--json-out")
+    p_manifest.add_argument("--summary-out")
+
+    p_rel = sub.add_parser("release-meta", help="Validate release tag against metadata.txt")
+    p_rel.add_argument("metadata_path", type=Path)
+    p_rel.add_argument("--tag", required=True)
+    p_rel.add_argument("--github-output", type=Path)
+    p_rel.add_argument("--json-out")
+    p_rel.add_argument("--summary-out")
+
     args = parser.parse_args(argv)
     if args.command == "archive":
         report = validate_and_extract_archive(args.zip_path, args.extract_to)
@@ -1154,9 +1580,24 @@ def main(argv: list[str] | None = None) -> int:
             include_metadata_in_secrets=args.include_metadata,
         )
         summary = _format_scan_summary(report)
-    else:
+    elif args.command == "i18n":
         report = check_i18n(args.repo_root, args.qt_major)
         summary = _format_i18n_summary(report)
+    elif args.command == "verify-manifest":
+        report = verify_manifest(
+            args.zip_path,
+            args.manifest_path,
+            expected_commit=args.expected_commit,
+            expected_sha256=args.expected_sha256,
+        )
+        summary = _format_manifest_summary(report)
+    else:
+        report = validate_release_metadata(args.metadata_path, args.tag)
+        summary = _format_release_meta_summary(report)
+        if report["ok"] and args.github_output:
+            with args.github_output.open("a", encoding="utf-8") as handle:
+                handle.write(f"version={report['version']}\n")
+                handle.write(f"prerelease={'true' if report['prerelease'] else 'false'}\n")
 
     sys.stdout.write(summary)
     _write_optional_outputs(report, summary, args.json_out, args.summary_out)
