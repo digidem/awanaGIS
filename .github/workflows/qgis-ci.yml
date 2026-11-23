@@ -56,7 +56,8 @@ jobs:
         run: |
           python3 ci/check_plugin.py scan \
             "$RUNNER_TEMP/extracted/AgenticGIS" \
-            --check secrets
+            --check secrets \
+            --include-metadata
 
       - name: Run CI archive and scanner unit tests
         env:

@@ -550,13 +550,13 @@ def _load_secrets_baseline(baseline_path: Path) -> tuple[set[tuple[str, str, str
             hashed = hit.get("hashed_secret")
             if not isinstance(hit_type, str) or not hit_type or not isinstance(hashed, str) or not hashed:
                 return set(), "Malformed secret record in .secrets.baseline"
-            if hit.get("is_secret") is True:
+            if hit.get("is_secret") is not False:
                 continue
             entries.add((norm_file, hit_type, hashed))
     return entries, None
 
 
-def _run_secrets(target_dir: Path) -> dict:
+def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
     result = {
         "name": "secrets",
         "blocking": True,
@@ -586,12 +586,14 @@ def _run_secrets(target_dir: Path) -> dict:
         _resolve_tool("detect-secrets"),
         "scan",
         "--all-files",
-        "--exclude-files",
-        r"metadata\.txt",
+    ]
+    if exclude_metadata:
+        cmd.extend(["--exclude-files", r"metadata\.txt"])
+    cmd.extend([
         "--exclude-files",
         r"\.secrets\.baseline",
         ".",
-    ]
+    ])
 
     try:
         proc = subprocess.run(
@@ -761,7 +763,12 @@ def _run_flake8(target_dir: Path, flake8_config: Path | None) -> dict:
     return result
 
 
-def run_scans(target_dir: Path, check_mode: str, flake8_config: Path | None) -> dict:
+def run_scans(
+    target_dir: Path,
+    check_mode: str,
+    flake8_config: Path | None,
+    include_metadata_in_secrets: bool = False,
+) -> dict:
     """Run selected repository-aligned scanners against an extracted plugin directory."""
     if not target_dir.is_dir():
         return {
@@ -785,7 +792,7 @@ def run_scans(target_dir: Path, check_mode: str, flake8_config: Path | None) -> 
         if name == "bandit":
             checks.append(_run_bandit(target_dir))
         elif name == "secrets":
-            checks.append(_run_secrets(target_dir))
+            checks.append(_run_secrets(target_dir, exclude_metadata=not include_metadata_in_secrets))
         elif name == "compile":
             checks.append(_run_compile(target_dir))
         elif name == "flake8":
@@ -1121,6 +1128,11 @@ def main(argv: list[str] | None = None) -> int:
         default="all",
     )
     p_scan.add_argument("--flake8-config", type=Path, default=None)
+    p_scan.add_argument(
+        "--include-metadata",
+        action="store_true",
+        help="Also scan metadata.txt during secrets detection (for pre-upload gating)",
+    )
     p_scan.add_argument("--json-out")
     p_scan.add_argument("--summary-out")
 
@@ -1135,7 +1147,12 @@ def main(argv: list[str] | None = None) -> int:
         report = validate_and_extract_archive(args.zip_path, args.extract_to)
         summary = _format_archive_summary(report)
     elif args.command == "scan":
-        report = run_scans(args.extracted_plugin, args.check, args.flake8_config)
+        report = run_scans(
+            args.extracted_plugin,
+            args.check,
+            args.flake8_config,
+            include_metadata_in_secrets=args.include_metadata,
+        )
         summary = _format_scan_summary(report)
     else:
         report = check_i18n(args.repo_root, args.qt_major)

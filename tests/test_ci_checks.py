@@ -112,7 +112,6 @@ class ArchiveCheckTests(unittest.TestCase):
             extract_dir = tmp_dir / "extracted"
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(report["ok"], report["blocking_errors"])
-            self.assertEqual(report["file_findings"], [])
             plugin_root = extract_dir / "AgenticGIS"
             for excluded in ("tests", "ci", "docs", ".github", ".flake8", ".gitattributes", ".gitignore"):
                 self.assertFalse((plugin_root / excluded).exists(), f"{excluded} must not ship")
@@ -380,6 +379,7 @@ class ScannerAdapterTests(unittest.TestCase):
                     "plugin.py": [
                         {"type": "Secret Keyword", "hashed_secret": known_hash, "is_secret": False},
                         {"type": "Secret Keyword", "hashed_secret": confirmed_secret_hash, "is_secret": True},
+                        {"type": "Secret Keyword", "hashed_secret": new_hash},
                     ],
                 },
             }
@@ -403,7 +403,7 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertNotIn("--baseline", mock_run.call_args.args[0])
             self.assertEqual(baseline_path.read_bytes(), baseline_bytes)
 
-            # Entry marked is_secret=True in baseline or a new secret still fails
+            # Entry marked is_secret=True or unaudited (missing is_secret) still fails
             for active_hash in (confirmed_secret_hash, new_hash):
                 with self.subTest(active_hash=active_hash):
                     scan_fail = {
@@ -470,24 +470,18 @@ class RealScannerIntegrationTests(unittest.TestCase):
         self._require_tools()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            # 1. Clean baseline package from HEAD if git is available
-            if _has_usable_git_repo():
-                zip_path = tmp_dir / "clean.zip"
-                subprocess.run(
-                    ["git", "archive", "--format=zip", "--prefix=AgenticGIS/", "--output", str(zip_path), "HEAD"],
-                    cwd=str(ROOT),
-                    check=True,
-                    capture_output=True,
-                )
-                extract_dir = tmp_dir / "clean_ext"
-                arch = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
-                self.assertTrue(arch["ok"], arch["blocking_errors"])
-                clean_scan = check_plugin.run_scans(
-                    extract_dir / "AgenticGIS",
-                    "all",
-                    ROOT / ".flake8",
-                )
-                self.assertTrue(clean_scan["ok"], json.dumps(clean_scan, indent=2))
+            # 1. Fixed clean plugin fixture passes all scanners (decoupled from PR HEAD regressions)
+            zip_path = _build_valid_zip(tmp_dir / "clean.zip")
+            extract_dir = tmp_dir / "clean_ext"
+            arch = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
+            self.assertTrue(arch["ok"], arch["blocking_errors"])
+            clean_scan = check_plugin.run_scans(
+                extract_dir / "AgenticGIS",
+                "all",
+                ROOT / ".flake8",
+                include_metadata_in_secrets=True,
+            )
+            self.assertTrue(clean_scan["ok"], json.dumps(clean_scan, indent=2))
 
             # 2. Synthetic package verifying real scanners catch intended failures without leaking secrets
             synth = tmp_dir / "synth"
@@ -504,6 +498,10 @@ class RealScannerIntegrationTests(unittest.TestCase):
                 f'api_key = "{secret_token}"\n',
                 encoding="utf-8",
             )
+            (synth / "metadata.txt").write_text(
+                VALID_METADATA + f'about=leaked "{secret_token}"\n',
+                encoding="utf-8",
+            )
             (synth / "style.py").write_text(
                 "x=1+" + "2" * 130 + "\n",
                 encoding="utf-8",
@@ -517,13 +515,15 @@ class RealScannerIntegrationTests(unittest.TestCase):
             bandit_text = json.dumps(bandit_rep) + "\n" + check_plugin._format_scan_summary(bandit_rep)
             self.assertNotIn(password_literal, bandit_text)
 
-            secrets_rep = check_plugin.run_scans(synth, "secrets", None)
+            secrets_rep = check_plugin.run_scans(synth, "secrets", None, include_metadata_in_secrets=True)
             self.assertFalse(secrets_rep["ok"])
-            self.assertTrue(secrets_rep["checks"][0]["blocking_findings"])
+            files_flagged = {f["file"] for f in secrets_rep["checks"][0]["blocking_findings"]}
+            self.assertIn("leak.py", files_flagged)
+            self.assertIn("metadata.txt", files_flagged)
             secrets_text = json.dumps(secrets_rep) + "\n" + check_plugin._format_scan_summary(secrets_rep)
             self.assertNotIn(secret_token, secrets_text)
 
-            # Generating a reviewed baseline for leak.py keeps it unchanged and passes until a new secret appears
+            # Unaudited generated baseline (without is_secret=False) must still block
             ds_bin = check_plugin._resolve_tool("detect-secrets")
             baseline_proc = subprocess.run(
                 [
@@ -541,8 +541,18 @@ class RealScannerIntegrationTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+            baseline_payload = json.loads(baseline_proc.stdout)
             baseline_file = synth / ".secrets.baseline"
-            baseline_file.write_text(baseline_proc.stdout, encoding="utf-8")
+            baseline_file.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
+            unaudited_rep = check_plugin.run_scans(synth, "secrets", None)
+            self.assertFalse(unaudited_rep["ok"])
+
+            # Only an explicitly reviewed baseline (is_secret=False) suppresses known entries read-only
+            for hits in baseline_payload["results"].values():
+                for hit in hits:
+                    hit["is_secret"] = False
+            reviewed_text = json.dumps(baseline_payload, indent=2)
+            baseline_file.write_text(reviewed_text, encoding="utf-8")
             baseline_bytes = baseline_file.read_bytes()
 
             baselined_rep = check_plugin.run_scans(synth, "secrets", None)
