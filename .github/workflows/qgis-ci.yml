@@ -256,16 +256,9 @@ jobs:
             "$QGIS_IMAGE" \
             bash -lc '
               set -euo pipefail
-              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "
-              import sys
-              from qgis.core import Qgis
-              from qgis.PyQt.QtCore import QT_VERSION_STR
-              print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR)
-              assert Qgis.QGIS_VERSION.split(\".\")[0] == \"$QGIS_MAJOR\", Qgis.QGIS_VERSION
-              assert QT_VERSION_STR.split(\".\")[0] == \"$QT_MAJOR\", QT_VERSION_STR
-              "
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "import os; from qgis.core import Qgis; from qgis.PyQt.QtCore import QT_VERSION_STR; print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR); assert Qgis.QGIS_VERSION.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QGIS_MAJOR\"], Qgis.QGIS_VERSION; assert QT_VERSION_STR.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QT_MAJOR\"], QT_VERSION_STR"
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py \
-                i18n /workspace/AgenticGIS --qt-major "$QT_MAJOR"
+                i18n /workspace/AgenticGIS --qt-major "$AGENTICGIS_EXPECT_QT_MAJOR"
               cd /workspace/AgenticGIS
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 -m unittest discover -s tests -v
               timeout --kill-after=15 180 xvfb-run -a qgis \

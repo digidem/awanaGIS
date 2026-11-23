@@ -522,12 +522,41 @@ def _run_bandit(target_dir: Path) -> dict:
     return result
 
 
+def _load_secrets_baseline(baseline_path: Path) -> tuple[set[tuple[str, str, str]], str | None]:
+    """Parse a reviewed .secrets.baseline read-only into (file, type, hashed_secret) keys."""
+    try:
+        payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return set(), f"Invalid .secrets.baseline: {exc}"
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), dict):
+        return set(), ".secrets.baseline missing 'results' mapping"
+
+    entries: set[tuple[str, str, str]] = set()
+    for raw_file, hits in payload["results"].items():
+        if not isinstance(raw_file, str) or not isinstance(hits, list):
+            return set(), "Malformed file entry in .secrets.baseline"
+        norm_file = raw_file.lstrip("./")
+        for hit in hits:
+            if not isinstance(hit, dict):
+                return set(), "Malformed hit entry in .secrets.baseline"
+            hit_type = hit.get("type")
+            hashed = hit.get("hashed_secret")
+            if not isinstance(hit_type, str) or not hit_type or not isinstance(hashed, str) or not hashed:
+                return set(), "Malformed secret record in .secrets.baseline"
+            if hit.get("is_secret") is True:
+                continue
+            entries.add((norm_file, hit_type, hashed))
+    return entries, None
+
+
 def _run_secrets(target_dir: Path) -> dict:
     result = {
         "name": "secrets",
         "blocking": True,
         "ok": False,
         "files_checked": 0,
+        "baselined_count": 0,
         "blocking_findings": [],
         "errors": [],
     }
@@ -538,6 +567,15 @@ def _run_secrets(target_dir: Path) -> dict:
     ]
     result["files_checked"] = len(all_files)
 
+    baseline_entries: set[tuple[str, str, str]] = set()
+    baseline = target_dir / ".secrets.baseline"
+    if baseline.is_file():
+        baseline_entries, baseline_err = _load_secrets_baseline(baseline)
+        if baseline_err:
+            result["errors"].append(baseline_err)
+            return result
+
+    # Never pass --baseline to detect-secrets 1.5.0: it rewrites the file and emits no JSON stdout.
     cmd = [
         _resolve_tool("detect-secrets"),
         "scan",
@@ -546,11 +584,8 @@ def _run_secrets(target_dir: Path) -> dict:
         r"metadata\.txt",
         "--exclude-files",
         r"\.secrets\.baseline",
+        ".",
     ]
-    baseline = target_dir / ".secrets.baseline"
-    if baseline.is_file():
-        cmd.extend(["--baseline", ".secrets.baseline"])
-    cmd.append(".")
 
     try:
         proc = subprocess.run(
@@ -595,14 +630,20 @@ def _run_secrets(target_dir: Path) -> dict:
         if not isinstance(hits, list):
             result["errors"].append("Malformed detect-secrets file entry")
             return result
+        norm_file = raw_file.lstrip("./")
         for hit in hits:
             if not isinstance(hit, dict):
                 result["errors"].append("Malformed detect-secrets hit entry")
                 return result
+            detector = str(hit.get("type", "Unknown"))
+            hashed = hit.get("hashed_secret")
+            if isinstance(hashed, str) and hashed and (norm_file, detector, hashed) in baseline_entries:
+                result["baselined_count"] += 1
+                continue
             result["blocking_findings"].append({
-                "file": raw_file.lstrip("./"),
+                "file": norm_file,
                 "line": int(hit.get("line_number", 0) or 0),
-                "detector": str(hit.get("type", "Unknown")),
+                "detector": detector,
             })
 
     result["ok"] = not result["blocking_findings"] and not result["errors"]
@@ -953,9 +994,12 @@ def _format_scan_summary(report: dict) -> str:
                     f"`{f['file']}:{f['line']}`: {f['message']}"
                 )
         elif name == "secrets":
+            baselined = check.get("baselined_count", 0)
+            baselined_note = f", {baselined} baselined" if baselined else ""
             lines.append(
                 f"- **detect-secrets**: {'PASSED' if check['ok'] else 'FAILED'} "
-                f"({check['files_checked']} files; {len(check['blocking_findings'])} finding(s))"
+                f"({check['files_checked']} files; "
+                f"{len(check['blocking_findings'])} finding(s){baselined_note})"
             )
             for f in check["blocking_findings"][:20]:
                 lines.append(

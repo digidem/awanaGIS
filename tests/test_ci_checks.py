@@ -346,6 +346,63 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertTrue(res["errors"])
 
+    def test_detect_secrets_baseline_comparison_is_readonly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = self._make_target(tmp)
+            known_hash = "1111222233334444555566667777888899990000"
+            confirmed_secret_hash = "aaaabbbbccccddddeeeeffff0000111122223333"
+            new_hash = "9999888877776666555544443333222211110000"
+
+            baseline_data = {
+                "results": {
+                    "plugin.py": [
+                        {"type": "Secret Keyword", "hashed_secret": known_hash, "is_secret": False},
+                        {"type": "Secret Keyword", "hashed_secret": confirmed_secret_hash, "is_secret": True},
+                    ],
+                },
+            }
+            baseline_path = target / ".secrets.baseline"
+            baseline_bytes = json.dumps(baseline_data).encode("utf-8")
+            baseline_path.write_bytes(baseline_bytes)
+
+            # Matching baselined false-positive passes without passing --baseline or rewriting file
+            scan_ok = {
+                "results": {
+                    "./plugin.py": [{"type": "Secret Keyword", "hashed_secret": known_hash, "line_number": 5}],
+                },
+            }
+            with patch(
+                "ci.check_plugin.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_ok), ""),
+            ) as mock_run:
+                res = check_plugin._run_secrets(target)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(res["baselined_count"], 1)
+            self.assertNotIn("--baseline", mock_run.call_args.args[0])
+            self.assertEqual(baseline_path.read_bytes(), baseline_bytes)
+
+            # Entry marked is_secret=True in baseline or a new secret still fails
+            for active_hash in (confirmed_secret_hash, new_hash):
+                with self.subTest(active_hash=active_hash):
+                    scan_fail = {
+                        "results": {
+                            "plugin.py": [{"type": "Secret Keyword", "hashed_secret": active_hash, "line_number": 7}],
+                        },
+                    }
+                    with patch(
+                        "ci.check_plugin.subprocess.run",
+                        return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_fail), ""),
+                    ):
+                        res = check_plugin._run_secrets(target)
+                    self.assertFalse(res["ok"])
+                    self.assertEqual(len(res["blocking_findings"]), 1)
+
+            # Malformed baseline fails with error
+            baseline_path.write_text("{bad-json", encoding="utf-8")
+            res = check_plugin._run_secrets(target)
+            self.assertFalse(res["ok"])
+            self.assertTrue(res["errors"])
+
     def test_flake8_and_compile_adapter_cases(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = self._make_target(tmp)
@@ -438,6 +495,41 @@ class RealScannerIntegrationTests(unittest.TestCase):
             self.assertTrue(secrets_rep["checks"][0]["blocking_findings"])
             secrets_text = json.dumps(secrets_rep) + "\n" + check_plugin._format_scan_summary(secrets_rep)
             self.assertNotIn(secret_token, secrets_text)
+
+            # Generating a reviewed baseline for leak.py keeps it unchanged and passes until a new secret appears
+            ds_bin = check_plugin._resolve_tool("detect-secrets")
+            baseline_proc = subprocess.run(
+                [
+                    ds_bin,
+                    "scan",
+                    "--all-files",
+                    "--exclude-files",
+                    r"metadata\.txt",
+                    "--exclude-files",
+                    r"\.secrets\.baseline",
+                    ".",
+                ],
+                cwd=str(synth),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            baseline_file = synth / ".secrets.baseline"
+            baseline_file.write_text(baseline_proc.stdout, encoding="utf-8")
+            baseline_bytes = baseline_file.read_bytes()
+
+            baselined_rep = check_plugin.run_scans(synth, "secrets", None)
+            self.assertTrue(baselined_rep["ok"], baselined_rep)
+            self.assertGreater(baselined_rep["checks"][0]["baselined_count"], 0)
+            self.assertEqual(baseline_file.read_bytes(), baseline_bytes)
+
+            second_secret = "AKIA" + "IOSFODNN7" + "EXAMPLENEW"
+            (synth / "leak2.py").write_text(f'aws_id = "{second_secret}"\n', encoding="utf-8")
+            new_secret_rep = check_plugin.run_scans(synth, "secrets", None)
+            self.assertFalse(new_secret_rep["ok"])
+            new_secret_text = json.dumps(new_secret_rep) + "\n" + check_plugin._format_scan_summary(new_secret_rep)
+            self.assertNotIn(secret_token, new_secret_text)
+            self.assertNotIn(second_secret, new_secret_text)
 
             flake_rep = check_plugin.run_scans(synth, "flake8", None)
             self.assertTrue(flake_rep["ok"])
