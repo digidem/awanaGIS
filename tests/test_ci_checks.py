@@ -305,6 +305,28 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertTrue(res["errors"])
 
+            # Hardcoded credential message in B105 must be redacted from report and summary
+            secret_literal = "BANDIT_" + "CREDENTIAL_VALUE_42"
+            b105_payload = {
+                "errors": [],
+                "results": [{
+                    "filename": str(target / "plugin.py"),
+                    "line_number": 1,
+                    "test_id": "B105",
+                    "issue_severity": "LOW",
+                    "issue_confidence": "MEDIUM",
+                    "issue_text": f"Possible hardcoded password: '{secret_literal}'",
+                }],
+            }
+            b105_proc = subprocess.CompletedProcess([], 1, json.dumps(b105_payload), "")
+            with patch("ci.check_plugin.subprocess.run", return_value=b105_proc):
+                report = check_plugin.run_scans(target, "bandit", None)
+            self.assertTrue(report["ok"])
+            summary = check_plugin._format_scan_summary(report)
+            serialized = json.dumps(report) + "\n" + summary
+            self.assertNotIn(secret_literal, serialized)
+            self.assertIn("value redacted", serialized)
+
     def test_detect_secrets_adapter_cases_and_no_leak(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = self._make_target(tmp)
@@ -471,8 +493,11 @@ class RealScannerIntegrationTests(unittest.TestCase):
             synth = tmp_dir / "synth"
             synth.mkdir()
             secret_token = "ghp_" + "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8"
+            password_literal = "pw_" + "REAL_BANDIT_SECRET_77"
             (synth / "bad_bandit.py").write_text(
-                "import subprocess\n\ndef run(cmd):\n    return subprocess.Popen(cmd, shell=True)\n",
+                "import subprocess\n\n"
+                f'password = "{password_literal}"\n\n'
+                "def run(cmd):\n    return subprocess.Popen(cmd, shell=True)\n",
                 encoding="utf-8",
             )
             (synth / "leak.py").write_text(
@@ -489,6 +514,8 @@ class RealScannerIntegrationTests(unittest.TestCase):
             self.assertTrue(
                 any(f["test_id"] == "B602" for f in bandit_rep["checks"][0]["blocking_findings"])
             )
+            bandit_text = json.dumps(bandit_rep) + "\n" + check_plugin._format_scan_summary(bandit_rep)
+            self.assertNotIn(password_literal, bandit_text)
 
             secrets_rep = check_plugin.run_scans(synth, "secrets", None)
             self.assertFalse(secrets_rep["ok"])

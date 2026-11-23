@@ -505,13 +505,19 @@ def _run_bandit(target_dir: Path) -> dict:
             result["errors"].append("Malformed Bandit finding entry")
             return result
         severity = str(item.get("issue_severity", "")).upper()
+        test_id = str(item.get("test_id", ""))
+        raw_message = str(item.get("issue_text", ""))
+        if test_id in {"B105", "B106", "B107"} or "hardcoded password" in raw_message.lower():
+            safe_message = f"Possible hardcoded credential/password ({test_id}; value redacted)"
+        else:
+            safe_message = raw_message
         entry = {
             "file": _rel_display(str(item.get("filename", "")), target_dir),
             "line": int(item.get("line_number", 0) or 0),
-            "test_id": str(item.get("test_id", "")),
+            "test_id": test_id,
             "severity": severity,
             "confidence": str(item.get("issue_confidence", "")).upper(),
-            "message": str(item.get("issue_text", "")),
+            "message": safe_message,
         }
         if severity in ("MEDIUM", "HIGH"):
             result["blocking_findings"].append(entry)
@@ -915,6 +921,40 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
                 f"Qt {qt_major} extraction mismatch: "
                 f"{len(report['missing_in_tracked'])} missing, "
                 f"{len(report['extra_in_tracked'])} extra in {tracked_ts.name}"
+            )
+            return report
+
+        lrelease_bin = shutil.which("lrelease")
+        if lrelease_bin is None and qt_major == 6:
+            qt6_lrelease = Path("/usr/lib/qt6/bin/lrelease")
+            if qt6_lrelease.is_file() and os.access(qt6_lrelease, os.X_OK):
+                lrelease_bin = str(qt6_lrelease)
+        if lrelease_bin is None:
+            report["errors"].append("Qt lrelease tool not found")
+            return report
+
+        tmp_qm = tmp_dir / "reference.qm"
+        try:
+            lrel_proc = subprocess.run(
+                [lrelease_bin, str(tracked_ts), "-qm", str(tmp_qm)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            report["errors"].append("lrelease timed out after 60s")
+            return report
+
+        if lrel_proc.returncode != 0 or not tmp_qm.is_file():
+            report["errors"].append(
+                f"lrelease failed (exit {lrel_proc.returncode}): "
+                f"{(lrel_proc.stderr or lrel_proc.stdout).strip()[:300]}"
+            )
+            return report
+
+        if tmp_qm.read_bytes() != tracked_qm.read_bytes():
+            report["errors"].append(
+                f"{tracked_qm.name} is out of date relative to {tracked_ts.name}; rebuild with lrelease"
             )
             return report
 

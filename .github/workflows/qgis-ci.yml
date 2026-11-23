@@ -24,6 +24,11 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ci/requirements.txt
+
+      - name: Install CI scanner dependencies
+        run: python3 -m pip install --no-cache-dir -r ci/requirements.txt
 
       - name: Package tracked commit with git archive
         run: |
@@ -47,7 +52,15 @@ jobs:
             --extract-to "$RUNNER_TEMP/extracted" \
             --summary-out "$GITHUB_STEP_SUMMARY"
 
-      - name: Run CI archive and mocked scanner unit tests
+      - name: Gate artifact upload with pre-upload secrets scan
+        run: |
+          python3 ci/check_plugin.py scan \
+            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            --check secrets
+
+      - name: Run CI archive and scanner unit tests
+        env:
+          AGENTICGIS_REQUIRE_REAL_SCANNERS: "1"
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_ci_checks.py -v
 
