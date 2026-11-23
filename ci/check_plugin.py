@@ -879,8 +879,7 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
 
     from qgis.PyQt.QtCore import QCoreApplication, QTranslator
 
-    app = QCoreApplication.instance() or QCoreApplication([])
-    del app
+    _app = QCoreApplication.instance() or QCoreApplication([])
     translator = QTranslator()
     if not translator.load(str(tracked_qm)):
         report["errors"].append(f"QTranslator failed to load {tracked_qm}")

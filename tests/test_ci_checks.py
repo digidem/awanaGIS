@@ -69,6 +69,18 @@ def _build_valid_zip(dest: Path, extra_entries: list[tuple[str, bytes, int]] | N
     return dest
 
 
+def _has_usable_git_repo() -> bool:
+    if shutil.which("git") is None:
+        return False
+    probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return probe.returncode == 0 and probe.stdout.strip() == "true"
+
+
 class ArchiveCheckTests(unittest.TestCase):
     def test_valid_zip_passes_and_excludes_dev_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -85,8 +97,8 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse((extract_dir / "AgenticGIS" / "ci").exists())
 
     def test_real_git_archive_exports_clean_plugin_only(self):
-        if shutil.which("git") is None or not (ROOT / ".git").exists():
-            self.skipTest("git checkout required")
+        if not _has_usable_git_repo():
+            self.skipTest("usable git checkout required")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             zip_path = tmp_dir / "AgenticGIS.zip"
@@ -380,7 +392,7 @@ class RealScannerIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
             # 1. Clean baseline package from HEAD if git is available
-            if shutil.which("git") and (ROOT / ".git").exists():
+            if _has_usable_git_repo():
                 zip_path = tmp_dir / "clean.zip"
                 subprocess.run(
                     ["git", "archive", "--format=zip", "--prefix=AgenticGIS/", "--output", str(zip_path), "HEAD"],
