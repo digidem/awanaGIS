@@ -462,3 +462,41 @@ Run the local tests from a checkout named `AgenticGIS` with QGIS's Python:
 ```sh
 QT_QPA_PLATFORM=offscreen PYTHONPATH=.. /usr/bin/python3 -m unittest discover -s tests
 ```
+
+## Continuous Integration & Local Checks
+
+Pull requests run [`.github/workflows/qgis-ci.yml`](.github/workflows/qgis-ci.yml) with read-only permissions, pinned GitHub Action SHAs, and pinned container digests.
+
+### Checks and blocking rules
+
+| Check name | Blocking? | What it verifies |
+|---|---|---|
+| `Package & Validate Archive` | Blocking | Packages `HEAD` with `git archive`, validates `metadata.txt`, `classFactory`, icon, `.qm` headers, path safety, forbidden leaks, and runs `tests/test_ci_checks.py`. |
+| `Security Scan (Bandit)` | Blocking on medium/high or errors | Runs Bandit recursively on the extracted plugin ZIP (`LOW` findings remain visible as informational). |
+| `Secrets Scan (detect-secrets)` | Blocking on any finding or error | Runs `detect-secrets scan --all-files` on the extracted plugin ZIP; reports only file, line, detector, and counts. |
+| `Code Quality (Compile & Flake8)` | Compile blocking; Flake8 advisory | Compiles all packaged `.py` files and runs Flake8 with `.flake8` (`E501`/`E124`/`E128` baseline drift is reported without blocking). |
+| `QGIS 3 / Qt 5` | Blocking | Representative QGIS 3 (`3.44.16` / Qt `5.15.13`) container: `pylupdate5` parity, `unittest discover`, and unattended `pt_BR` desktop ZIP install/unload smoke. |
+| `QGIS 4 / Qt 6` | Blocking | Representative QGIS 4 (`4.4.0` / Qt `6.8.2`) container: `pylupdate6` parity, `unittest discover`, and unattended `pt_BR` desktop ZIP install/unload smoke. |
+
+The runtime matrix tests two representative pinned QGIS Desktop releases (`3.44.16` and `4.4.0`), not every minor version across `3.22`–`4.99`, and runs completely offline (live LLM provider, CLI, and Earth Engine calls are excluded).
+
+### Alignment with QGIS Plugin Repository scanning
+
+The `bandit`, `detect-secrets`, `flake8`, and archive file-analysis checks preview the checks documented in the [QGIS Security Scanning docs](https://plugins.qgis.org/docs/security-scanning) and implemented in [`QGIS-Plugins-Website` `security_scanner.py`](https://github.com/qgis/QGIS-Plugins-Website/blob/e66c9281bc530256359306febbe1d41a6edea753/qgis-app/plugins/security_scanner.py) (pinned at `e66c9281bc530256359306febbe1d41a6edea753`). Because `plugins.qgis.org` administrators can toggle individual `SecurityRule` entries on the server, CI serves as a repository-aligned preview rather than an authoritative server verdict:
+
+- CI fails on missing scanner binaries, timeouts, or invalid JSON reports (the website treats missing tools gracefully).
+- `.flake8` remains `export-ignore` in release archives and is passed explicitly via `--config .flake8` in CI; `plugins.qgis.org` defaults to `--max-line-length=120` when no `.flake8` is packaged.
+- Narrowly scoped exceptions use `# nosec Bxxx` with justification (Bandit), `# pragma: allowlist secret` (detect-secrets), or a reviewed hash-only `.secrets.baseline` — never auto-generate or update a baseline inside a PR run.
+
+### Reproducing CI locally
+
+```sh
+# 1. Regenerate and validate the release ZIP
+git archive --format=zip --prefix=AgenticGIS/ --output=/tmp/AgenticGIS.zip HEAD
+python3 ci/check_plugin.py archive /tmp/AgenticGIS.zip --extract-to /tmp/agenticgis-extracted
+
+# 2. Install scanner tools (dev-only) and run scans + unit tests
+python3 -m pip install -r ci/requirements.txt
+python3 ci/check_plugin.py scan /tmp/agenticgis-extracted/AgenticGIS --flake8-config .flake8
+AGENTICGIS_REQUIRE_REAL_SCANNERS=1 python3 -m unittest tests/test_ci_checks.py -v
+```

@@ -1,0 +1,284 @@
+name: QGIS Plugin CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qgis-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package & Validate Archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Package tracked commit with git archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkg"
+          git archive --format=zip --prefix=AgenticGIS/ --output="$RUNNER_TEMP/pkg/AgenticGIS.zip" HEAD
+          SHA=$(git rev-parse HEAD)
+          ZIP_SHA256=$(sha256sum "$RUNNER_TEMP/pkg/AgenticGIS.zip" | awk '{print $1}')
+          python3 -c '
+          import json, os, sys
+          payload = {"commit_sha": sys.argv[1], "zip_sha256": sys.argv[2]}
+          out = os.path.join(os.environ["RUNNER_TEMP"], "pkg", "package-manifest.json")
+          with open(out, "w", encoding="utf-8") as fh:
+              json.dump(payload, fh, indent=2)
+          print(json.dumps(payload))
+          ' "$SHA" "$ZIP_SHA256"
+
+      - name: Validate archive structure and extract
+        run: |
+          python3 ci/check_plugin.py archive \
+            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            --extract-to "$RUNNER_TEMP/extracted" \
+            --summary-out "$GITHUB_STEP_SUMMARY"
+
+      - name: Run CI archive and mocked scanner unit tests
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_ci_checks.py -v
+
+      - name: Upload packaged plugin artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: AgenticGIS-package
+          path: |
+            ${{ runner.temp }}/pkg/AgenticGIS.zip
+            ${{ runner.temp }}/pkg/package-manifest.json
+          retention-days: 7
+
+  bandit:
+    name: Security Scan (Bandit)
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ci/requirements.txt
+
+      - name: Install CI scanner dependencies
+        run: python3 -m pip install --no-cache-dir -r ci/requirements.txt
+
+      - name: Download packaged plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: AgenticGIS-package
+          path: ${{ runner.temp }}/pkg
+
+      - name: Extract validated archive
+        run: |
+          python3 ci/check_plugin.py archive \
+            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            --extract-to "$RUNNER_TEMP/extracted"
+
+      - name: Run Bandit scan on packaged plugin
+        run: |
+          python3 ci/check_plugin.py scan \
+            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            --check bandit \
+            --summary-out "$GITHUB_STEP_SUMMARY"
+
+      - name: Run real-scanner unit tests
+        env:
+          AGENTICGIS_REQUIRE_REAL_SCANNERS: "1"
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_ci_checks.py -v
+
+  secrets:
+    name: Secrets Scan (detect-secrets)
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ci/requirements.txt
+
+      - name: Install CI scanner dependencies
+        run: python3 -m pip install --no-cache-dir -r ci/requirements.txt
+
+      - name: Download packaged plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: AgenticGIS-package
+          path: ${{ runner.temp }}/pkg
+
+      - name: Extract validated archive
+        run: |
+          python3 ci/check_plugin.py archive \
+            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            --extract-to "$RUNNER_TEMP/extracted"
+
+      - name: Run detect-secrets scan on packaged plugin
+        run: |
+          python3 ci/check_plugin.py scan \
+            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            --check secrets \
+            --summary-out "$GITHUB_STEP_SUMMARY"
+
+  quality:
+    name: Code Quality (Compile & Flake8)
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ci/requirements.txt
+
+      - name: Install CI scanner dependencies
+        run: python3 -m pip install --no-cache-dir -r ci/requirements.txt
+
+      - name: Download packaged plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: AgenticGIS-package
+          path: ${{ runner.temp }}/pkg
+
+      - name: Extract validated archive
+        run: |
+          python3 ci/check_plugin.py archive \
+            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            --extract-to "$RUNNER_TEMP/extracted"
+
+      - name: Run Python compile and advisory Flake8 checks
+        run: |
+          python3 ci/check_plugin.py scan \
+            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            --check quality \
+            --flake8-config .flake8 \
+            --summary-out "$GITHUB_STEP_SUMMARY"
+
+  qgis-runtime:
+    name: QGIS ${{ matrix.label }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "3 / Qt 5"
+            image: qgis/qgis:3.44.16-noble@sha256:d2f082a96edf27655430e400a4a0acd14a147b9dd47f25710f6699eae9493ea6
+            qgis_major: "3"
+            qt_major: "5"
+          - label: "4 / Qt 6"
+            image: qgis/qgis:4.4.0-trixie@sha256:54193adc74227c2d264606b721eae13cc23924aa6d23e0572e548d5d7fd1581d
+            qgis_major: "4"
+            qt_major: "6"
+    steps:
+      - name: Checkout repository into AgenticGIS directory
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: AgenticGIS
+
+      - name: Download packaged plugin artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: AgenticGIS-package
+          path: ${{ runner.temp }}/pkg
+
+      - name: Prepare isolated writable profile and runtime directories
+        run: |
+          mkdir -p \
+            "$RUNNER_TEMP/run/profile/profiles/default/QGIS" \
+            "$RUNNER_TEMP/run/home" \
+            "$RUNNER_TEMP/run/config" \
+            "$RUNNER_TEMP/run/cache" \
+            "$RUNNER_TEMP/run/xdg"
+          chmod 0700 "$RUNNER_TEMP/run/xdg"
+          cat > "$RUNNER_TEMP/run/profile/profiles/default/QGIS/QGIS3.ini" <<'EOF'
+          [locale]
+          overrideFlag=true
+          userLocale=pt_BR
+
+          [AgenticGIS]
+          mcp_enabled=false
+          EOF
+
+      - name: Run i18n, unit tests, and desktop ZIP smoke in pinned QGIS container
+        env:
+          QGIS_IMAGE: ${{ matrix.image }}
+          QGIS_MAJOR: ${{ matrix.qgis_major }}
+          QT_MAJOR: ${{ matrix.qt_major }}
+        run: |
+          docker pull "$QGIS_IMAGE"
+          docker run --rm \
+            --network none \
+            --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE/AgenticGIS:/workspace/AgenticGIS:ro" \
+            -v "$RUNNER_TEMP/pkg:/pkg:ro" \
+            -v "$RUNNER_TEMP/run:/run-work:rw" \
+            -e HOME=/run-work/home \
+            -e XDG_CONFIG_HOME=/run-work/config \
+            -e XDG_CACHE_HOME=/run-work/cache \
+            -e XDG_RUNTIME_DIR=/run-work/xdg \
+            -e PYTHONPATH=/workspace:/usr/share/qgis/python \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e QTWEBENGINE_DISABLE_SANDBOX=1 \
+            -e AGENTICGIS_SMOKE_ZIP=/pkg/AgenticGIS.zip \
+            -e AGENTICGIS_SMOKE_RESULT=/run-work/smoke-result.json \
+            -e AGENTICGIS_EXPECT_QGIS_MAJOR="$QGIS_MAJOR" \
+            -e AGENTICGIS_EXPECT_QT_MAJOR="$QT_MAJOR" \
+            "$QGIS_IMAGE" \
+            bash -lc '
+              set -euo pipefail
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "
+              import sys
+              from qgis.core import Qgis
+              from qgis.PyQt.QtCore import QT_VERSION_STR
+              print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR)
+              assert Qgis.QGIS_VERSION.split(\".\")[0] == \"$QGIS_MAJOR\", Qgis.QGIS_VERSION
+              assert QT_VERSION_STR.split(\".\")[0] == \"$QT_MAJOR\", QT_VERSION_STR
+              "
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py \
+                i18n /workspace/AgenticGIS --qt-major "$QT_MAJOR"
+              cd /workspace/AgenticGIS
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -m unittest discover -s tests -v
+              timeout --kill-after=15 180 xvfb-run -a qgis \
+                --nologo --noversioncheck --noplugins \
+                --profiles-path /run-work/profile \
+                --code /workspace/AgenticGIS/ci/qgis_zip_smoke.py
+            '
+          python3 -c '
+          import json, os, sys
+          result_path = os.path.join(os.environ["RUNNER_TEMP"], "run", "smoke-result.json")
+          with open(result_path, "r", encoding="utf-8") as fh:
+              data = json.load(fh)
+          print("Smoke result:", data)
+          if not data.get("ok") or data.get("marker") != "AGENTICGIS_SMOKE_OK":
+              sys.exit(1)
+          '
