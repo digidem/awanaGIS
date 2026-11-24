@@ -22,11 +22,11 @@ if str(ROOT) not in sys.path:
 from ci import check_plugin  # noqa: E402
 
 VALID_METADATA = """[general]
-name=AgenticGIS
+name=awanagis
 qgisMinimumVersion=3.22
 qgisMaximumVersion=4.99
 description=An in-QGIS agentic chat assistant.
-about=AgenticGIS adds a chat dock to QGIS.
+about=awanagis adds a chat dock to QGIS.
 version=0.4.6
 author=Test Author
 email=author@example.invalid
@@ -57,13 +57,13 @@ def _build_valid_zip(dest: Path, extra_entries: list[tuple[str, bytes, int]] | N
                      metadata_override: bytes | None = None) -> Path:
     omit = omit_members or set()
     base_entries: list[tuple[str, bytes, int]] = [
-        ("AgenticGIS/__init__.py", VALID_INIT.encode("utf-8"), stat.S_IFREG | 0o644),
-        ("AgenticGIS/LICENSE", b"GPL-2.0-or-later\n", stat.S_IFREG | 0o644),
-        ("AgenticGIS/metadata.txt", metadata_override or VALID_METADATA.encode("utf-8"), stat.S_IFREG | 0o644),
-        ("AgenticGIS/plugin.py", b"class AgenticGisPlugin:\n    pass\n", stat.S_IFREG | 0o644),
-        ("AgenticGIS/resources/icon.png", b"\x89PNG\r\n\x1a\n", stat.S_IFREG | 0o644),
-        ("AgenticGIS/i18n/AgenticGIS_pt_BR.ts", b"<TS version='2.1'></TS>", stat.S_IFREG | 0o644),
-        ("AgenticGIS/i18n/AgenticGIS_pt_BR.qm", check_plugin.QM_MAGIC + b"\x00\x00", stat.S_IFREG | 0o644),
+        ("awanagis/__init__.py", VALID_INIT.encode("utf-8"), stat.S_IFREG | 0o644),
+        ("awanagis/LICENSE", b"GPL-2.0-or-later\n", stat.S_IFREG | 0o644),
+        ("awanagis/metadata.txt", metadata_override or VALID_METADATA.encode("utf-8"), stat.S_IFREG | 0o644),
+        ("awanagis/plugin.py", b"class AwanaGisPlugin:\n    pass\n", stat.S_IFREG | 0o644),
+        ("awanagis/resources/icon.png", b"\x89PNG\r\n\x1a\n", stat.S_IFREG | 0o644),
+        ("awanagis/i18n/awanagis_pt_BR.ts", b"<TS version='2.1'></TS>", stat.S_IFREG | 0o644),
+        ("awanagis/i18n/awanagis_pt_BR.qm", check_plugin.QM_MAGIC + b"\x00\x00", stat.S_IFREG | 0o644),
     ]
     with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for name, data, mode in base_entries:
@@ -90,25 +90,25 @@ class ArchiveCheckTests(unittest.TestCase):
     def test_valid_zip_passes_and_excludes_dev_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            zip_path = _build_valid_zip(tmp_dir / "AgenticGIS.zip")
+            zip_path = _build_valid_zip(tmp_dir / "awanagis.zip")
             extract_dir = tmp_dir / "extracted"
 
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(report["ok"], report["blocking_errors"])
             self.assertEqual(report["blocking_errors"], [])
             self.assertEqual(report["file_findings"], [])
-            self.assertTrue((extract_dir / "AgenticGIS" / "metadata.txt").is_file())
-            self.assertFalse((extract_dir / "AgenticGIS" / "tests").exists())
-            self.assertFalse((extract_dir / "AgenticGIS" / "ci").exists())
+            self.assertTrue((extract_dir / "awanagis" / "metadata.txt").is_file())
+            self.assertFalse((extract_dir / "awanagis" / "tests").exists())
+            self.assertFalse((extract_dir / "awanagis" / "ci").exists())
 
     def test_real_git_archive_exports_clean_plugin_only(self):
         if not _has_usable_git_repo():
             self.skipTest("usable git checkout required")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            zip_path = tmp_dir / "AgenticGIS.zip"
+            zip_path = tmp_dir / "awanagis.zip"
             proc = subprocess.run(
-                ["git", "archive", "--format=zip", "--prefix=AgenticGIS/", "--output", str(zip_path), "HEAD"],
+                ["git", "archive", "--format=zip", "--prefix=awanagis/", "--output", str(zip_path), "HEAD"],
                 cwd=str(ROOT),
                 capture_output=True,
                 text=True,
@@ -117,7 +117,7 @@ class ArchiveCheckTests(unittest.TestCase):
             extract_dir = tmp_dir / "extracted"
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(report["ok"], report["blocking_errors"])
-            plugin_root = extract_dir / "AgenticGIS"
+            plugin_root = extract_dir / "awanagis"
             for excluded in ("tests", "ci", "docs", ".github", ".flake8", ".gitattributes", ".gitignore"):
                 self.assertFalse((plugin_root / excluded).exists(), f"{excluded} must not ship")
 
@@ -126,7 +126,7 @@ class ArchiveCheckTests(unittest.TestCase):
             tmp_dir = Path(tmp)
             zip_path = _build_valid_zip(
                 tmp_dir / "missing_qm.zip",
-                omit_members={"AgenticGIS/i18n/AgenticGIS_pt_BR.qm"},
+                omit_members={"awanagis/i18n/awanagis_pt_BR.qm"},
             )
             extract_dir = tmp_dir / "extracted"
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
@@ -139,8 +139,8 @@ class ArchiveCheckTests(unittest.TestCase):
             tmp_dir = Path(tmp)
             zip_path = _build_valid_zip(
                 tmp_dir / "bad_qm.zip",
-                omit_members={"AgenticGIS/i18n/AgenticGIS_pt_BR.qm"},
-                extra_entries=[("AgenticGIS/i18n/AgenticGIS_pt_BR.qm", b"not-a-qm-file", stat.S_IFREG | 0o644)],
+                omit_members={"awanagis/i18n/awanagis_pt_BR.qm"},
+                extra_entries=[("awanagis/i18n/awanagis_pt_BR.qm", b"not-a-qm-file", stat.S_IFREG | 0o644)],
             )
             report = check_plugin.validate_and_extract_archive(zip_path, tmp_dir / "extracted")
             self.assertFalse(report["ok"])
@@ -152,7 +152,7 @@ class ArchiveCheckTests(unittest.TestCase):
             zip_path = _build_valid_zip(
                 tmp_dir / "dup.zip",
                 extra_entries=[
-                    ("AgenticGIS/Plugin.py", b"x = 1\n", stat.S_IFREG | 0o644),
+                    ("awanagis/Plugin.py", b"x = 1\n", stat.S_IFREG | 0o644),
                 ],
             )
             report = check_plugin.validate_and_extract_archive(zip_path, tmp_dir / "extracted")
@@ -163,8 +163,8 @@ class ArchiveCheckTests(unittest.TestCase):
             dir_dup_zip = _build_valid_zip(
                 tmp_dir / "dir_dup.zip",
                 extra_entries=[
-                    ("AgenticGIS/core/a.py", b"a = 1\n", stat.S_IFREG | 0o644),
-                    ("AgenticGIS/Core/b.py", b"b = 2\n", stat.S_IFREG | 0o644),
+                    ("awanagis/core/a.py", b"a = 1\n", stat.S_IFREG | 0o644),
+                    ("awanagis/Core/b.py", b"b = 2\n", stat.S_IFREG | 0o644),
                 ],
             )
             rep_dir_dup = check_plugin.validate_and_extract_archive(dir_dup_zip, tmp_dir / "ext_dir_dup")
@@ -176,14 +176,14 @@ class ArchiveCheckTests(unittest.TestCase):
 
     def test_unsafe_members_are_rejected_before_extraction(self):
         unsafe_cases = [
-            ("AgenticGIS/../escape.py", b"x = 1\n", stat.S_IFREG | 0o644),
+            ("awanagis/../escape.py", b"x = 1\n", stat.S_IFREG | 0o644),
             ("/etc/passwd", b"root:x:0:0\n", stat.S_IFREG | 0o644),
             ("OtherRoot/plugin.py", b"x = 1\n", stat.S_IFREG | 0o644),
-            ("AgenticGIS/link.py", b"/etc/passwd", stat.S_IFLNK | 0o777),
-            ("AgenticGIS/resources/aux.txt", b"x\n", stat.S_IFREG | 0o644),
-            ("AgenticGIS/con.py", b"x = 1\n", stat.S_IFREG | 0o644),
-            ("AgenticGIS/bad:name.txt", b"x\n", stat.S_IFREG | 0o644),
-            ("AgenticGIS/trailing.", b"x\n", stat.S_IFREG | 0o644),
+            ("awanagis/link.py", b"/etc/passwd", stat.S_IFLNK | 0o777),
+            ("awanagis/resources/aux.txt", b"x\n", stat.S_IFREG | 0o644),
+            ("awanagis/con.py", b"x = 1\n", stat.S_IFREG | 0o644),
+            ("awanagis/bad:name.txt", b"x\n", stat.S_IFREG | 0o644),
+            ("awanagis/trailing.", b"x\n", stat.S_IFREG | 0o644),
         ]
         for member_name, data, mode in unsafe_cases:
             with self.subTest(member=member_name):
@@ -204,10 +204,10 @@ class ArchiveCheckTests(unittest.TestCase):
                 tmp_dir = Path(tmp)
                 nul_zip = _build_valid_zip(
                     tmp_dir / "nul_hdr.zip",
-                    extra_entries=[("AgenticGIS/nulX.py", b"x = 1\n", stat.S_IFREG | 0o644)],
+                    extra_entries=[("awanagis/nulX.py", b"x = 1\n", stat.S_IFREG | 0o644)],
                 )
                 nul_zip.write_bytes(
-                    nul_zip.read_bytes().replace(b"AgenticGIS/nulX.py", b"AgenticGIS/nul\x00.py")
+                    nul_zip.read_bytes().replace(b"awanagis/nulX.py", b"awanagis/nul\x00.py")
                 )
                 ext_nul = tmp_dir / "ext_nul"
                 rep_nul = check_plugin.validate_and_extract_archive(nul_zip, ext_nul)
@@ -220,13 +220,13 @@ class ArchiveCheckTests(unittest.TestCase):
 
     def test_forbidden_leaks_are_rejected(self):
         forbidden = [
-            "AgenticGIS/.git/config",
-            "AgenticGIS/.env",
-            "AgenticGIS/.secrets.baseline",
-            "AgenticGIS/id_rsa",
-            "AgenticGIS/core/__pycache__/x.cpython-312.pyc",
-            "AgenticGIS/tests/test_x.py",
-            "AgenticGIS/nested.zip",
+            "awanagis/.git/config",
+            "awanagis/.env",
+            "awanagis/.secrets.baseline",
+            "awanagis/id_rsa",
+            "awanagis/core/__pycache__/x.cpython-312.pyc",
+            "awanagis/tests/test_x.py",
+            "awanagis/nested.zip",
         ]
         for member_name in forbidden:
             with self.subTest(member=member_name):
@@ -243,7 +243,7 @@ class ArchiveCheckTests(unittest.TestCase):
     def test_malformed_metadata_and_missing_icon_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            bad_meta = b"[general]\nname=AgenticGIS\nqgisMinimumVersion=4.0\nqgisMaximumVersion=3.22\n"
+            bad_meta = b"[general]\nname=awanagis\nqgisMinimumVersion=4.0\nqgisMaximumVersion=3.22\n"
             zip_path = _build_valid_zip(tmp_dir / "bad_meta.zip", metadata_override=bad_meta)
             report = check_plugin.validate_and_extract_archive(zip_path, tmp_dir / "extracted")
             self.assertFalse(report["ok"])
@@ -251,7 +251,7 @@ class ArchiveCheckTests(unittest.TestCase):
 
             zip_no_icon = _build_valid_zip(
                 tmp_dir / "no_icon.zip",
-                omit_members={"AgenticGIS/resources/icon.png"},
+                omit_members={"awanagis/resources/icon.png"},
             )
             report2 = check_plugin.validate_and_extract_archive(zip_no_icon, tmp_dir / "extracted2")
             self.assertFalse(report2["ok"])
@@ -262,23 +262,23 @@ class ArchiveCheckTests(unittest.TestCase):
             tmp_dir = Path(tmp)
             zip_path = _build_valid_zip(
                 tmp_dir / "findings.zip",
-                omit_members={"AgenticGIS/resources/icon.png"},
+                omit_members={"awanagis/resources/icon.png"},
                 extra_entries=[
-                    ("AgenticGIS/resources/icon.png", b"\x89PNG\r\n\x1a\n", stat.S_IFREG | 0o755),
-                    ("AgenticGIS/.hidden_note", b"note", stat.S_IFREG | 0o644),
-                    ("AgenticGIS/helper.sh", b"echo hi\n", stat.S_IFREG | 0o4644),
+                    ("awanagis/resources/icon.png", b"\x89PNG\r\n\x1a\n", stat.S_IFREG | 0o755),
+                    ("awanagis/.hidden_note", b"note", stat.S_IFREG | 0o644),
+                    ("awanagis/helper.sh", b"echo hi\n", stat.S_IFREG | 0o4644),
                 ],
             )
             extract_dir = tmp_dir / "extracted"
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(report["ok"], report["blocking_errors"])
             categories = {(f["category"], f["path"]) for f in report["file_findings"]}
-            self.assertIn(("FILE_EXECUTABLE", "AgenticGIS/resources/icon.png"), categories)
-            self.assertIn(("FILE_HIDDEN", "AgenticGIS/.hidden_note"), categories)
-            self.assertIn(("FILE_SUSPICIOUS", "AgenticGIS/helper.sh"), categories)
-            self.assertIn(("FILE_UNUSUAL_MODE", "AgenticGIS/helper.sh"), categories)
+            self.assertIn(("FILE_EXECUTABLE", "awanagis/resources/icon.png"), categories)
+            self.assertIn(("FILE_HIDDEN", "awanagis/.hidden_note"), categories)
+            self.assertIn(("FILE_SUSPICIOUS", "awanagis/helper.sh"), categories)
+            self.assertIn(("FILE_UNUSUAL_MODE", "awanagis/helper.sh"), categories)
             # Extracted files must not inherit executable or setuid bits.
-            extracted_mode = (extract_dir / "AgenticGIS" / "helper.sh").stat().st_mode
+            extracted_mode = (extract_dir / "awanagis" / "helper.sh").stat().st_mode
             self.assertEqual(extracted_mode & (stat.S_ISUID | stat.S_IXUSR), 0)
 
     def test_validator_parity_crc_size_license_urls_and_deprecated_flag(self):
@@ -286,7 +286,7 @@ class ArchiveCheckTests(unittest.TestCase):
             tmp_dir = Path(tmp)
 
             # Missing LICENSE is rejected
-            no_lic = _build_valid_zip(tmp_dir / "no_lic.zip", omit_members={"AgenticGIS/LICENSE"})
+            no_lic = _build_valid_zip(tmp_dir / "no_lic.zip", omit_members={"awanagis/LICENSE"})
             rep_lic = check_plugin.validate_and_extract_archive(no_lic, tmp_dir / "ext_lic")
             self.assertFalse(rep_lic["ok"])
             self.assertTrue(any("LICENSE" in e for e in rep_lic["blocking_errors"]))
@@ -307,7 +307,7 @@ class ArchiveCheckTests(unittest.TestCase):
             # Corrupt CRC is rejected before extraction
             crc_zip = _build_valid_zip(tmp_dir / "crc.zip")
             raw = bytearray(crc_zip.read_bytes())
-            idx = raw.find(b"AgenticGisPlugin")
+            idx = raw.find(b"AwanaGisPlugin")
             self.assertNotEqual(idx, -1)
             raw[idx] ^= 0xFF
             crc_zip.write_bytes(bytes(raw))
@@ -366,8 +366,8 @@ class ArchiveCheckTests(unittest.TestCase):
             collision_zip = _build_valid_zip(
                 tmp_dir / "collision.zip",
                 extra_entries=[
-                    ("AgenticGIS/assets", b"file-first", stat.S_IFREG | 0o644),
-                    ("AgenticGIS/assets/logo.png", b"png", stat.S_IFREG | 0o644),
+                    ("awanagis/assets", b"file-first", stat.S_IFREG | 0o644),
+                    ("awanagis/assets/logo.png", b"png", stat.S_IFREG | 0o644),
                 ],
             )
             ext_collision = tmp_dir / "ext_collision"
@@ -400,7 +400,7 @@ class ArchiveCheckTests(unittest.TestCase):
 
 class ScannerAdapterTests(unittest.TestCase):
     def _make_target(self, tmp: str) -> Path:
-        target = Path(tmp) / "AgenticGIS"
+        target = Path(tmp) / "awanagis"
         target.mkdir()
         (target / "plugin.py").write_text("def ok():\n    return 1\n", encoding="utf-8")
         return target
@@ -771,7 +771,7 @@ class ScannerAdapterTests(unittest.TestCase):
     def test_manifest_verification_and_release_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            zip_path = _build_valid_zip(tmp_dir / "AgenticGIS.zip")
+            zip_path = _build_valid_zip(tmp_dir / "awanagis.zip")
             sha = check_plugin._sha256_file(zip_path)
             manifest = tmp_dir / "package-manifest.json"
             manifest.write_text(
@@ -861,16 +861,16 @@ class ScannerAdapterTests(unittest.TestCase):
             (repo / "plugin.py").write_text("# dummy source\n", encoding="utf-8")
             i18n = repo / "i18n"
             i18n.mkdir()
-            (i18n / "AgenticGIS.pro").write_text(
+            (i18n / "awanagis.pro").write_text(
                 "SOURCES = ../plugin.py\n"
-                "TRANSLATIONS = AgenticGIS_pt_BR.ts \\\n"
-                "    AgenticGIS_es.ts\n",
+                "TRANSLATIONS = awanagis_pt_BR.ts \\\n"
+                "    awanagis_es.ts\n",
                 encoding="utf-8",
             )
-            (i18n / "AgenticGIS_pt_BR.ts").write_text(pt_ts, encoding="utf-8")
-            (i18n / "AgenticGIS_pt_BR.qm").write_bytes(b"QM_PT_BR")
-            (i18n / "AgenticGIS_es.ts").write_text(stale_ts, encoding="utf-8")
-            (i18n / "AgenticGIS_es.qm").write_bytes(b"QM_ES")
+            (i18n / "awanagis_pt_BR.ts").write_text(pt_ts, encoding="utf-8")
+            (i18n / "awanagis_pt_BR.qm").write_bytes(b"QM_PT_BR")
+            (i18n / "awanagis_es.ts").write_text(stale_ts, encoding="utf-8")
+            (i18n / "awanagis_es.qm").write_bytes(b"QM_ES")
 
             def fake_subproc(cmd, **_kwargs):
                 if cmd[0] == "pylupdate6":
@@ -892,19 +892,19 @@ class ScannerAdapterTests(unittest.TestCase):
                  patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
                 bad_ts = check_plugin.check_i18n(repo, 6)
             self.assertFalse(bad_ts["ok"])
-            self.assertTrue(any("AgenticGIS_es.ts" in e for e in bad_ts["errors"]), bad_ts)
+            self.assertTrue(any("awanagis_es.ts" in e for e in bad_ts["errors"]), bad_ts)
 
             # Fix second TS, leave second QM stale -> MUST fail
-            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
-            (i18n / "AgenticGIS_es.qm").write_bytes(b"STALE_ES")
+            (i18n / "awanagis_es.ts").write_text(es_ts, encoding="utf-8")
+            (i18n / "awanagis_es.qm").write_bytes(b"STALE_ES")
             with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
                  patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
                 bad_qm = check_plugin.check_i18n(repo, 6)
             self.assertFalse(bad_qm["ok"])
-            self.assertTrue(any("AgenticGIS_es.qm" in e for e in bad_qm["errors"]), bad_qm)
+            self.assertTrue(any("awanagis_es.qm" in e for e in bad_qm["errors"]), bad_qm)
 
             # Matching second QM -> passes, checking both catalogs
-            (i18n / "AgenticGIS_es.qm").write_bytes(b"QM_ES")
+            (i18n / "awanagis_es.qm").write_bytes(b"QM_ES")
             installed = []
 
             class FakeTranslator:
@@ -941,7 +941,7 @@ class ScannerAdapterTests(unittest.TestCase):
 
                 @classmethod
                 def translate(cls, ctx, src):
-                    if ctx == "ChatDock" and src == "Ready" and cls._active == "AgenticGIS_pt_BR.qm":
+                    if ctx == "ChatDock" and src == "Ready" and cls._active == "awanagis_pt_BR.qm":
                         return "Pronto"
                     return src
 
@@ -963,12 +963,12 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertTrue(ok_rep["ok"], ok_rep)
             self.assertTrue(ok_rep["qm_loaded"])
             self.assertEqual(len(ok_rep["catalogs"]), 2)
-            self.assertEqual(installed, ["AgenticGIS_pt_BR.qm", "AgenticGIS_es.qm"])
+            self.assertEqual(installed, ["awanagis_pt_BR.qm", "awanagis_es.qm"])
 
             # Vanished/obsolete TS entries must NOT count toward parity when string is reintroduced
             for inactive_type in ("vanished", "obsolete"):
                 with self.subTest(inactive_type=inactive_type):
-                    (i18n / "AgenticGIS_es.ts").write_text(
+                    (i18n / "awanagis_es.ts").write_text(
                         "<TS version='2.1'><context><name>ChatDock</name>"
                         f"<message><source>Ready</source><translation type='{inactive_type}'>Listo</translation></message>"
                         "</context></TS>\n",
@@ -979,12 +979,12 @@ class ScannerAdapterTests(unittest.TestCase):
                         inactive_rep = check_plugin.check_i18n(repo, 6)
                     self.assertFalse(inactive_rep["ok"])
                     self.assertTrue(
-                        any("AgenticGIS_es.ts" in e for e in inactive_rep["errors"]),
+                        any("awanagis_es.ts" in e for e in inactive_rep["errors"]),
                         inactive_rep,
                     )
 
             # Restore es.ts, add non-literal forwarding helper (ok), then add unlisted literal call (fails)
-            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
+            (i18n / "awanagis_es.ts").write_text(es_ts, encoding="utf-8")
             (repo / "gui").mkdir()
             (repo / "gui" / "forwarding.py").write_text(
                 "from qgis.PyQt.QtCore import QCoreApplication\n"
@@ -1015,7 +1015,7 @@ class ScannerAdapterTests(unittest.TestCase):
 
             # Disambiguation <comment> mismatch must fail parity even when source & context match
             (repo / "unlisted_mod.py").unlink()
-            (i18n / "AgenticGIS_es.ts").write_text(
+            (i18n / "awanagis_es.ts").write_text(
                 "<TS version='2.1'><context><name>ChatDock</name>"
                 "<message><source>Ready</source><comment>old-disambiguation</comment>"
                 "<translation>Listo</translation></message>"
@@ -1027,17 +1027,17 @@ class ScannerAdapterTests(unittest.TestCase):
                 disambig_rep = check_plugin.check_i18n(repo, 6)
             self.assertFalse(disambig_rep["ok"])
             self.assertTrue(
-                any("AgenticGIS_es.ts" in e for e in disambig_rep["errors"]),
+                any("awanagis_es.ts" in e for e in disambig_rep["errors"]),
                 disambig_rep,
             )
 
             # Unlisted/unpaired translation catalog in i18n/ MUST fail
-            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
-            (i18n / "AgenticGIS_fr.qm").write_bytes(b"QM_FR")
+            (i18n / "awanagis_es.ts").write_text(es_ts, encoding="utf-8")
+            (i18n / "awanagis_fr.qm").write_bytes(b"QM_FR")
             unlisted_cat = check_plugin.check_i18n(repo, 6)
             self.assertFalse(unlisted_cat["ok"])
             self.assertTrue(
-                any("AgenticGIS_fr.qm" in e for e in unlisted_cat["errors"]),
+                any("awanagis_fr.qm" in e for e in unlisted_cat["errors"]),
                 unlisted_cat,
             )
 
@@ -1067,7 +1067,7 @@ class RealScannerIntegrationTests(unittest.TestCase):
             if shutil.which(tool) is None and not (Path(sys.executable).parent / tool).is_file()
         ]
         if missing:
-            if os.environ.get("AGENTICGIS_REQUIRE_REAL_SCANNERS") == "1":
+            if os.environ.get("AWANAGIS_REQUIRE_REAL_SCANNERS") == "1":
                 self.fail(f"Required scanner binaries missing from PATH: {missing}")
             self.skipTest(f"Scanner binaries not installed in this environment: {missing}")
 
@@ -1081,7 +1081,7 @@ class RealScannerIntegrationTests(unittest.TestCase):
             arch = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(arch["ok"], arch["blocking_errors"])
             clean_scan = check_plugin.run_scans(
-                extract_dir / "AgenticGIS",
+                extract_dir / "awanagis",
                 "all",
                 ROOT / ".flake8",
                 include_metadata_in_secrets=True,

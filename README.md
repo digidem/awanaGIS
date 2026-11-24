@@ -187,13 +187,13 @@ The `bandit`, `detect-secrets`, `flake8`, archive validator, and file-analysis c
 
 ```sh
 # 1. Regenerate and validate the release ZIP
-TZ=UTC git archive --format=zip --prefix=AgenticGIS/ --output=/tmp/AgenticGIS.zip HEAD
-python3 ci/check_plugin.py archive /tmp/AgenticGIS.zip --extract-to /tmp/agenticgis-extracted
+TZ=UTC git archive --format=zip --prefix=awanagis/ --output=/tmp/awanagis.zip HEAD
+python3 ci/check_plugin.py archive /tmp/awanagis.zip --extract-to /tmp/awanagis-extracted
 
 # 2. Install scanner tools (dev-only) and run scans + unit tests
 python3 -m pip install -r ci/requirements.txt
-python3 ci/check_plugin.py scan /tmp/agenticgis-extracted/AgenticGIS --flake8-config .flake8
-AGENTICGIS_REQUIRE_REAL_SCANNERS=1 python3 -m unittest tests/test_ci_checks.py -v
+python3 ci/check_plugin.py scan /tmp/awanagis-extracted/awanagis --flake8-config .flake8
+AWANAGIS_REQUIRE_REAL_SCANNERS=1 python3 -m unittest tests/test_ci_checks.py -v
 ```
 
 ### Automated Releases
@@ -201,9 +201,9 @@ AGENTICGIS_REQUIRE_REAL_SCANNERS=1 python3 -m unittest tests/test_ci_checks.py -
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds and publishes a QGIS Plugin Repository-ready release package without ever rebuilding the tested ZIP:
 
 1. Bump `version=` (and `experimental=False` for stable, or `experimental=True` for prereleases) in `metadata.txt` on `main`.
-2. Push an annotated tag matching `vX.Y.Z` (or `vX.Y.Z-rc.N` / `-beta.N` / `-alpha.N`) on a commit reachable from `main` (for example `git tag -a v0.4.7 -m "Release v0.4.7" && git push origin v0.4.7`). Triggering `Release QGIS Plugin` manually via `workflow_dispatch` runs a non-publishing dry run.
-3. The workflow validates tag/metadata parity (`ci/check_plugin.py release-meta`), calls `qgis-ci.yml` once to package and test the commit, verifies the downloaded artifact matches the tested SHA-256 and commit SHA, attaches `AgenticGIS-<version>.zip` (containing the single `AgenticGIS/` root folder), `SHA256SUMS.txt`, `package-manifest.json`, and a GitHub build provenance attestation (`gh attestation verify AgenticGIS-<version>.zip -R <owner>/<repo>`). Keep a repository tag ruleset on `v*` blocking tag updates and deletions (and a `release` environment approval/branch rule) so a release tag cannot be moved to another commit during publishing.
-4. Upload `AgenticGIS-<version>.zip` from the GitHub Release to `plugins.qgis.org` manually (note: on `plugins.qgis.org`, the `AgenticGIS` plugin slug is owned by the original listing maintainer).
+2. Push an annotated tag matching `vX.Y.Z` (or `vX.Y.Z-rc.N` / `-beta.N` / `-alpha.N`) on a commit reachable from `main` (for example `git tag -a v0.4.7 -m "Release v0.4.7" && git push digidem v0.4.7`). Triggering `Release QGIS Plugin` manually via `workflow_dispatch` runs a non-publishing dry run.
+3. The workflow validates tag/metadata parity (`ci/check_plugin.py release-meta`), calls `qgis-ci.yml` once to package and test the commit, verifies the downloaded artifact matches the tested SHA-256 and commit SHA, attaches `awanagis-<version>.zip` (containing the single `awanagis/` root folder), `SHA256SUMS.txt`, `package-manifest.json`, and a GitHub build provenance attestation (`gh attestation verify awanagis-<version>.zip -R digidem/awanaGIS`). Keep a repository tag ruleset on `v*` blocking tag updates and deletions (and a `release` environment approval/branch rule) so a release tag cannot be moved to another commit during publishing.
+4. Upload `awanagis-<version>.zip` from the GitHub Release to `plugins.qgis.org` manually (AwanaGIS is published under its own plugins.qgis.org listing).
 
 ## Roadmap & Planned Integrations
 

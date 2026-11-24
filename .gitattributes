@@ -9,3 +9,4 @@ ci/ export-ignore
 docs/ export-ignore
 scripts/ export-ignore
 tests/ export-ignore
+REBRAND_AUDIT.md export-ignore

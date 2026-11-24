@@ -1,4 +1,4 @@
-"""CI validation helpers for AgenticGIS archive packaging, scanners, and i18n."""
+"""CI validation helpers for awanagis archive packaging, scanners, and i18n."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
-EXPECTED_ROOT = "AgenticGIS"
+EXPECTED_ROOT = "awanagis"
 PLUGIN_MAX_UPLOAD_SIZE = 25_000_000
 PLUGIN_MAX_EXPANDED_SIZE = 100_000_000
 QM_MAGIC = b"\x3c\xb8\x64\x18\xca\xef\x9c\x95\xcd\x21\x1c\xbf\x60\xa1\xbd\xdd"
@@ -95,7 +95,7 @@ ALLOWED_TOP_LEVEL_IMPORTS = frozenset({
     "qgis",
     "osgeo",
     "processing",
-    "AgenticGIS",
+    "awanagis",
 })
 OPTIONAL_GUARDED_IMPORTS = frozenset({
     "PIL",
@@ -180,7 +180,7 @@ def _validate_member_path(raw_name: str, is_dir: bool) -> tuple[str | None, str 
 
 
 def _check_forbidden_member(rel_parts: list[str], raw_name: str) -> str | None:
-    """Return a blocking reason if rel_parts under AgenticGIS/ is a forbidden leak."""
+    """Return a blocking reason if rel_parts under awanagis/ is a forbidden leak."""
     basename = rel_parts[-1]
     lower_name = basename.lower()
     if any(part in FORBIDDEN_PATH_COMPONENTS for part in rel_parts):
@@ -1320,14 +1320,14 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
         "ok": False,
     }
     i18n_dir = repo_root / "i18n"
-    pro_path = i18n_dir / "AgenticGIS.pro"
+    pro_path = i18n_dir / "awanagis.pro"
     if not pro_path.is_file():
         report["errors"].append(f"Missing project file: {pro_path}")
         return report
 
     rel_sources, rel_translations = _parse_pro_file(pro_path)
     if not rel_sources or not rel_translations:
-        report["errors"].append("AgenticGIS.pro is missing SOURCES or TRANSLATIONS")
+        report["errors"].append("awanagis.pro is missing SOURCES or TRANSLATIONS")
         return report
 
     abs_sources = [(i18n_dir / rel).resolve() for rel in rel_sources]
@@ -1343,7 +1343,7 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
         return report
     if unlisted_sources:
         report["errors"].append(
-            "Packaged modules with Qt translation calls missing from i18n/AgenticGIS.pro SOURCES: "
+            "Packaged modules with Qt translation calls missing from i18n/awanagis.pro SOURCES: "
             + ", ".join(unlisted_sources)
         )
         return report
@@ -1474,7 +1474,7 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
             all_loaded = False
             continue
         try:
-            if tracked_qm.name == "AgenticGIS_pt_BR.qm":
+            if tracked_qm.name == "awanagis_pt_BR.qm":
                 translated = QCoreApplication.translate("ChatDock", "Ready")
                 if translated != "Pronto":
                     report["errors"].append(
@@ -1805,7 +1805,7 @@ def _format_release_meta_summary(report: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="AgenticGIS CI plugin checks")
+    parser = argparse.ArgumentParser(description="awanagis CI plugin checks")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_archive = sub.add_parser("archive", help="Validate and extract a plugin ZIP")

@@ -6,7 +6,7 @@ on:
   workflow_call:
     outputs:
       zip_sha256:
-        description: SHA-256 of the validated AgenticGIS.zip artifact
+        description: SHA-256 of the validated awanagis.zip artifact
         value: ${{ jobs.package.outputs.zip_sha256 }}
       commit_sha:
         description: Exact tested commit SHA
@@ -47,9 +47,9 @@ jobs:
         id: pkg
         run: |
           mkdir -p "$RUNNER_TEMP/pkg"
-          TZ=UTC git archive --format=zip --prefix=AgenticGIS/ --output="$RUNNER_TEMP/pkg/AgenticGIS.zip" HEAD
+          TZ=UTC git archive --format=zip --prefix=awanagis/ --output="$RUNNER_TEMP/pkg/awanagis.zip" HEAD
           SHA=$(git rev-parse HEAD)
-          ZIP_SHA256=$(sha256sum "$RUNNER_TEMP/pkg/AgenticGIS.zip" | awk '{print $1}')
+          ZIP_SHA256=$(sha256sum "$RUNNER_TEMP/pkg/awanagis.zip" | awk '{print $1}')
           {
             echo "commit_sha=$SHA"
             echo "zip_sha256=$ZIP_SHA256"
@@ -66,30 +66,30 @@ jobs:
       - name: Validate archive structure and extract
         run: |
           python3 ci/check_plugin.py archive \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             --extract-to "$RUNNER_TEMP/extracted" \
             --summary-out "$GITHUB_STEP_SUMMARY"
 
       - name: Gate artifact upload with pre-upload secrets scan
         run: |
           python3 ci/check_plugin.py scan \
-            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            "$RUNNER_TEMP/extracted/awanagis" \
             --check secrets \
             --include-metadata \
             --baseline-file .secrets.baseline
 
       - name: Run CI archive and scanner unit tests
         env:
-          AGENTICGIS_REQUIRE_REAL_SCANNERS: "1"
+          AWANAGIS_REQUIRE_REAL_SCANNERS: "1"
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_ci_checks.py -v
 
       - name: Upload packaged plugin artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: AgenticGIS-package
+          name: awanagis-package
           path: |
-            ${{ runner.temp }}/pkg/AgenticGIS.zip
+            ${{ runner.temp }}/pkg/awanagis.zip
             ${{ runner.temp }}/pkg/package-manifest.json
           retention-days: 7
 
@@ -117,29 +117,29 @@ jobs:
       - name: Download packaged plugin artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: AgenticGIS-package
+          name: awanagis-package
           path: ${{ runner.temp }}/pkg
 
       - name: Verify package manifest and extract archive
         run: |
           python3 ci/check_plugin.py verify-manifest \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             "$RUNNER_TEMP/pkg/package-manifest.json" \
             --expected-commit "$GITHUB_SHA"
           python3 ci/check_plugin.py archive \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             --extract-to "$RUNNER_TEMP/extracted"
 
       - name: Run Bandit scan on packaged plugin
         run: |
           python3 ci/check_plugin.py scan \
-            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            "$RUNNER_TEMP/extracted/awanagis" \
             --check bandit \
             --summary-out "$GITHUB_STEP_SUMMARY"
 
       - name: Run real-scanner unit tests
         env:
-          AGENTICGIS_REQUIRE_REAL_SCANNERS: "1"
+          AWANAGIS_REQUIRE_REAL_SCANNERS: "1"
         run: |
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest tests/test_ci_checks.py -v
 
@@ -167,23 +167,23 @@ jobs:
       - name: Download packaged plugin artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: AgenticGIS-package
+          name: awanagis-package
           path: ${{ runner.temp }}/pkg
 
       - name: Verify package manifest and extract archive
         run: |
           python3 ci/check_plugin.py verify-manifest \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             "$RUNNER_TEMP/pkg/package-manifest.json" \
             --expected-commit "$GITHUB_SHA"
           python3 ci/check_plugin.py archive \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             --extract-to "$RUNNER_TEMP/extracted"
 
       - name: Run detect-secrets scan on packaged plugin
         run: |
           python3 ci/check_plugin.py scan \
-            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            "$RUNNER_TEMP/extracted/awanagis" \
             --check secrets \
             --baseline-file .secrets.baseline \
             --summary-out "$GITHUB_STEP_SUMMARY"
@@ -212,23 +212,23 @@ jobs:
       - name: Download packaged plugin artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: AgenticGIS-package
+          name: awanagis-package
           path: ${{ runner.temp }}/pkg
 
       - name: Verify package manifest and extract archive
         run: |
           python3 ci/check_plugin.py verify-manifest \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             "$RUNNER_TEMP/pkg/package-manifest.json" \
             --expected-commit "$GITHUB_SHA"
           python3 ci/check_plugin.py archive \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             --extract-to "$RUNNER_TEMP/extracted"
 
       - name: Run Python 3.9 compile, static AST guards, and advisory Flake8 checks
         run: |
           python3 ci/check_plugin.py scan \
-            "$RUNNER_TEMP/extracted/AgenticGIS" \
+            "$RUNNER_TEMP/extracted/awanagis" \
             --check quality \
             --flake8-config .flake8 \
             --summary-out "$GITHUB_STEP_SUMMARY"
@@ -263,22 +263,22 @@ jobs:
             qgis_major: "4"
             qt_major: "6"
     steps:
-      - name: Checkout repository into AgenticGIS directory
+      - name: Checkout repository into awanagis directory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: AgenticGIS
+          path: awanagis
           persist-credentials: false
 
       - name: Download packaged plugin artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: AgenticGIS-package
+          name: awanagis-package
           path: ${{ runner.temp }}/pkg
 
       - name: Verify package manifest SHA-256 and commit
         run: |
-          python3 AgenticGIS/ci/check_plugin.py verify-manifest \
-            "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
+          python3 awanagis/ci/check_plugin.py verify-manifest \
+            "$RUNNER_TEMP/pkg/awanagis.zip" \
             "$RUNNER_TEMP/pkg/package-manifest.json" \
             --expected-commit "$GITHUB_SHA"
 
@@ -296,7 +296,7 @@ jobs:
           overrideFlag=true
           userLocale=pt_BR
 
-          [AgenticGIS]
+          [awanagis]
           mcp_enabled=false
           EOF
 
@@ -311,7 +311,7 @@ jobs:
             --network none \
             --security-opt no-new-privileges \
             --user "$(id -u):$(id -g)" \
-            -v "$GITHUB_WORKSPACE/AgenticGIS:/workspace/AgenticGIS:ro" \
+            -v "$GITHUB_WORKSPACE/awanagis:/workspace/awanagis:ro" \
             -v "$RUNNER_TEMP/pkg:/pkg:ro" \
             -v "$RUNNER_TEMP/run:/run-work:rw" \
             -e HOME=/run-work/home \
@@ -321,25 +321,25 @@ jobs:
             -e PYTHONPATH=/workspace:/usr/share/qgis/python \
             -e PYTHONDONTWRITEBYTECODE=1 \
             -e QTWEBENGINE_DISABLE_SANDBOX=1 \
-            -e AGENTICGIS_SMOKE_ZIP=/pkg/AgenticGIS.zip \
-            -e AGENTICGIS_SMOKE_RESULT=/run-work/smoke-result.json \
-            -e AGENTICGIS_EXPECT_QGIS_MAJOR="$QGIS_MAJOR" \
-            -e AGENTICGIS_EXPECT_QT_MAJOR="$QT_MAJOR" \
+            -e AWANAGIS_SMOKE_ZIP=/pkg/awanagis.zip \
+            -e AWANAGIS_SMOKE_RESULT=/run-work/smoke-result.json \
+            -e AWANAGIS_EXPECT_QGIS_MAJOR="$QGIS_MAJOR" \
+            -e AWANAGIS_EXPECT_QT_MAJOR="$QT_MAJOR" \
             "$QGIS_IMAGE" \
             bash -lc '
               set -euo pipefail
-              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "import os; from qgis.core import Qgis; from qgis.PyQt.QtCore import QT_VERSION_STR; print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR); assert Qgis.QGIS_VERSION.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QGIS_MAJOR\"], Qgis.QGIS_VERSION; assert QT_VERSION_STR.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QT_MAJOR\"], QT_VERSION_STR"
-              /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py archive \
-                /pkg/AgenticGIS.zip \
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "import os; from qgis.core import Qgis; from qgis.PyQt.QtCore import QT_VERSION_STR; print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR); assert Qgis.QGIS_VERSION.split(\".\")[0] == os.environ[\"AWANAGIS_EXPECT_QGIS_MAJOR\"], Qgis.QGIS_VERSION; assert QT_VERSION_STR.split(\".\")[0] == os.environ[\"AWANAGIS_EXPECT_QT_MAJOR\"], QT_VERSION_STR"
+              /usr/bin/python3 /workspace/awanagis/ci/check_plugin.py archive \
+                /pkg/awanagis.zip \
                 --extract-to /run-work/zip-extracted
-              QT_QPA_PLATFORM=offscreen /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py \
-                i18n /run-work/zip-extracted/AgenticGIS --qt-major "$AGENTICGIS_EXPECT_QT_MAJOR"
-              cd /workspace/AgenticGIS
+              QT_QPA_PLATFORM=offscreen /usr/bin/python3 /workspace/awanagis/ci/check_plugin.py \
+                i18n /run-work/zip-extracted/awanagis --qt-major "$AWANAGIS_EXPECT_QT_MAJOR"
+              cd /workspace/awanagis
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 -m unittest discover -s tests -v
               PYTHONPATH=/usr/share/qgis/python timeout --kill-after=15 180 xvfb-run -a qgis \
                 --nologo --noversioncheck --noplugins \
                 --profiles-path /run-work/profile \
-                --code /workspace/AgenticGIS/ci/qgis_zip_smoke.py
+                --code /workspace/awanagis/ci/qgis_zip_smoke.py
             '
           python3 -c '
           import json, os, sys
@@ -347,6 +347,6 @@ jobs:
           with open(result_path, "r", encoding="utf-8") as fh:
               data = json.load(fh)
           print("Smoke result:", data)
-          if not data.get("ok") or data.get("marker") != "AGENTICGIS_SMOKE_OK":
+          if not data.get("ok") or data.get("marker") != "AWANAGIS_SMOKE_OK":
               sys.exit(1)
           '

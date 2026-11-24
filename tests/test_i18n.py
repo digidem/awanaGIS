@@ -168,7 +168,7 @@ class SessionTests(unittest.TestCase):
     def test_empty_session_name_fallbacks_localize_in_portuguese(self):
         from qgis.PyQt.QtWidgets import QLabel
 
-        from AgenticGIS.gui.chat_dock import ChatDock
+        from awanagis.gui.chat_dock import ChatDock
 
         translator = load_plugin_translator("pt_BR")
         self.assertIsNotNone(translator)

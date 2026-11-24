@@ -452,6 +452,8 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for idx, line in enumerate(text.splitlines(), 1):
+                if rel == "ci/qgis_zip_smoke.py" and 'tag in ("AwanaGIS", "AgenticGIS")' in line:
+                    continue  # Legacy log tag remains a smoke-test failure.
                 if pattern.search(line):
                     unexpected.append(f"{rel}:{idx}: {line.strip()}")
         self.assertEqual(unexpected, [], f"Unexpected AgenticGIS hits: {unexpected}")
