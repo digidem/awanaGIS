@@ -1546,6 +1546,21 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Importadas {prefs} preferência(s) e {sessions} sessão(ões) para o AwanaGIS.</translation>
         </message>
         <message>
+            <location filename="../gui/settings_dialog.py" line="960" />
+            <source>{count} session(s) skipped as duplicates.</source>
+            <translation>{count} sessão(ões) ignorada(s) por duplicidade.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="960" />
+            <source>{count} session(s) not imported because of the session limit.</source>
+            <translation>{count} sessão(ões) não importada(s) por causa do limite de sessões.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="960" />
+            <source>Imported {prefs} preference(s). Session import was skipped: {error}</source>
+            <translation>{prefs} preferência(s) importada(s). A importação das sessões foi ignorada: {error}</translation>
+        </message>
+        <message>
             <location filename="../gui/settings_dialog.py" line="967" />
             <source>Import warning</source>
             <translation>Aviso na importação</translation>

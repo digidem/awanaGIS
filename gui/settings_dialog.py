@@ -268,11 +268,6 @@ def _cmb(widget):
     return widget
 
 
-def _install_tooltip_palette():
-    """No-op hook retained for compatibility; tooltips are scoped via ``_DIALOG_SS``."""
-    return None
-
-
 def _plugin_version():
     try:
         path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "metadata.txt")
@@ -916,10 +911,7 @@ class SettingsDialog(QDialog):
             self._import_legacy_btn.clicked.connect(self._import_from_agenticgis)
             mig_card.add_row(
                 QCoreApplication.translate("SettingsDialog", "Import from AgenticGIS"),
-                QCoreApplication.translate(
-                    "SettingsDialog",
-                    "Opt-in copy of non-secret preferences and chat sessions. API keys, tokens, and permissions are never copied, and AgenticGIS data is untouched.",
-                ),
+                QCoreApplication.translate("SettingsDialog", "Opt-in copy of non-secret preferences and chat sessions. API keys, tokens, and permissions are never copied, and AgenticGIS data is untouched."),
                 self._import_legacy_btn,
             )
             v.addWidget(mig_card)
@@ -933,10 +925,7 @@ class SettingsDialog(QDialog):
         reply = QMessageBox.question(
             self,
             QCoreApplication.translate("SettingsDialog", "Import from AgenticGIS"),
-            QCoreApplication.translate(
-                "SettingsDialog",
-                "Import {prefs} non-secret preference(s) and {sessions} chat session(s) from AgenticGIS? API keys, tokens, and security approvals will not be copied, and AgenticGIS settings remain untouched.",
-            ).format(prefs=pref_count, sessions=sess_count),
+            QCoreApplication.translate("SettingsDialog", "Import {prefs} non-secret preference(s) and {sessions} chat session(s) from AgenticGIS? API keys, tokens, and security approvals will not be copied, and AgenticGIS settings remain untouched.").format(prefs=pref_count, sessions=sess_count),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -953,19 +942,28 @@ class SettingsDialog(QDialog):
             if imported_sessions > 0:
                 self.sessions_imported = True
             self._load()
+            message = QCoreApplication.translate("SettingsDialog", "Imported {prefs} preference(s) and {sessions} session(s) into AwanaGIS.").format(prefs=imported_prefs, sessions=imported_sessions)
+            skipped = int(result["sessions"].get("skipped_count") or 0)
+            dropped = int(result["sessions"].get("dropped_count") or 0)
+            if skipped > 0:
+                message += " " + QCoreApplication.translate("SettingsDialog", "{count} session(s) skipped as duplicates.").format(count=skipped)
+            if dropped > 0:
+                message += " " + QCoreApplication.translate("SettingsDialog", "{count} session(s) not imported because of the session limit.").format(count=dropped)
             QMessageBox.information(
                 self,
                 QCoreApplication.translate("SettingsDialog", "Import complete"),
-                QCoreApplication.translate(
-                    "SettingsDialog",
-                    "Imported {prefs} preference(s) and {sessions} session(s) into AwanaGIS.",
-                ).format(prefs=imported_prefs, sessions=imported_sessions),
+                message,
             )
         else:
+            error = str(result["sessions"].get("error") or "")
+            imported_prefs = len(result["preferences"].get("imported_keys") or [])
+            if imported_prefs > 0:
+                self._load()
+                error = QCoreApplication.translate("SettingsDialog", "Imported {prefs} preference(s). Session import was skipped: {error}").format(prefs=imported_prefs, error=error)
             QMessageBox.warning(
                 self,
                 QCoreApplication.translate("SettingsDialog", "Import warning"),
-                str(result["sessions"].get("error") or ""),
+                error,
             )
 
     # ── stack panels ──────────────────────────────────────────────────────────

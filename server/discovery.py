@@ -6,8 +6,11 @@ session without hard-coding a port. The file lives at
 ``~/.awanagis/mcp.json`` (override with the ``AWANAGIS_MCP_DISCOVERY``
 environment variable) and holds a list of entries:
 
-    {"servers": [{"url": "http://127.0.0.1:54321/mcp", "pid": 12345,
-                  "host": "127.0.0.1", "port": 54321}]}
+    {"servers": [{"url": "http://127.0.0.1:7318/mcp", "pid": 12345,
+                  "host": "127.0.0.1", "port": 7318}]}
+
+The recorded port is the one actually bound, which may be a fallback port
+rather than the preferred 7318.
 
 Entries are keyed by the QGIS process id: the plugin registers on startup
 and unregisters on unload, and dead-process entries are pruned on every

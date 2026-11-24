@@ -72,6 +72,14 @@ _WEB_FETCH_CHUNK_BYTES = 1024 * 1024
 _WEB_FETCH_MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB
 
 
+def _is_analysis_layer(layer):
+    """True if the layer carries the (current or legacy) analysis marker."""
+    return bool(
+        layer.customProperty("awanagis/analysis")
+        or layer.customProperty("agenticgis/analysis")
+    )
+
+
 def _on_main_thread():
     """True when the caller is on the Qt main (GUI) thread.
 
@@ -852,10 +860,7 @@ class QgisToolkit:
                     feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
                     fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
                     source=layer.publicSource(),
-                    is_analysis=bool(
-                        layer.customProperty("awanagis/analysis")
-                        or layer.customProperty("agenticgis/analysis")
-                    ),
+                    is_analysis=_is_analysis_layer(layer),
                 )
             except Exception:  # nosec B110
                 pass
@@ -4344,10 +4349,7 @@ class QgisToolkit:
     def _maybe_delete_layer_file(self, layer):
         """Delete the source file for an is_analysis temp layer."""
         try:
-            is_analysis = bool(
-                layer.customProperty("awanagis/analysis")
-                or layer.customProperty("agenticgis/analysis")
-            )
+            is_analysis = _is_analysis_layer(layer)
         except Exception:
             is_analysis = False
         if not is_analysis:

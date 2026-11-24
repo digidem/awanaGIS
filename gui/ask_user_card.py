@@ -25,7 +25,8 @@ from .theme import (
     ui_font,
     DOCK_SURFACE as _SURFACE,
     DOCK_SURFACE_2 as _SURFACE_2,
-    DOCK_SURFACE_2 as _SURFACE_HOV,
+    DOCK_BORDER as _SURFACE_HOV,
+    DOCK_ACCENT_DIM as _SURFACE_PRESSED,
     DOCK_CANVAS as _INPUT_BG,
     DOCK_BORDER as _BORDER,
     DOCK_BORDER_SOFT as _BORDER_SOFT,
@@ -120,7 +121,7 @@ class _OptionRow(QFrame):
         bg = _SURFACE_HOV if self._hovered else _SURFACE_2
         border = _BLUE if self.hasFocus() else _BORDER
         if self._pressed:
-            bg = _SURFACE_2
+            bg = _SURFACE_PRESSED
             border = _ACCENT
         self.setStyleSheet(f"""
             QFrame#AskUserOptionRow {{

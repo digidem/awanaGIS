@@ -9,6 +9,8 @@ widget imports continue working cleanly.
 from . import brand as _brand
 
 # ── Active semantic token snapshot ───────────────────────────────────────────
+# Tokens are resolved once at import time, so a QGIS theme switch only takes
+# effect after restarting QGIS (or reloading the plugin).
 _TOKENS = _brand.resolve_semantic_tokens()
 
 DOCK_CANVAS = _TOKENS["canvas"]
