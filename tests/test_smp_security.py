@@ -727,6 +727,87 @@ class SmpSecurityTests(unittest.TestCase):
         self.assertFalse(v2["valid"])
         self.assertTrue(any("does not match smp:sourcefolders" in i.lower() for i in v2["issues"]), v2["issues"])
 
+        # Reject trailing newline on archive tile paths (\Z vs $)
+        newline_zip = os.path.join(self.tmp, "newline_tile.smp")
+        first_tile = next(k for k in entries if k.startswith("s/") and k.endswith(".png"))
+        with zipfile.ZipFile(newline_zip, "w") as zout:
+            for k, data in entries.items():
+                zout.writestr(f"{k}\n" if k == first_tile else k, data)
+        v_nl = smp_tools.smp_validate_file(newline_zip, run_external=False)
+        self.assertFalse(v_nl["valid"])
+        self.assertTrue(any("unexpected non-tile archive entry" in i.lower() for i in v_nl["issues"]), v_nl["issues"])
+
+    def test_sampling_pinning_splits_online_vs_restricted_and_overwrite_rollback_preserves_pair(self):
+        # Sampling approval for online layer must NOT allow another layer becoming restricted while prompt is open
+        l1 = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string", "pin_normal", "memory")
+        l2 = QgsRasterLayer("type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png", "pin_online", "wms")
+        self.project.addMapLayer(l1)
+        self.project.addMapLayer(l2)
+
+        def _promote_l1_to_restricted(*_a, **_kw):
+            l1.setCustomProperty("awanagis/sensitivity", "restricted")
+            return {"choice": "approve_sampling", "cancelled": False}
+
+        tk_pin = Mock(iface=None)
+        tk_pin._ask_user.side_effect = _promote_l1_to_restricted
+        res_pin = smp_tools.dispatch_smp_tool(
+            tk_pin,
+            None,
+            "smp_estimate",
+            {
+                "local_bounds": [-60.1, -3.1, -60.0, -3.0],
+                "local_min_zoom": 10,
+                "local_max_zoom": 10,
+                "sample": True,
+                "allow_online_sampling": True,
+                "allow_restricted_sampling": True,
+            },
+        )
+        self.assertTrue(res_pin["ok"])
+        self.assertEqual(res_pin["sampling_blocked_reason"], "restricted_sampling_unapproved")
+
+        # Failed overwrite (only archive existed beforehand) must restore original archive & leave no orphan manifest
+        l1.setCustomProperty("awanagis/sensitivity", "allow")
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+            layer_ids=[l1.id()],
+        )
+        target_smp = os.path.join(self.tmp, "overwrite_pair.smp")
+        manifest_path = target_smp + ".manifest.json"
+        Path(target_smp).write_bytes(b"ORIG_SMP_ARCHIVE")
+
+        real_publish = smp_exporter._atomic_publish_file
+
+        def _fail_second_publish(src, dst, *, overwrite=False):
+            if os.path.abspath(dst) == os.path.abspath(target_smp):
+                raise OSError("simulated disk error on archive publish")
+            return real_publish(src, dst, overwrite=overwrite)
+
+        with patch.object(smp_exporter, "_atomic_publish_file", side_effect=_fail_second_publish):
+            started = smp_tools.smp_start_export(
+                plan_id=est["plan_id"],
+                output_path=target_smp,
+                approved=True,
+                overwrite=True,
+                approval_callback=lambda _s: True,
+            )
+            self.assertTrue(started["ok"], started)
+            deadline = __import__("time").monotonic() + 10.0
+            while __import__("time").monotonic() < deadline:
+                st = smp_tools.smp_export_status(started["job_id"])
+                if st["state"] in ("completed", "failed", "cancelled"):
+                    break
+                app.processEvents()
+                __import__("time").sleep(0.02)
+        self.assertEqual(st["state"], "failed")
+        self.assertEqual(Path(target_smp).read_bytes(), b"ORIG_SMP_ARCHIVE")
+        self.assertFalse(os.path.exists(manifest_path))
+        self.project.removeMapLayer(l1.id())
+        self.project.removeMapLayer(l2.id())
+
 
 if __name__ == "__main__":
     unittest.main()

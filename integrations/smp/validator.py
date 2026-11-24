@@ -13,8 +13,8 @@ import zipfile
 
 from PIL import Image
 
-_TILE_PATH_RE = re.compile(r"^s/(\d+)/(\d+)/(\d+)/(\d+)\.(png|jpg|jpeg|webp)$")
-_SMP_TILE_TEMPLATE_RE = re.compile(r"^smp://maps\.v1/(s/\d+)/\{z\}/\{x\}/\{y\}\.(png|jpg|jpeg|webp)$")
+_TILE_PATH_RE = re.compile(r"\As/(\d+)/(\d+)/(\d+)/(\d+)\.(png|jpg|jpeg|webp)\Z")
+_SMP_TILE_TEMPLATE_RE = re.compile(r"\Asmp://maps\.v1/(s/\d+)/\{z\}/\{x\}/\{y\}\.(png|jpg|jpeg|webp)\Z")
 
 
 def _find_external_http_urls(obj, path: str = "style") -> list[str]:

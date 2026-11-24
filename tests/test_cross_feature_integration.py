@@ -1,5 +1,6 @@
 """Cross-feature integration tests for AwanaGIS branding, Brazil/Indigenous data, and SMP export."""
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -255,6 +256,16 @@ class CrossFeatureIntegrationTests(unittest.TestCase):
                 year_applied=False,
             )
             self.assertEqual(eff, "2022")
+
+            # No deadlock when _write_vector_atomically holds lock and hardlinks return EPERM
+            layer = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string", "nolink_pts", "memory")
+            nolink_gpkg = tmp_path / "nolink_out.gpkg"
+            with patch("integrations.brazil.loader.os.link", side_effect=OSError(errno.EPERM, "hardlinks disabled")):
+                ok_wl, msg_wl, final_wl = br_loader._write_vector_atomically(
+                    layer, nolink_gpkg, "nolink_pts", replace_existing=False
+                )
+            self.assertTrue(ok_wl, msg_wl)
+            self.assertTrue(final_wl.exists())
 
 
 if __name__ == "__main__":

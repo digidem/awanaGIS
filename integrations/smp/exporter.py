@@ -442,49 +442,54 @@ class _SmpExportTask(QgsTask):
                 job.state = "publishing"
 
             # Atomic paired publication: when overwrite=True, back up any existing files
-            # so a second-step publish failure restores the prior pair instead of leaving
-            # a mismatched archive and manifest.
+            # inside the try/except rollback block so any failure restores the prior pair
+            # and never deletes backups if restoration fails.
             bak_manifest = None
             bak_output = None
-            if job.overwrite:
-                if os.path.exists(job.manifest_path):
-                    fd_m, bak_manifest = tempfile.mkstemp(
-                        prefix=".bak_", suffix=".manifest.json", dir=manifest_dir
-                    )
-                    os.close(fd_m)
-                    os.replace(job.manifest_path, bak_manifest)
-                if os.path.exists(job.output_path):
-                    fd_o, bak_output = tempfile.mkstemp(
-                        prefix=".bak_", suffix=".smp", dir=os.path.dirname(job.output_path)
-                    )
-                    os.close(fd_o)
-                    os.replace(job.output_path, bak_output)
-
+            published_manifest_new = False
+            publish_ok = False
             try:
+                if job.overwrite:
+                    if os.path.exists(job.manifest_path):
+                        fd_m, bak_manifest = tempfile.mkstemp(
+                            prefix=".bak_", suffix=".manifest.json", dir=manifest_dir
+                        )
+                        os.close(fd_m)
+                        os.replace(job.manifest_path, bak_manifest)
+                    if os.path.exists(job.output_path):
+                        fd_o, bak_output = tempfile.mkstemp(
+                            prefix=".bak_", suffix=".smp", dir=os.path.dirname(job.output_path)
+                        )
+                        os.close(fd_o)
+                        os.replace(job.output_path, bak_output)
+
                 _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
-                try:
-                    _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
-                except Exception:
-                    if not job.overwrite:
-                        _safe_unlink(job.manifest_path)
-                    raise
+                published_manifest_new = True
+                _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
+                publish_ok = True
             except Exception:
                 if bak_manifest and os.path.exists(bak_manifest):
                     try:
                         os.replace(bak_manifest, job.manifest_path)
+                        bak_manifest = None
                     except OSError:
                         pass
+                elif published_manifest_new:
+                    _safe_unlink(job.manifest_path)
+
                 if bak_output and os.path.exists(bak_output):
                     try:
                         os.replace(bak_output, job.output_path)
+                        bak_output = None
                     except OSError:
                         pass
                 raise
             finally:
-                if bak_manifest:
-                    _safe_unlink(bak_manifest)
-                if bak_output:
-                    _safe_unlink(bak_output)
+                if publish_ok:
+                    if bak_manifest:
+                        _safe_unlink(bak_manifest)
+                    if bak_output:
+                        _safe_unlink(bak_output)
 
             with job.lock:
                 job.archive_size_bytes = size_bytes

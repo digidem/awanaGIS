@@ -1,6 +1,6 @@
 """Cancellable, atomic, worker-safe source loader and QGIS layer registration."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import errno
 try:
@@ -275,7 +275,9 @@ def _exclusive_file_lock(target_path: Path, timeout_sec: float = 30.0):
             pass
 
 
-def _atomic_publish_no_clobber(src: Path, dst: Path, *, replace_existing: bool) -> None:
+def _atomic_publish_no_clobber(
+    src: Path, dst: Path, *, replace_existing: bool, already_locked: bool = False
+) -> None:
     """Publish ``src`` to ``dst`` atomically, refusing to overwrite when ``replace_existing=False``."""
     if replace_existing:
         os.replace(str(src), str(dst))
@@ -304,7 +306,8 @@ def _atomic_publish_no_clobber(src: Path, dst: Path, *, replace_existing: bool) 
                     if ex.errno == errno.EEXIST:
                         raise FileExistsError(dst) from ex
                     # Last-resort atomic rename under exclusive file lock if filesystem forbids hardlinks
-                    with _exclusive_file_lock(dst):
+                    lock_ctx = nullcontext() if already_locked else _exclusive_file_lock(dst)
+                    with lock_ctx:
                         if dst.exists():
                             raise FileExistsError(dst) from ex
                         os.replace(str(dst_tmp), str(dst))
@@ -365,7 +368,9 @@ def _write_vector_atomically(
         with _exclusive_file_lock(gpkg_path):
             if not gpkg_path.exists():
                 try:
-                    _atomic_publish_no_clobber(tmp_path, gpkg_path, replace_existing=replace_existing)
+                    _atomic_publish_no_clobber(
+                        tmp_path, gpkg_path, replace_existing=replace_existing, already_locked=True
+                    )
                     return True, "", gpkg_path
                 except FileExistsError:
                     pass

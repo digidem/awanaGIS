@@ -59,6 +59,8 @@ def smp_estimate(
     allow_restricted_sampling=False,
     _trusted_sampling_approved=False,
     _trusted_sampling_layer_ids=None,
+    _trusted_sampling_restricted_ids=None,
+    _trusted_sampling_online_ids=None,
     sampling_approval_callback=None,
 ):
     return estimate_plan(
@@ -83,6 +85,8 @@ def smp_estimate(
         allow_restricted_sampling=bool(allow_restricted_sampling),
         _trusted_sampling_approved=bool(_trusted_sampling_approved),
         _trusted_sampling_layer_ids=_trusted_sampling_layer_ids,
+        _trusted_sampling_restricted_ids=_trusted_sampling_restricted_ids,
+        _trusted_sampling_online_ids=_trusted_sampling_online_ids,
         sampling_approval_callback=sampling_approval_callback,
     )
 
@@ -280,6 +284,8 @@ def dispatch_smp_tool(toolkit, executor, name, args):
     clean_args.pop("sampling_approval_callback", None)
     clean_args.pop("_trusted_sampling_approved", None)
     clean_args.pop("_trusted_sampling_layer_ids", None)
+    clean_args.pop("_trusted_sampling_restricted_ids", None)
+    clean_args.pop("_trusted_sampling_online_ids", None)
 
     try:
         if name == "smp_estimate":
@@ -297,7 +303,12 @@ def dispatch_smp_tool(toolkit, executor, name, args):
                 )
                 if can_prompt and _request_trusted_sampling_approval(toolkit, req_info):
                     clean_args["_trusted_sampling_approved"] = True
-                    clean_args["_trusted_sampling_layer_ids"] = list(req_info.get("effective_layer_ids") or [])
+                    clean_args["_trusted_sampling_restricted_ids"] = [
+                        r["id"] for r in (req_info.get("restricted_layers") or [])
+                    ]
+                    clean_args["_trusted_sampling_online_ids"] = [
+                        o["id"] for o in (req_info.get("online_layers") or [])
+                    ]
             est_call = lambda: smp_estimate(**clean_args)
             return executor.run_sync(est_call) if executor is not None else est_call()
         if name == "smp_start_export":

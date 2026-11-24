@@ -363,6 +363,8 @@ def estimate_plan(
     allow_restricted_sampling=False,
     _trusted_sampling_approved=False,
     _trusted_sampling_layer_ids=None,
+    _trusted_sampling_restricted_ids=None,
+    _trusted_sampling_online_ids=None,
     sampling_approval_callback=None,
     registry=None,
 ):
@@ -502,12 +504,21 @@ def estimate_plan(
     sampling_blocked_reason = None
     if use_sample:
         online_layers = [m for m in layer_meta if m["online"]]
-        trusted_ids = set(_trusted_sampling_layer_ids) if _trusted_sampling_layer_ids is not None else None
+        trusted_restricted = (
+            set(_trusted_sampling_restricted_ids)
+            if _trusted_sampling_restricted_ids is not None
+            else (set(_trusted_sampling_layer_ids) if _trusted_sampling_layer_ids is not None else None)
+        )
+        trusted_online = (
+            set(_trusted_sampling_online_ids)
+            if _trusted_sampling_online_ids is not None
+            else (set(_trusted_sampling_layer_ids) if _trusted_sampling_layer_ids is not None else None)
+        )
         if restricted_layers:
             layer_ids_pinned = (
                 _trusted_sampling_approved
-                and trusted_ids is not None
-                and {r["id"] for r in restricted_layers}.issubset(trusted_ids)
+                and trusted_restricted is not None
+                and {r["id"] for r in restricted_layers}.issubset(trusted_restricted)
             )
             trusted_ok = bool(
                 allow_restricted_sampling
@@ -532,8 +543,8 @@ def estimate_plan(
         if sampling_blocked_reason is None and online_layers:
             layer_ids_pinned = (
                 _trusted_sampling_approved
-                and trusted_ids is not None
-                and {o["id"] for o in online_layers}.issubset(trusted_ids)
+                and trusted_online is not None
+                and {o["id"] for o in online_layers}.issubset(trusted_online)
             )
             trusted_ok = bool(
                 allow_online_sampling
