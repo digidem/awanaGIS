@@ -1,5 +1,7 @@
 """Read-only QGIS project and map canvas inspection for CoMapeo SMP exports."""
 
+from __future__ import annotations
+
 from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,

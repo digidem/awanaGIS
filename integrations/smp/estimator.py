@@ -1,5 +1,7 @@
 """Deterministic SMP export planner, immutable plan registry, and calibrated estimator."""
 
+from __future__ import annotations
+
 from collections import OrderedDict
 from dataclasses import dataclass
 import hashlib
@@ -33,6 +35,7 @@ from .vendor.comapeo_smp_generator import SMPGenerator, SourceConfigError
 MAX_PLANS = 128
 PLAN_TTL_SECONDS = 3600.0
 ZIP32_MAX_ENTRIES = 65533
+DEFAULT_MAX_EXPORT_TILES = 250_000
 DEFAULT_SCRATCH_RESERVE_BYTES = 50 * 1024 * 1024
 
 
@@ -52,6 +55,9 @@ class ImmutableExportPlan:
     remote_layer_warnings: tuple
     privacy_licensing_warnings: tuple
     has_restricted_layers: bool
+    estimated_likely_bytes: int = 0
+    estimated_high_bytes: int = 0
+    scratch_disk_bytes: int = 0
 
 
 class PlanRegistry:
@@ -331,6 +337,8 @@ def estimate_plan(
     sample_mode=None,
     sample_size=12,
     target_size_mb=None,
+    allow_online_sampling=False,
+    allow_restricted_sampling=False,
     registry=None,
 ):
     """Build an immutable export plan with exact XYZ tile counts and honest estimates."""
@@ -466,14 +474,30 @@ def estimate_plan(
 
     total_tiles = counts["total"]
     sample_stats = None
+    sampling_blocked_reason = None
     if use_sample:
-        try:
-            sample_stats = _run_tile_sample(
-                gen, render_layers, export_plan["tiles_by_zoom"], fmt, quality, clamped_sample_size
+        if restricted_layers and not allow_restricted_sampling:
+            sampling_blocked_reason = "restricted_sampling_unapproved"
+            warnings.append(
+                "Tile sampling skipped because restricted layers are included; "
+                "pass allow_restricted_sampling=True after user authorization or exclude restricted layers. "
+                "Falling back to uncalibrated rough estimation."
             )
-        except Exception as exc:
-            warnings.append(f"Tile sampling failed ({exc}); falling back to uncalibrated rough estimate.")
-            sample_stats = None
+        elif any(m["online"] for m in layer_meta) and not allow_online_sampling:
+            sampling_blocked_reason = "online_sampling_unapproved"
+            warnings.append(
+                "Tile sampling skipped because online/remote layers would be fetched; "
+                "pass allow_online_sampling=True after user authorization. "
+                "Falling back to uncalibrated rough estimation."
+            )
+        else:
+            try:
+                sample_stats = _run_tile_sample(
+                    gen, render_layers, export_plan["tiles_by_zoom"], fmt, quality, clamped_sample_size
+                )
+            except Exception as exc:
+                warnings.append(f"Tile sampling failed ({exc}); falling back to uncalibrated rough estimate.")
+                sample_stats = None
 
     zip_overhead = 2048 + total_tiles * 96
     if sample_stats is not None:
@@ -526,7 +550,12 @@ def estimate_plan(
             f"Low disk space on '{target_check_dir}': {free_disk_bytes / (1024 * 1024):.1f} MB free."
         )
 
-    if total_tiles > ZIP32_MAX_ENTRIES:
+    if total_tiles > DEFAULT_MAX_EXPORT_TILES:
+        warnings.append(
+            f"Total tiles ({total_tiles:,}) exceed the maximum single-export limit "
+            f"({DEFAULT_MAX_EXPORT_TILES:,}); shrink extent or lower zoom levels."
+        )
+    elif total_tiles > ZIP32_MAX_ENTRIES:
         warnings.append(
             f"Total tiles ({total_tiles:,}) exceed standard ZIP32 entry limit (65,533); "
             "ZIP64 extensions will be required and may not be supported by older mobile importers."
@@ -583,6 +612,9 @@ def estimate_plan(
         remote_layer_warnings=tuple(remote_warnings),
         privacy_licensing_warnings=tuple(privacy_warnings),
         has_restricted_layers=bool(restricted_layers),
+        estimated_likely_bytes=int(est_bytes["likely"]),
+        estimated_high_bytes=int(est_bytes["high"]),
+        scratch_disk_bytes=int(scratch_bytes),
     )
     registry.store(plan_obj)
 
@@ -592,6 +624,7 @@ def estimate_plan(
         "project_fingerprint": proj_fp,
         "cache_safe": cache_safe,
         "calibration": calibration,
+        "sampling_blocked_reason": sampling_blocked_reason,
         "sample_stats": sample_stats,
         "effective_config": effective_config,
         "effective_layers": layer_meta,

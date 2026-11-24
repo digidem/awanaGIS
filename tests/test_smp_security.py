@@ -246,6 +246,7 @@ class SmpSecurityTests(unittest.TestCase):
                 plan_id=est["plan_id"],
                 output_path=out_path,
                 approved=True,
+                approval_callback=lambda _s: True,
             )
             self.assertTrue(started["ok"])
             deadline = __import__("time").monotonic() + 10.0
@@ -282,7 +283,7 @@ class SmpSecurityTests(unittest.TestCase):
 
         # MCP tools/list + tools/call parity
         bridge = object.__new__(mcp_server._RpcServer)
-        bridge.toolkit = Mock(iface=None)
+        bridge.toolkit = Mock(iface=None, spec=["iface"])
         bridge.executor = None
         list_resp = bridge.handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         mcp_names = {t["name"] for t in list_resp["result"]["tools"]}
@@ -310,6 +311,248 @@ class SmpSecurityTests(unittest.TestCase):
         reg = QgsApplication.processingRegistry()
         provider_ids = {p.id() for p in reg.providers()}
         self.assertNotIn("comapeo_smp", provider_ids)
+
+    def test_trusted_human_approval_required_across_dispatch_and_mcp(self):
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+        )
+        self.assertTrue(est["ok"])
+        out_path = os.path.join(self.tmp, "trusted.smp")
+
+        # 1. Direct Python call with approved=True & confirm=True alone MUST fail closed
+        no_cb = smp_tools.smp_start_export(
+            plan_id=est["plan_id"],
+            output_path=out_path,
+            approved=True,
+            confirm=True,
+        )
+        self.assertFalse(no_cb["ok"])
+        self.assertEqual(no_cb["error_code"], "trusted_approval_required")
+        self.assertFalse(os.path.exists(out_path))
+
+        # 2. MCP / dispatch call without interactive _ask_user MUST fail closed
+        bridge = object.__new__(mcp_server._RpcServer)
+        bridge.toolkit = Mock(iface=None, spec=["iface"])
+        bridge.executor = None
+        mcp_deny = bridge.handle_rpc({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "smp_start_export",
+                "arguments": {
+                    "plan_id": est["plan_id"],
+                    "output_path": out_path,
+                    "approved": True,
+                    "approval_callback": "forged",
+                },
+            },
+        })
+        self.assertTrue(mcp_deny["result"]["isError"])
+        deny_payload = json.loads(mcp_deny["result"]["content"][0]["text"])
+        self.assertEqual(deny_payload["error_code"], "trusted_approval_required")
+
+        # 3. Toolkit with _ask_user returning cancel/deny refuses export
+        tk_deny = Mock(iface=None)
+        tk_deny.confirm_external_access.return_value = None
+        tk_deny._ask_user.return_value = {"choice": "deny_export", "free_text": None, "cancelled": False}
+        res_deny = tools_mod.dispatch(
+            tk_deny, None, "smp_start_export",
+            {"plan_id": est["plan_id"], "output_path": out_path, "approved": True},
+        )
+        self.assertFalse(res_deny["ok"])
+        self.assertEqual(res_deny["error_code"], "user_approval_denied")
+        tk_deny._ask_user.assert_called_once()
+        # allow_free_text=False enforced
+        self.assertFalse(tk_deny._ask_user.call_args[0][2])
+        self.assertIn(est["plan_id"], tk_deny._ask_user.call_args[0][0])
+
+        # 4. Toolkit with _ask_user returning exact approve_export choice succeeds
+        tk_ok = Mock(iface=None)
+        tk_ok.confirm_external_access.return_value = None
+        tk_ok._ask_user.return_value = {"choice": "approve_export", "free_text": None, "cancelled": False}
+        res_ok = tools_mod.dispatch(
+            tk_ok, None, "smp_start_export",
+            {"plan_id": est["plan_id"], "output_path": out_path, "approved": True},
+        )
+        self.assertTrue(res_ok["ok"], res_ok)
+        deadline = __import__("time").monotonic() + 10.0
+        while __import__("time").monotonic() < deadline:
+            st = smp_tools.smp_export_status(res_ok["job_id"])
+            if st["state"] in ("completed", "failed", "cancelled"):
+                break
+            app.processEvents()
+            __import__("time").sleep(0.02)
+        self.assertEqual(st["state"], "completed", st)
+
+    def test_no_clobber_race_and_exclusive_manifest_safety(self):
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+        )
+        self.assertTrue(est["ok"])
+        out_path = os.path.join(self.tmp, "race_target.smp")
+        orig_validate = smp_exporter.validate_file
+
+        def _create_target_mid_render(path, run_external=False):
+            res = orig_validate(path, run_external=run_external)
+            # Simulate a concurrent file appearing at out_path before final commit
+            with open(out_path, "wb") as fh:
+                fh.write(b"EXISTING_PROTECTED")
+            return res
+
+        with patch.object(smp_exporter, "validate_file", side_effect=_create_target_mid_render):
+            started = smp_tools.smp_start_export(
+                plan_id=est["plan_id"],
+                output_path=out_path,
+                approved=True,
+                overwrite=False,
+                approval_callback=lambda _s: True,
+            )
+            self.assertTrue(started["ok"], started)
+            deadline = __import__("time").monotonic() + 10.0
+            while __import__("time").monotonic() < deadline:
+                st = smp_tools.smp_export_status(started["job_id"])
+                if st["state"] in ("completed", "failed", "cancelled"):
+                    break
+                app.processEvents()
+                __import__("time").sleep(0.02)
+
+        self.assertEqual(st["state"], "failed", st)
+        self.assertEqual(Path(out_path).read_bytes(), b"EXISTING_PROTECTED")
+        self.assertFalse(os.path.exists(out_path + ".manifest.json"))
+
+        # Symlink at sidecar manifest path must be refused
+        sym_smp = os.path.join(self.tmp, "sym_man.smp")
+        os.symlink(os.path.join(self.tmp, "real_man.json"), sym_smp + ".manifest.json")
+        sym_res = smp_tools.smp_start_export(
+            plan_id=est["plan_id"],
+            output_path=sym_smp,
+            approved=True,
+            overwrite=True,
+            approval_callback=lambda _s: True,
+        )
+        self.assertFalse(sym_res["ok"])
+        self.assertEqual(sym_res["error_code"], "symlink_rejected")
+
+    def test_tile_limit_and_disk_budget_rejection(self):
+        # Plan exceeding tile cap -> rejected before queuing
+        huge = smp_tools.smp_estimate(
+            local_bounds=[-65.0, -10.0, -55.0, 0.0],
+            local_min_zoom=10,
+            local_max_zoom=16,
+            output_dir=self.tmp,
+            sample=False,
+        )
+        self.assertTrue(huge["ok"])
+        self.assertGreater(huge["tile_counts"]["total"], smp_estimator.DEFAULT_MAX_EXPORT_TILES)
+        huge_res = smp_tools.smp_start_export(
+            plan_id=huge["plan_id"],
+            output_path=os.path.join(self.tmp, "huge.smp"),
+            approved=True,
+            approval_callback=lambda _s: True,
+        )
+        self.assertFalse(huge_res["ok"])
+        self.assertEqual(huge_res["error_code"], "tile_limit_exceeded")
+
+        # Insufficient disk budget -> rejected before queuing
+        small = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+            sample=False,
+        )
+        self.assertTrue(small["ok"])
+        FakeUsage = type("FakeUsage", (), {"total": 1000, "used": 999, "free": 1024})
+        with patch.object(smp_exporter.shutil, "disk_usage", return_value=FakeUsage()):
+            disk_res = smp_tools.smp_start_export(
+                plan_id=small["plan_id"],
+                output_path=os.path.join(self.tmp, "nodisk.smp"),
+                approved=True,
+                approval_callback=lambda _s: True,
+            )
+        self.assertFalse(disk_res["ok"])
+        self.assertEqual(disk_res["error_code"], "insufficient_disk_space")
+
+    def test_sampling_refused_for_unapproved_restricted_and_online_layers(self):
+        restricted = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string(40)", "restr_sample", "memory")
+        restricted.setCustomProperty("awanagis/export_policy", "restricted")
+        self.project.addMapLayer(restricted)
+
+        est_r = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            sample=True,
+        )
+        self.assertTrue(est_r["ok"])
+        self.assertEqual(est_r["sampling_blocked_reason"], "restricted_sampling_unapproved")
+        self.assertEqual(est_r["calibration"], "uncalibrated_rough")
+        self.assertIsNone(est_r["sample_stats"])
+        self.project.removeMapLayer(restricted.id())
+
+        xyz_layer = QgsRasterLayer("type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png", "osm_online", "wms")
+        self.project.addMapLayer(xyz_layer)
+        est_o = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            sample=True,
+        )
+        self.assertTrue(est_o["ok"])
+        self.assertEqual(est_o["sampling_blocked_reason"], "online_sampling_unapproved")
+        self.assertEqual(est_o["calibration"], "uncalibrated_rough")
+        self.assertIsNone(est_o["sample_stats"])
+
+    def test_validator_catches_missing_tiles_out_of_range_and_oversized_entries(self):
+        # Generate a valid 2-tile fixture copy, then remove 1 tile and test
+        fixture = ROOT / "tests" / "fixtures" / "smp" / "sample_local_only.smp"
+        with zipfile.ZipFile(fixture, "r") as zin:
+            entries = {n: zin.read(n) for n in zin.namelist()}
+        tile_keys = sorted(k for k in entries if k.startswith("s/"))
+        self.assertGreaterEqual(len(tile_keys), 2)
+
+        missing_zip = os.path.join(self.tmp, "missing_tile.smp")
+        with zipfile.ZipFile(missing_zip, "w") as zout:
+            for k, data in entries.items():
+                if k == tile_keys[-1]:
+                    continue
+                zout.writestr(k, data)
+        val_missing = smp_tools.smp_validate_file(missing_zip, run_external=False)
+        self.assertFalse(val_missing["valid"])
+        self.assertTrue(any("missing" in iss.lower() for iss in val_missing["issues"]), val_missing["issues"])
+
+        # Out-of-range coordinate tile
+        oor_zip = os.path.join(self.tmp, "oor_tile.smp")
+        with zipfile.ZipFile(oor_zip, "w") as zout:
+            for k, data in entries.items():
+                zout.writestr(k, data)
+            zout.writestr("s/0/10/0/0.png", entries[tile_keys[0]])
+        val_oor = smp_tools.smp_validate_file(oor_zip, run_external=False)
+        self.assertFalse(val_oor["valid"])
+        self.assertTrue(any("outside declared bounds" in iss.lower() for iss in val_oor["issues"]), val_oor["issues"])
+
+        # Oversized style.json detected via ZipInfo.file_size BEFORE zf.read()
+        fake_info = Mock(filename="style.json", file_size=50 * 1024 * 1024)
+        fake_ver = Mock(filename="VERSION", file_size=3)
+        fake_zf = Mock()
+        fake_zf.__enter__ = Mock(return_value=fake_zf)
+        fake_zf.__exit__ = Mock(return_value=False)
+        fake_zf.infolist.return_value = [fake_ver, fake_info]
+        fake_zf.read.side_effect = lambda name: b"1.0" if name == "VERSION" else (_ for _ in ()).throw(AssertionError("Should not read oversized style.json!"))
+        fake_path = os.path.join(self.tmp, "bomb.smp")
+        Path(fake_path).write_bytes(b"PK")
+        with patch("zipfile.ZipFile", return_value=fake_zf):
+            val_bomb = smp_tools.smp_validate_file(fake_path, run_external=False)
+        self.assertFalse(val_bomb["valid"])
+        self.assertTrue(any("exceeds" in iss.lower() for iss in val_bomb["issues"]), val_bomb["issues"])
+        fake_zf.testzip.assert_not_called()
 
 
 if __name__ == "__main__":

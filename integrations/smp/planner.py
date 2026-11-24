@@ -1,5 +1,7 @@
 """Region & zoom recommendation planner for CoMapeo SMP exports."""
 
+from __future__ import annotations
+
 import math
 
 from qgis.core import (

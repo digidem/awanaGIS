@@ -1,7 +1,10 @@
 """Pure-Python + optional external SMP archive structural and image validator."""
 
+from __future__ import annotations
+
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -12,6 +15,35 @@ from PIL import Image
 
 _TILE_PATH_RE = re.compile(r"^s/(\d+)/(\d+)/(\d+)/(\d+)\.(png|jpg|jpeg|webp)$")
 _MAX_PIL_IMAGE_SAMPLES = 50
+MAX_ARCHIVE_ENTRIES = 300_000
+MAX_VERSION_ENTRY_BYTES = 64
+MAX_STYLE_JSON_BYTES = 16 * 1024 * 1024
+MAX_TILE_ENTRY_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
+MAX_TESTZIP_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_COVERAGE_SET_TILES = 250_000
+
+
+def _deg2num(lat_deg, lon_deg, zoom):
+    lat_rad = math.radians(lat_deg)
+    n = 1 << zoom
+    xtile = int((lon_deg + 180.0) / 360.0 * n)
+    ytile = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+    return xtile, ytile
+
+
+def _expected_tile_range(bounds, zoom):
+    west, south, east, north = (float(v) for v in bounds)
+    north = min(85.0511, max(-85.0511, north))
+    south = min(85.0511, max(-85.0511, south))
+    n = 1 << zoom
+    min_x, min_y = _deg2num(north, west, zoom)
+    max_x, max_y = _deg2num(south, east, zoom)
+    min_x = max(0, min(n - 1, min_x))
+    max_x = max(0, min(n - 1, max_x))
+    min_y = max(0, min(n - 1, min_y))
+    max_y = max(0, min(n - 1, max_y))
+    return min_x, max_x, min_y, max_y
 
 
 def _is_unsafe_archive_path(name):
@@ -178,7 +210,53 @@ def validate_file(file_path, run_external=True):
 
     try:
         with zipfile.ZipFile(abs_path, "r") as zf:
-            names = zf.namelist()
+            infos = zf.infolist()
+            if len(infos) > MAX_ARCHIVE_ENTRIES:
+                issues.append(
+                    f"Archive entry count ({len(infos):,}) exceeds maximum allowed ({MAX_ARCHIVE_ENTRIES:,})."
+                )
+                return {
+                    "ok": True,
+                    "valid": False,
+                    "file_path": abs_path,
+                    "archive_size_bytes": archive_size,
+                    "tile_count": 0,
+                    "pil_tiles_verified": 0,
+                    "sources": {},
+                    "zoom_ranges": {},
+                    "issues": issues,
+                    "consumer_test_status": {"cli_available": False, "reader_check_available": False},
+                }
+
+            total_uncompressed = 0
+            info_by_name = {}
+            names = []
+            for info in infos:
+                name = info.filename
+                names.append(name)
+                if info.file_size < 0:
+                    issues.append(f"Invalid negative uncompressed size on entry: {name!r}")
+                total_uncompressed += max(0, int(info.file_size))
+                info_by_name[name] = info
+
+            if total_uncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                issues.append(
+                    f"Total uncompressed archive size ({total_uncompressed:,} B) exceeds safety limit "
+                    f"({MAX_TOTAL_UNCOMPRESSED_BYTES:,} B)."
+                )
+                return {
+                    "ok": True,
+                    "valid": False,
+                    "file_path": abs_path,
+                    "archive_size_bytes": archive_size,
+                    "tile_count": 0,
+                    "pil_tiles_verified": 0,
+                    "sources": {},
+                    "zoom_ranges": {},
+                    "issues": issues,
+                    "consumer_test_status": {"cli_available": False, "reader_check_available": False},
+                }
+
             if len(names) != len(set(names)):
                 issues.append("Archive contains duplicate entry names.")
 
@@ -188,15 +266,24 @@ def validate_file(file_path, run_external=True):
                 if os.path.basename(name) == "_cache_meta.json":
                     issues.append(f"Internal cache metadata leaked into archive: {name!r}")
 
-            if "VERSION" not in names:
+            if "VERSION" not in info_by_name:
                 issues.append("Missing required 'VERSION' entry.")
+            elif info_by_name["VERSION"].file_size > MAX_VERSION_ENTRY_BYTES:
+                issues.append(
+                    f"'VERSION' entry uncompressed size ({info_by_name['VERSION'].file_size} B) exceeds {MAX_VERSION_ENTRY_BYTES} B."
+                )
             else:
                 ver_text = zf.read("VERSION").decode("utf-8", errors="replace").strip()
                 if ver_text != "1.0":
                     issues.append(f"Unexpected VERSION '{ver_text}' (expected '1.0').")
 
-            if "style.json" not in names:
+            if "style.json" not in info_by_name:
                 issues.append("Missing required 'style.json' entry.")
+                style = None
+            elif info_by_name["style.json"].file_size > MAX_STYLE_JSON_BYTES:
+                issues.append(
+                    f"'style.json' uncompressed size ({info_by_name['style.json'].file_size:,} B) exceeds {MAX_STYLE_JSON_BYTES:,} B."
+                )
                 style = None
             else:
                 try:
@@ -205,9 +292,16 @@ def validate_file(file_path, run_external=True):
                     issues.append(f"Invalid style.json JSON: {exc}")
                     style = None
 
-            bad_member = zf.testzip()
-            if bad_member is not None:
-                issues.append(f"ZIP CRC/integrity failure on entry: {bad_member}")
+            for info in infos:
+                if info.filename not in ("VERSION", "style.json") and info.file_size > MAX_TILE_ENTRY_BYTES:
+                    issues.append(
+                        f"Entry '{info.filename}' uncompressed size ({info.file_size:,} B) exceeds {MAX_TILE_ENTRY_BYTES:,} B."
+                    )
+
+            if not issues and total_uncompressed <= MAX_TESTZIP_UNCOMPRESSED_BYTES:
+                bad_member = zf.testzip()
+                if bad_member is not None:
+                    issues.append(f"ZIP CRC/integrity failure on entry: {bad_member}")
 
             if isinstance(style, dict):
                 if style.get("version") != 8:
@@ -286,7 +380,36 @@ def validate_file(file_path, run_external=True):
                             "tile_count": 0,
                         }
 
-                    # Scan tile entries
+                    # Compute expected coverage per source and scan tile entries
+                    expected_ranges_by_sid = {}
+                    expected_total_by_sid = {}
+                    seen_coords_by_sid = {}
+                    observed_zoom_counts_by_sid = {}
+                    for sid, src in sources.items():
+                        sbounds = src.get("bounds")
+                        zmin = src.get("minzoom")
+                        zmax = src.get("maxzoom")
+                        if (
+                            isinstance(sbounds, list)
+                            and len(sbounds) == 4
+                            and all(isinstance(v, (int, float)) for v in sbounds)
+                            and sbounds[0] < sbounds[2]
+                            and sbounds[1] < sbounds[3]
+                            and isinstance(zmin, int)
+                            and isinstance(zmax, int)
+                            and 0 <= zmin <= zmax <= 24
+                        ):
+                            z_ranges = {}
+                            exp_tot = 0
+                            for z in range(zmin, zmax + 1):
+                                rng = _expected_tile_range(sbounds, z)
+                                z_ranges[z] = rng
+                                exp_tot += (rng[1] - rng[0] + 1) * (rng[3] - rng[2] + 1)
+                            expected_ranges_by_sid[sid] = z_ranges
+                            expected_total_by_sid[sid] = exp_tot
+                            seen_coords_by_sid[sid] = set() if exp_tot <= MAX_COVERAGE_SET_TILES else None
+                            observed_zoom_counts_by_sid[sid] = {}
+
                     for name in names:
                         if name in ("VERSION", "style.json"):
                             continue
@@ -294,9 +417,11 @@ def validate_file(file_path, run_external=True):
                         if not m:
                             issues.append(f"Unexpected non-tile archive entry: {name!r}")
                             continue
-                        s_idx, z_str, _x_str, _y_str, ext = m.groups()
+                        s_idx, z_str, x_str, y_str, ext = m.groups()
                         folder = f"s/{s_idx}"
                         z_int = int(z_str)
+                        x_int = int(x_str)
+                        y_int = int(y_str)
                         if folder not in expected_folders:
                             issues.append(f"Tile '{name}' references undeclared source folder '{folder}'.")
                             continue
@@ -307,6 +432,25 @@ def validate_file(file_path, run_external=True):
                             issues.append(
                                 f"Tile '{name}' zoom {z_int} outside declared range {zmin}..{zmax} for '{sid}'."
                             )
+                        else:
+                            n_axis = 1 << z_int if 0 <= z_int <= 24 else 0
+                            if n_axis == 0 or not (0 <= x_int < n_axis and 0 <= y_int < n_axis):
+                                issues.append(
+                                    f"Tile '{name}' coordinates ({z_int}/{x_int}/{y_int}) out of XYZ bounds."
+                                )
+                            elif sid in expected_ranges_by_sid and z_int in expected_ranges_by_sid[sid]:
+                                r_min_x, r_max_x, r_min_y, r_max_y = expected_ranges_by_sid[sid][z_int]
+                                if not (r_min_x <= x_int <= r_max_x and r_min_y <= y_int <= r_max_y):
+                                    issues.append(
+                                        f"Tile '{name}' ({z_int}/{x_int}/{y_int}) outside declared bounds range "
+                                        f"[{r_min_x}..{r_max_x}, {r_min_y}..{r_max_y}] for '{sid}'."
+                                    )
+                                else:
+                                    obs_z = observed_zoom_counts_by_sid[sid]
+                                    obs_z[z_int] = obs_z.get(z_int, 0) + 1
+                                    seen_set = seen_coords_by_sid.get(sid)
+                                    if seen_set is not None:
+                                        seen_set.add((z_int, x_int, y_int))
                         decl_fmt = str(src.get("format") or "").lower()
                         if decl_fmt and ext != decl_fmt and not (decl_fmt == "jpg" and ext == "jpeg"):
                             issues.append(
@@ -314,6 +458,37 @@ def validate_file(file_path, run_external=True):
                             )
                         tile_entries.append(name)
                         sources_summary[sid]["tile_count"] += 1
+
+                    # Check missing tiles against declared coverage
+                    for sid, z_ranges in expected_ranges_by_sid.items():
+                        seen_set = seen_coords_by_sid.get(sid)
+                        folder = sources_summary[sid]["folder"]
+                        decl_ext = str(sources_summary[sid].get("format") or "png").lower()
+                        if seen_set is not None:
+                            missing = []
+                            missing_count = 0
+                            for z, (r_min_x, r_max_x, r_min_y, r_max_y) in z_ranges.items():
+                                for gx in range(r_min_x, r_max_x + 1):
+                                    for gy in range(r_min_y, r_max_y + 1):
+                                        if (z, gx, gy) not in seen_set:
+                                            missing_count += 1
+                                            if len(missing) < 5:
+                                                missing.append(f"{folder}/{z}/{gx}/{gy}.{decl_ext}")
+                            if missing_count > 0:
+                                issues.append(
+                                    f"Source '{sid}' is missing {missing_count} tile(s) from declared coverage "
+                                    f"(e.g. {', '.join(missing)})."
+                                )
+                        else:
+                            obs_z = observed_zoom_counts_by_sid.get(sid, {})
+                            for z, (r_min_x, r_max_x, r_min_y, r_max_y) in z_ranges.items():
+                                exp_z_count = (r_max_x - r_min_x + 1) * (r_max_y - r_min_y + 1)
+                                got_z_count = obs_z.get(z, 0)
+                                if got_z_count < exp_z_count:
+                                    issues.append(
+                                        f"Source '{sid}' zoom {z} has {got_z_count}/{exp_z_count} tiles "
+                                        f"(missing {exp_z_count - got_z_count})."
+                                    )
 
                 if not tile_entries:
                     issues.append("Archive contains zero raster tile files.")
@@ -327,6 +502,9 @@ def validate_file(file_path, run_external=True):
                     step = max(1, len(tile_entries) // _MAX_PIL_IMAGE_SAMPLES)
                     sampled_tiles = tile_entries[::step][:_MAX_PIL_IMAGE_SAMPLES]
                     for tname in sampled_tiles:
+                        tinfo = info_by_name.get(tname)
+                        if tinfo is not None and tinfo.file_size > MAX_TILE_ENTRY_BYTES:
+                            continue
                         try:
                             raw = zf.read(tname)
                             with Image.open(io.BytesIO(raw)) as im:

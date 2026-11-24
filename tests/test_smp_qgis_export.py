@@ -143,6 +143,7 @@ class SmpQgisExportTests(unittest.TestCase):
             plan_id=est["plan_id"],
             output_path=out_path,
             approved=True,
+            approval_callback=lambda _s: True,
         )
         self.assertTrue(started["ok"], started)
         st = _wait_for_job(started["job_id"])
@@ -249,6 +250,7 @@ class SmpQgisExportTests(unittest.TestCase):
             plan_id=est["plan_id"],
             output_path=out_path,
             approved=True,
+            approval_callback=lambda _s: True,
         )
         self.assertTrue(started["ok"])
         time.sleep(0.05)
@@ -261,6 +263,117 @@ class SmpQgisExportTests(unittest.TestCase):
         self.assertFalse(os.path.exists(out_path))
         leftover_tmps = [f for f in os.listdir(self.tmp) if ".smp.tmp" in f]
         self.assertEqual(leftover_tmps, [])
+
+    def test_isolated_snapshot_preserves_unsaved_edits_when_live_project_mutates(self):
+        self.poly_layer.startEditing()
+        extra = QgsFeature(self.poly_layer.fields())
+        extra.setGeometry(
+            QgsGeometry.fromWkt(
+                "POLYGON((-60.08 -3.08, -60.02 -3.08, -60.02 -3.02, -60.08 -3.02, -60.08 -3.08))"
+            )
+        )
+        extra.setAttributes(["Unsaved Feature"])
+        self.poly_layer.addFeature(extra)
+
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.08, -3.08, -60.02, -3.02],
+            local_min_zoom=10,
+            local_max_zoom=11,
+            tile_format="PNG",
+            output_dir=self.tmp,
+            sample=False,
+        )
+        self.assertTrue(est["ok"], est)
+        out_path = os.path.join(self.tmp, "isolated_snap.smp")
+
+        orig_init = smp_exporter.SMPGenerator.__init__
+        observed_projects = []
+
+        def _spy_init(gen_self, feedback=None, project=None):
+            observed_projects.append(project)
+            return orig_init(gen_self, feedback=feedback, project=project)
+
+        with patch.object(smp_exporter.SMPGenerator, "__init__", _spy_init):
+            started = smp_tools.smp_start_export(
+                plan_id=est["plan_id"],
+                output_path=out_path,
+                approved=True,
+                approval_callback=lambda _s: True,
+            )
+            self.assertTrue(started["ok"], started)
+            # Mutate the live project layer immediately while worker renders snapshot
+            self.poly_layer.rollBack()
+            st = _wait_for_job(started["job_id"])
+
+        self.assertEqual(st["state"], "completed", st)
+        self.assertTrue(os.path.isfile(out_path))
+        self.assertTrue(observed_projects)
+        self.assertIsNotNone(observed_projects[0])
+        self.assertIsNot(observed_projects[0], self.project)
+
+    def test_render_layer_errors_fail_export_cleanly(self):
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.08, -3.08, -60.02, -3.02],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            tile_format="PNG",
+            output_dir=self.tmp,
+            sample=False,
+        )
+        self.assertTrue(est["ok"])
+        out_path = os.path.join(self.tmp, "render_err.smp")
+        fake_err = Mock(layerID=self.poly_layer.id(), message="Simulated provider render error")
+        with patch(
+            "qgis.core.QgsMapRendererCustomPainterJob.errors",
+            return_value=[fake_err],
+        ):
+            started = smp_tools.smp_start_export(
+                plan_id=est["plan_id"],
+                output_path=out_path,
+                approved=True,
+                approval_callback=lambda _s: True,
+            )
+            self.assertTrue(started["ok"], started)
+            st = _wait_for_job(started["job_id"])
+
+        self.assertEqual(st["state"], "failed", st)
+        self.assertIn("Simulated provider render error", st["error"])
+        self.assertFalse(os.path.exists(out_path))
+        self.assertFalse(os.path.exists(out_path + ".manifest.json"))
+
+    def test_cancel_during_validation_prevents_publish(self):
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.08, -3.08, -60.02, -3.02],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            tile_format="PNG",
+            output_dir=self.tmp,
+            sample=False,
+        )
+        self.assertTrue(est["ok"])
+        out_path = os.path.join(self.tmp, "cancel_val.smp")
+        orig_validate = smp_exporter.validate_file
+        started_holder = {}
+
+        def _cancelling_validate(path, run_external=False):
+            res = orig_validate(path, run_external=run_external)
+            smp_tools.smp_cancel_export(started_holder["job_id"])
+            return res
+
+        with patch.object(smp_exporter, "validate_file", side_effect=_cancelling_validate):
+            started = smp_tools.smp_start_export(
+                plan_id=est["plan_id"],
+                output_path=out_path,
+                approved=True,
+                approval_callback=lambda _s: True,
+            )
+            started_holder["job_id"] = started["job_id"]
+            self.assertTrue(started["ok"], started)
+            st = _wait_for_job(started["job_id"])
+
+        self.assertEqual(st["state"], "cancelled", st)
+        self.assertFalse(os.path.exists(out_path))
+        self.assertFalse(os.path.exists(out_path + ".manifest.json"))
 
     def test_plugin_unload_cleans_up_exports(self):
         iface = Mock()

@@ -87,19 +87,29 @@ Executed automatically by `smp_validate_file(..., run_external=True)` (`Reader.o
 
 ## 5. Exact Test Commands & Results
 
-1. **SMP test suite (`tests/test_smp_*.py`):**
+1. **SMP + Permission test suite (`tests/test_smp_*.py` + `tests/test_permissions.py`):**
    ```bash
    PYTHONPATH=/home/luandro/Dev/digidem/worktrees/awanagis-comapeo-smp QT_QPA_PLATFORM=offscreen \
-     /usr/bin/python3 -m unittest tests/test_smp_planner.py tests/test_smp_qgis_export.py tests/test_smp_security.py -v
+     /usr/bin/python3 -m unittest tests/test_smp_planner.py tests/test_smp_qgis_export.py tests/test_smp_security.py tests/test_permissions.py -v
    ```
-   - Result (after final edits & fixture creation): **17 ran, 17 PASS, 0 FAIL, 0 SKIP** (verified below).
+   - Result (after all P1/P2 review fixes): **31 ran (25 SMP + 6 permission tests), 31 PASS, 0 FAIL, 0 SKIP**.
+   - Includes regression tests for:
+     - Trusted interactive `_ask_user` / `approval_callback` gate (fails closed on MCP/agent self-approval)
+     - Main-thread isolated `QgsProject` + cloned-layer snapshot (with unsaved edits preserved & live project mutation mid-render)
+     - Atomic no-clobber publication (`os.link` / `O_CREAT|O_EXCL`) + exclusive staging manifest (`NamedTemporaryFile`)
+     - Tile-count cap (`250,000`) & dual-volume disk budget enforcement
+     - Refusal of unapproved `restricted` / `online` sampling (`allow_restricted_sampling` / `allow_online_sampling`)
+     - Failure on `QgsMapRendererCustomPainterJob.errors()`
+     - Cancellation during `validating` preventing publication
+     - Missing/out-of-range tile coverage detection and `ZipInfo.file_size` bounds before decompression
+     - `from __future__ import annotations` / `Optional[...]` Python 3.8/3.9 compatibility
 
 2. **Full worktree test discovery:**
    ```bash
    PYTHONPATH=/home/luandro/Dev/digidem/worktrees/awanagis-comapeo-smp QT_QPA_PLATFORM=offscreen \
      /usr/bin/python3 -m unittest discover -s tests -v
    ```
-   - Result: **29 ran — 27 PASS, 0 FAIL, 2 pre-existing `ModuleNotFoundError: No module named 'AgenticGIS'` errors** in `tests/test_i18n.py` and `tests/test_presentation.py::test_generated_chart_titles_preserve_wire_values` because this worktree directory is named `awanagis/` while those two pre-branding tests still import `AgenticGIS.*`.
+   - Result: **37 ran — 35 PASS, 0 FAIL, 2 pre-existing `ModuleNotFoundError: No module named 'AgenticGIS'` errors** in `tests/test_i18n.py` and `tests/test_presentation.py::test_generated_chart_titles_preserve_wire_values` because this worktree directory is named `awanagis/` while those two pre-branding tests still import `AgenticGIS.*`.
 
 3. **i18n test suite with `AgenticGIS` package symlink in `/tmp`:**
    ```bash

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 
 import os
 import json
@@ -315,18 +316,23 @@ class SMPGenerator:
     # (cache checks, file I/O, progress bookkeeping).
     _render_lock = threading.Lock()
 
-    def __init__(self, feedback=None):
+    def __init__(self, feedback=None, project=None):
         """
         Initialize the SMP generator
 
         :param feedback: Feedback object for progress reporting
+        :param project: Optional isolated QgsProject snapshot (defaults to QgsProject.instance())
         """
         self.feedback = feedback
+        self._project = project
         # CRS objects are immutable and safe to share across the render
         # thread pool.  Build them once per generator instead of on every
         # _calculate_tile_extent call (one per tile).
         self._wgs84_crs = QgsCoordinateReferenceSystem("EPSG:4326")
         self._web_mercator_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+
+    def _get_project(self):
+        return self._project if self._project is not None else QgsProject.instance()
 
     def log(self, message, level=None):
         """
@@ -377,8 +383,9 @@ class SMPGenerator:
         """Return Web Mercator world bounds transformed to project CRS."""
         wgs84_rect = QgsRectangle(*WORLD_BOUNDS_WGS84)
         wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-        project_crs = QgsProject.instance().crs()
-        transform = QgsCoordinateTransform(wgs84, project_crs, QgsProject.instance())
+        project = self._get_project()
+        project_crs = project.crs()
+        transform = QgsCoordinateTransform(wgs84, project_crs, project)
         return transform.transformBoundingBox(wgs84_rect)
 
     def _get_extent_for_zoom(self, extent, world_extent, zoom,
@@ -1308,7 +1315,7 @@ class SMPGenerator:
 
     def _project_title_or_default(self):
         """Return the current project title or the legacy default style name."""
-        project = QgsProject.instance()
+        project = self._get_project()
         title = project.title()
         if isinstance(title, str) and title.strip():
             return title
@@ -1449,11 +1456,12 @@ class SMPGenerator:
         :return: Bounds as [west, south, east, north]
         """
         # Get the project CRS
-        project_crs = QgsProject.instance().crs()
+        project = self._get_project()
+        project_crs = project.crs()
 
         # Create a coordinate transform to WGS84
         wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-        transform = QgsCoordinateTransform(project_crs, wgs84, QgsProject.instance())
+        transform = QgsCoordinateTransform(project_crs, wgs84, project)
 
         # Transform the extent to WGS84
         wgs84_extent = transform.transformBoundingBox(extent)
@@ -1618,6 +1626,7 @@ class SMPGenerator:
 
         painter = QPainter(img)
         cancelled = False
+        render_errors = []
         with self._render_lock:
             # QgsMapRendererCustomPainterJob is not thread-safe; only one
             # render job may be active at a time.  The lock also ensures
@@ -1626,6 +1635,10 @@ class SMPGenerator:
             job = QgsMapRendererCustomPainterJob(ms, painter)
             job.start()
             job.waitForFinished()
+            try:
+                render_errors = list(job.errors() or [])
+            except Exception:
+                render_errors = []
             # Check cancellation *after* the job finishes so we can
             # still abort early for subsequent tiles.
             if ((cancel_event is not None and cancel_event.is_set()) or
@@ -1637,6 +1650,19 @@ class SMPGenerator:
 
         if cancelled:
             return False
+
+        if render_errors:
+            err_msgs = []
+            for err in render_errors:
+                lid = getattr(err, "layerID", "")
+                msg = getattr(err, "message", str(err))
+                err_msgs.append(f"{lid}: {msg}" if lid else str(msg))
+            joined = "; ".join(err_msgs)
+            self.log(
+                f"Layer render error at tile {zoom}/{x}/{y}: {joined}",
+                _QGIS_MESSAGE_LEVEL.Critical,
+            )
+            raise RuntimeError(f"Tile rendering failed at {zoom}/{x}/{y}: {joined}")
 
         if tile_format in (self.TILE_FORMAT_JPG, self.TILE_FORMAT_WEBP):
             saved = img.save(tile_path, qt_format, jpeg_quality)
@@ -1686,8 +1712,8 @@ class SMPGenerator:
 
         self.log("Generating tiles from map canvas...")
 
-        # Get the current project
-        project = QgsProject.instance()
+        # Get the current project (or isolated snapshot)
+        project = self._get_project()
 
         # Create map settings for rendering.
         #
@@ -2247,7 +2273,7 @@ class SMPGenerator:
         # method runs concurrently in the worker pool and QgsCoordinateTransform
         # is not safe to share between threads.
         transform = QgsCoordinateTransform(
-            self._wgs84_crs, self._web_mercator_crs, QgsProject.instance())
+            self._wgs84_crs, self._web_mercator_crs, self._get_project())
 
         return transform.transformBoundingBox(wgs84_rect)
 

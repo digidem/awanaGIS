@@ -1176,6 +1176,8 @@ TOOL_SPECS = [
                 "sample_mode": {"type": "string", "enum": ["none", "small"]},
                 "sample_size": {"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
                 "target_size_mb": {"type": "number", "minimum": 0.1},
+                "allow_online_sampling": {"type": "boolean", "default": False},
+                "allow_restricted_sampling": {"type": "boolean", "default": False},
             },
             "required": ["local_bounds", "local_min_zoom", "local_max_zoom"],
         },
@@ -1446,12 +1448,6 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
             _log_dispatch_end(name, "parse_error", start, result)
             return result
 
-        if is_smp:
-            from ..integrations.smp.tools import dispatch_smp_tool
-            result = dispatch_smp_tool(toolkit, executor, name, args)
-            _log_dispatch_end(name, "smp", start, result)
-            return result
-
         if name == "ask_user":
             if _dispatch_cancelled(should_stop):
                 return _cancelled_result()
@@ -1467,6 +1463,12 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
             if denied is not None:
                 _log_dispatch_end(name, "denied", start, denied)
                 return denied
+
+        if is_smp:
+            from ..integrations.smp.tools import dispatch_smp_tool
+            result = dispatch_smp_tool(toolkit, executor, name, args)
+            _log_dispatch_end(name, "smp", start, result)
+            return result
 
         if name == "run_pyqgis" and hasattr(toolkit, "run_pyqgis_background"):
             wants_bg = bool(args.get("background"))
