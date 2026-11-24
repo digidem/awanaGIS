@@ -204,7 +204,8 @@ def inspect_map(iface=None, include_hidden=False):
         except Exception:
             canvas = None
 
-    if canvas is not None:
+    has_visible_blocked = any(e.get("export_policy") == "blocked_sensitive" for e in visible_layers)
+    if canvas is not None and not has_visible_blocked:
         try:
             cext = canvas.extent()
             if cext is not None and not cext.isEmpty():
@@ -217,6 +218,10 @@ def inspect_map(iface=None, include_hidden=False):
                 }
         except Exception:
             pass
+    elif canvas is not None and has_visible_blocked:
+        canvas_extent_info["redacted"] = True
+        canvas_extent_info["source"] = "redacted_blocked_sensitive"
+        warnings.append("Live canvas extent redacted because a blocked_sensitive layer is visible.")
 
     if canvas_extent_info["bounds_wgs84"] is None and visible_layers:
         union_wgs84 = None
@@ -237,6 +242,8 @@ def inspect_map(iface=None, include_hidden=False):
                 "bounds_wgs84": _rect_to_list(union_wgs84),
                 "source": "layers_union",
             }
+            if has_visible_blocked:
+                canvas_extent_info["redacted"] = True
             if canvas is None:
                 warnings.append("Map canvas unavailable (headless mode); extent derived from visible layers.")
 

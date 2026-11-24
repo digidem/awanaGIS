@@ -382,6 +382,7 @@ def validate_file(file_path, run_external=True):
                             expected_folders[folder] = (sid, src)
 
                         decl_fmt = str(src.get("format") or "").lower()
+                        tpl_exts = set()
                         tiles_urls = src.get("tiles")
                         if not isinstance(tiles_urls, list) or not tiles_urls:
                             issues.append(f"Source '{sid}' missing 'tiles' URL template.")
@@ -397,19 +398,23 @@ def validate_file(file_path, run_external=True):
                                     )
                                     continue
                                 tpl_folder, tpl_ext = m_tpl.groups()
+                                tpl_exts.add(tpl_ext)
                                 if folder and tpl_folder != folder:
                                     issues.append(
                                         f"Source '{sid}' tile URL folder '{tpl_folder}' does not match smp:sourceFolders '{folder}'."
                                     )
-                                if decl_fmt and tpl_ext != decl_fmt and not (decl_fmt == "jpg" and tpl_ext == "jpeg"):
+                                if decl_fmt and tpl_ext != decl_fmt:
                                     issues.append(
                                         f"Source '{sid}' tile URL extension '.{tpl_ext}' mismatches declared format {decl_fmt!r}."
                                     )
+                        if len(tpl_exts) > 1:
+                            issues.append(f"Source '{sid}' defines inconsistent tile extensions: {sorted(tpl_exts)}")
                         sources_summary[sid] = {
                             "folder": folder,
                             "minzoom": zmin,
                             "maxzoom": zmax,
                             "format": src.get("format"),
+                            "template_exts": sorted(tpl_exts),
                             "bounds": sbounds,
                             "tile_count": 0,
                         }
@@ -486,7 +491,12 @@ def validate_file(file_path, run_external=True):
                                     if seen_set is not None:
                                         seen_set.add((z_int, x_int, y_int))
                         decl_fmt = str(src.get("format") or "").lower()
-                        if decl_fmt and ext != decl_fmt and not (decl_fmt == "jpg" and ext == "jpeg"):
+                        tpl_exts = set(sources_summary[sid].get("template_exts") or [])
+                        if tpl_exts and ext not in tpl_exts:
+                            issues.append(
+                                f"Tile '{name}' extension .{ext} does not match tiles URL template extension {sorted(tpl_exts)}."
+                            )
+                        elif decl_fmt and ext != decl_fmt and not (decl_fmt == "jpg" and ext == "jpeg"):
                             issues.append(
                                 f"Tile '{name}' extension .{ext} mismatches source format {decl_fmt!r}."
                             )

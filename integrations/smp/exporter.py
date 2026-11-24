@@ -441,15 +441,50 @@ class _SmpExportTask(QgsTask):
                     return False
                 job.state = "publishing"
 
-            # Publish manifest first so a no-clobber manifest collision never leaves an orphan .smp;
-            # if publishing the .smp fails afterwards when overwrite=False, roll back the new manifest.
-            _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
+            # Atomic paired publication: when overwrite=True, back up any existing files
+            # so a second-step publish failure restores the prior pair instead of leaving
+            # a mismatched archive and manifest.
+            bak_manifest = None
+            bak_output = None
+            if job.overwrite:
+                if os.path.exists(job.manifest_path):
+                    fd_m, bak_manifest = tempfile.mkstemp(
+                        prefix=".bak_", suffix=".manifest.json", dir=manifest_dir
+                    )
+                    os.close(fd_m)
+                    os.replace(job.manifest_path, bak_manifest)
+                if os.path.exists(job.output_path):
+                    fd_o, bak_output = tempfile.mkstemp(
+                        prefix=".bak_", suffix=".smp", dir=os.path.dirname(job.output_path)
+                    )
+                    os.close(fd_o)
+                    os.replace(job.output_path, bak_output)
+
             try:
-                _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
+                _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
+                try:
+                    _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
+                except Exception:
+                    if not job.overwrite:
+                        _safe_unlink(job.manifest_path)
+                    raise
             except Exception:
-                if not job.overwrite:
-                    _safe_unlink(job.manifest_path)
+                if bak_manifest and os.path.exists(bak_manifest):
+                    try:
+                        os.replace(bak_manifest, job.manifest_path)
+                    except OSError:
+                        pass
+                if bak_output and os.path.exists(bak_output):
+                    try:
+                        os.replace(bak_output, job.output_path)
+                    except OSError:
+                        pass
                 raise
+            finally:
+                if bak_manifest:
+                    _safe_unlink(bak_manifest)
+                if bak_output:
+                    _safe_unlink(bak_output)
 
             with job.lock:
                 job.archive_size_bytes = size_bytes

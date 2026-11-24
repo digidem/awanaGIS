@@ -58,6 +58,7 @@ def smp_estimate(
     allow_online_sampling=False,
     allow_restricted_sampling=False,
     _trusted_sampling_approved=False,
+    _trusted_sampling_layer_ids=None,
     sampling_approval_callback=None,
 ):
     return estimate_plan(
@@ -81,6 +82,7 @@ def smp_estimate(
         allow_online_sampling=bool(allow_online_sampling),
         allow_restricted_sampling=bool(allow_restricted_sampling),
         _trusted_sampling_approved=bool(_trusted_sampling_approved),
+        _trusted_sampling_layer_ids=_trusted_sampling_layer_ids,
         sampling_approval_callback=sampling_approval_callback,
     )
 
@@ -277,6 +279,7 @@ def dispatch_smp_tool(toolkit, executor, name, args):
     clean_args.pop("_trusted_approval_token", None)
     clean_args.pop("sampling_approval_callback", None)
     clean_args.pop("_trusted_sampling_approved", None)
+    clean_args.pop("_trusted_sampling_layer_ids", None)
 
     try:
         if name == "smp_estimate":
@@ -284,9 +287,17 @@ def dispatch_smp_tool(toolkit, executor, name, args):
             if wants_sample and (clean_args.get("allow_online_sampling") or clean_args.get("allow_restricted_sampling")):
                 probe_fn = lambda: inspect_sampling_layers(clean_args.get("layer_ids"))
                 req_info = executor.run_sync(probe_fn) if executor is not None else probe_fn()
-                if req_info.get("restricted_layers") or req_info.get("online_layers"):
-                    if _request_trusted_sampling_approval(toolkit, req_info):
-                        clean_args["_trusted_sampling_approved"] = True
+                has_restr = bool(req_info.get("restricted_layers"))
+                has_online = bool(req_info.get("online_layers"))
+                # Only prompt when all present protected categories have their opt-in flag
+                can_prompt = (
+                    (not has_restr or bool(clean_args.get("allow_restricted_sampling")))
+                    and (not has_online or bool(clean_args.get("allow_online_sampling")))
+                    and (has_restr or has_online)
+                )
+                if can_prompt and _request_trusted_sampling_approval(toolkit, req_info):
+                    clean_args["_trusted_sampling_approved"] = True
+                    clean_args["_trusted_sampling_layer_ids"] = list(req_info.get("effective_layer_ids") or [])
             est_call = lambda: smp_estimate(**clean_args)
             return executor.run_sync(est_call) if executor is not None else est_call()
         if name == "smp_start_export":

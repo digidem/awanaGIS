@@ -320,12 +320,12 @@ def _run_tile_sample(gen, render_layers, tiles_by_zoom, tile_format, quality, sa
 
 
 def inspect_sampling_layers(layer_ids=None):
-    """Return lists of restricted/online layers in the effective sampling set."""
+    """Return lists of restricted/online layers and effective layer IDs in the sampling set."""
     project = QgsProject.instance()
     try:
         render_layers, _ = _resolve_approved_layers(project, layer_ids)
     except Exception:
-        return {"restricted_layers": [], "online_layers": []}
+        return {"restricted_layers": [], "online_layers": [], "effective_layer_ids": []}
     restricted = []
     online = []
     for layer in render_layers:
@@ -334,7 +334,11 @@ def inspect_sampling_layers(layer_ids=None):
             restricted.append({"id": layer.id(), "name": layer.name()})
         if is_online_layer(layer):
             online.append({"id": layer.id(), "name": layer.name(), "provider": str(layer.providerType() or "")})
-    return {"restricted_layers": restricted, "online_layers": online}
+    return {
+        "restricted_layers": restricted,
+        "online_layers": online,
+        "effective_layer_ids": [layer.id() for layer in render_layers],
+    }
 
 
 def estimate_plan(
@@ -358,6 +362,7 @@ def estimate_plan(
     allow_online_sampling=False,
     allow_restricted_sampling=False,
     _trusted_sampling_approved=False,
+    _trusted_sampling_layer_ids=None,
     sampling_approval_callback=None,
     registry=None,
 ):
@@ -497,11 +502,17 @@ def estimate_plan(
     sampling_blocked_reason = None
     if use_sample:
         online_layers = [m for m in layer_meta if m["online"]]
+        trusted_ids = set(_trusted_sampling_layer_ids) if _trusted_sampling_layer_ids is not None else None
         if restricted_layers:
+            layer_ids_pinned = (
+                _trusted_sampling_approved
+                and trusted_ids is not None
+                and {r["id"] for r in restricted_layers}.issubset(trusted_ids)
+            )
             trusted_ok = bool(
                 allow_restricted_sampling
                 and (
-                    _trusted_sampling_approved
+                    layer_ids_pinned
                     or (
                         callable(sampling_approval_callback)
                         and sampling_approval_callback({
@@ -518,11 +529,16 @@ def estimate_plan(
                     "Tile sampling skipped because restricted layers require explicit trusted user confirmation. "
                     "Falling back to uncalibrated rough estimation."
                 )
-        elif online_layers:
+        if sampling_blocked_reason is None and online_layers:
+            layer_ids_pinned = (
+                _trusted_sampling_approved
+                and trusted_ids is not None
+                and {o["id"] for o in online_layers}.issubset(trusted_ids)
+            )
             trusted_ok = bool(
                 allow_online_sampling
                 and (
-                    _trusted_sampling_approved
+                    layer_ids_pinned
                     or (
                         callable(sampling_approval_callback)
                         and sampling_approval_callback({

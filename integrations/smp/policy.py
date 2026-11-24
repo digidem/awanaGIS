@@ -285,8 +285,8 @@ def visible_layers_in_render_order(project):
     return visible_layers
 
 
-def _hash_memory_or_edited_features(layer, max_features=100_000):
-    """Compute a deterministic digest of vector features (bounded by max_features).
+def _hash_memory_or_edited_features(layer):
+    """Compute a deterministic digest over all features of an in-memory or edited layer.
 
     Returns ``(digest_str, complete_bool)``.
     """
@@ -300,9 +300,6 @@ def _hash_memory_or_edited_features(layer, max_features=100_000):
         ext_str = f"{ext.xMinimum():.8f},{ext.yMinimum():.8f},{ext.xMaximum():.8f},{ext.yMaximum():.8f}"
     except Exception:
         ext_str = "extent=unknown"
-
-    if count > max_features:
-        return f"count={count}:ext={ext_str}:unbounded", False
 
     h = hashlib.sha256()
     h.update(f"count={count}:ext={ext_str}\n".encode("utf-8"))

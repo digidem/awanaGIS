@@ -236,22 +236,43 @@ def _gpkg_has_layer(gpkg_path: Path, layer_name: str) -> bool:
 
 
 @contextmanager
-def _exclusive_file_lock(target_path: Path):
-    """Advisory exclusive lock on a sibling ``.lock`` file when fcntl is available."""
-    if fcntl is None:
-        yield
-        return
+def _exclusive_file_lock(target_path: Path, timeout_sec: float = 30.0):
+    """Advisory exclusive lock on a sibling ``.lock`` file (POSIX fcntl or O_EXCL fallback)."""
     lock_path = target_path.with_name(f".{target_path.name}.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+    if fcntl is not None:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            yield
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        return
+
+    import time
+
+    deadline = time.monotonic() + timeout_sec
+    fd = None
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            break
+        except FileExistsError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for lock on {target_path.name}")
+            time.sleep(0.05)
+    try:
+        yield
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 def _atomic_publish_no_clobber(src: Path, dst: Path, *, replace_existing: bool) -> None:
@@ -259,25 +280,41 @@ def _atomic_publish_no_clobber(src: Path, dst: Path, *, replace_existing: bool) 
     if replace_existing:
         os.replace(str(src), str(dst))
         return
+    dst_tmp = None
     try:
         os.link(str(src), str(dst))
     except OSError as exc:
         if exc.errno in (errno.EEXIST,):
             raise FileExistsError(dst) from exc
         if exc.errno in (errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
-            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            fd = os.open(str(dst), flags, 0o644)
+            # Stage a full hidden copy on dst's filesystem first so partial bytes
+            # never appear at dst and an interrupted copy never blocks retries.
+            fd, tmp_name = tempfile.mkstemp(prefix=".tmp_pub_", dir=str(dst.parent))
+            dst_tmp = Path(tmp_name)
             try:
                 with os.fdopen(fd, "wb") as out_f, open(src, "rb") as in_f:
                     shutil.copyfileobj(in_f, out_f)
                     out_f.flush()
                     os.fsync(out_f.fileno())
-            except Exception:
                 try:
-                    dst.unlink()
-                except OSError:
-                    pass
-                raise
+                    os.link(str(dst_tmp), str(dst))
+                except FileExistsError as ex:
+                    raise FileExistsError(dst) from ex
+                except OSError as ex:
+                    if ex.errno == errno.EEXIST:
+                        raise FileExistsError(dst) from ex
+                    # Last-resort atomic rename under exclusive file lock if filesystem forbids hardlinks
+                    with _exclusive_file_lock(dst):
+                        if dst.exists():
+                            raise FileExistsError(dst) from ex
+                        os.replace(str(dst_tmp), str(dst))
+                        dst_tmp = None
+            finally:
+                if dst_tmp is not None and dst_tmp.exists():
+                    try:
+                        dst_tmp.unlink()
+                    except OSError:
+                        pass
         else:
             raise
     finally:
@@ -685,9 +722,18 @@ def _fetch_source_layer(
             return None, "unavailable", [redact_sensitive_text(err_msg)] + warnings, None
         if client_year_filter is not None:
             field_names = {f.name().lower(): f.name() for f in layer.fields()}
-            if "year" in field_names:
-                yfield = validate_cql_identifier(field_names["year"])
-                layer.setSubsetString(f"{yfield} = {client_year_filter}")
+            if "year" not in field_names:
+                return None, "failed", [
+                    f"Source '{sid}' returned no 'year' attribute to verify year={client_year_filter} filter."
+                ], None
+            yfield = validate_cql_identifier(field_names["year"])
+            if not layer.setSubsetString(f"{yfield} = {client_year_filter}"):
+                return None, "failed", [
+                    f"Failed filtering '{sid}' features to requested year {client_year_filter}."
+                ], None
+            layer.setCustomProperty("awanagis/year_filter_applied", "1")
+        elif cql_filter is not None and sid == "inpe_prodes":
+            layer.setCustomProperty("awanagis/year_filter_applied", "1")
         return layer, "live", warnings, None
 
     # GISBR-backed sources
@@ -999,7 +1045,7 @@ def run_load_worker(
                         proto_used == "geobr"
                         or (
                             source.get("source_id") == "inpe_prodes"
-                            and any(f.name().lower() == "year" for f in working_layer.fields())
+                            and working_layer.customProperty("awanagis/year_filter_applied") == "1"
                         )
                     )
                 )

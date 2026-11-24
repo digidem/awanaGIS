@@ -19,6 +19,7 @@ from qgis.core import (
     QgsGeometry,
     QgsProject,
     QgsRasterLayer,
+    QgsRectangle,
     QgsVectorLayer,
 )
 
@@ -568,13 +569,16 @@ class SmpSecurityTests(unittest.TestCase):
         blocked.selectAll()
         self.project.addMapLayer(blocked)
 
-        info = smp_tools.smp_inspect_map(iface=None)
+        fake_iface = Mock()
+        fake_iface.mapCanvas.return_value.extent.return_value = QgsRectangle(-62.2, -4.6, -62.1, -4.5)
+        info = smp_tools.smp_inspect_map(iface=fake_iface)
         self.assertTrue(info["ok"])
         vis = next(v for v in info["visible_layers"] if v["id"] == blocked.id())
         self.assertTrue(vis["extent"].get("redacted"))
         self.assertIsNone(vis["extent"]["bounds_wgs84"])
         self.assertIsNone(vis["extent"]["bounds_layer_crs"])
         self.assertEqual(vis["selected_count"], 0)
+        self.assertTrue(info["canvas_extent"].get("redacted"))
         if info["selection_extent"] is not None:
             self.assertNotIn(blocked.id(), info["selection_extent"]["layer_ids"])
         self.project.removeMapLayer(blocked.id())
