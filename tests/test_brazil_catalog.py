@@ -335,6 +335,7 @@ class BrazilCatalogTests(unittest.TestCase):
             b"<!DOCTYPE html><html><title>Maintenance</title><body>Temporarily unavailable</body></html>",
             b"<html><body>WFS_Capabilities FeatureTypeList for Funai:tis_poligonais is temporarily unavailable</body></html>",
             b"<!-- proxy banner --><html><script>var x='<WFS_Capabilities><FeatureTypeList><FeatureType><Name>Funai:tis_poligonais</Name></FeatureType></FeatureTypeList></WFS_Capabilities>';</script></html>",
+            b"<WFS_Capabilities><FeatureTypeList><script><Name>Funai:tis_poligonais</Name></script></FeatureTypeList></WFS_Capabilities>",
         ):
             catalog._PROBE_CACHE.clear()
             with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(maint_html)):

@@ -448,20 +448,23 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
                     except ET.ParseError:
                         parsed_root = None
                 root_local = parsed_root.tag.rsplit("}", 1)[-1] if parsed_root is not None else ""
-                ft_list = None
-                if root_local == "WFS_Capabilities":
-                    ft_list = next(
-                        (el for el in parsed_root.iter() if el.tag.rsplit("}", 1)[-1] == "FeatureTypeList"),
-                        None,
-                    )
-                if root_local == "WFS_Capabilities" and ft_list is not None:
+                ft_lists = (
+                    [el for el in list(parsed_root) if el.tag.rsplit("}", 1)[-1] == "FeatureTypeList"]
+                    if root_local == "WFS_Capabilities"
+                    else []
+                )
+                if root_local == "WFS_Capabilities" and ft_lists:
                     typename = (entry.get("typename") or "").strip()
-                    ft_names = {
-                        (el.text or "").strip()
-                        for el in ft_list.iter()
-                        if el.tag.rsplit("}", 1)[-1] == "Name" and (el.text or "").strip()
-                    }
-                    layer_found = (not typename) or (typename in ft_names)
+                    ft_names = set()
+                    has_feature_type = False
+                    for ft_list in ft_lists:
+                        for ft_node in list(ft_list):
+                            if ft_node.tag.rsplit("}", 1)[-1] == "FeatureType":
+                                has_feature_type = True
+                                for child in list(ft_node):
+                                    if child.tag.rsplit("}", 1)[-1] == "Name" and (child.text or "").strip():
+                                        ft_names.add(child.text.strip())
+                    layer_found = has_feature_type and ((not typename) or (typename in ft_names))
                     svc_status = "reachable" if layer_found else "offline_http_error"
                     reason_txt = (
                         "WFS GetCapabilities reachable and typename present."
