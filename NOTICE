@@ -1,0 +1,22 @@
+AwanaGIS
+Copyright (C) 2026 Awana Digital
+Licensed under the GNU General Public License, version 2 or (at your option) any later version (GPL-2.0-or-later).
+
+This product is an independent derivative of AgenticGIS:
+  Copyright (C) 2026 Muhammad Alichamdan <malichamdan@gmail.com>
+  Upstream repository: https://github.com/ultramenid/AgenticGIS
+  Upstream baseline SHA: 1e4f70b488824982a835c89c202454ec92dafae7 (v0.4.6)
+  Brazilian Portuguese (pt-BR) localization baseline: commit 51c8a79
+
+AwanaGIS branding, visual design tokens, isolated QSettings/MCP runtime
+namespaces, opt-in migration helpers, draft icon proposal, and packaging are
+maintained under Awana Digital while preserving upstream authorship and license
+obligations.
+
+Note on planned integrations:
+  Future integrations from GISBR (GPL-3.0, https://github.com/d-camargo/gisbr)
+  and CoMapeo SMP Plugin (MIT, https://github.com/digidem/qgis-smp-plugin) are
+  NOT bundled in this branding-only baseline. When GPL-3.0 code is later
+  combined into a distributable artifact, the combined distribution must comply
+  with GPL-3.0 (compatible with AgenticGIS's GPL-2.0-or-later grant) and
+  preserve all upstream notices.
