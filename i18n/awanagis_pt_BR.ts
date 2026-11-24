@@ -500,8 +500,8 @@
         </message>
         <message>
             <location filename="../gui/chat_dock.py" line="467" />
-            <source>Ask AgenticGIS…  (↑ for history)</source>
-            <translation>Pergunte ao AgenticGIS…  (↑ para ver o histórico)</translation>
+            <source>Ask AwanaGIS…  (↑ for history)</source>
+            <translation>Pergunte ao AwanaGIS…  (↑ para ver o histórico)</translation>
         </message>
         <message>
             <location filename="../gui/chat_dock.py" line="515" />
@@ -860,8 +860,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1256" />
-            <source>Allow AgenticGIS to {reason}?</source>
-            <translation>Autorizar o AgenticGIS a {reason}?</translation>
+            <source>Allow AwanaGIS to {reason}?</source>
+            <translation>Autorizar o AwanaGIS a {reason}?</translation>
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1157" />
@@ -1062,8 +1062,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="689" />
-            <source>AgenticGIS — Settings</source>
-            <translation>AgenticGIS — Configurações</translation>
+            <source>AwanaGIS — Settings</source>
+            <translation>AwanaGIS — Configurações</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="822" />
@@ -1102,8 +1102,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="835" />
-            <source>How AgenticGIS reaches a model. Configure any mode; the one marked “Active” is used for chat after you Save.</source>
-            <translation>Defina como o AgenticGIS se conecta a um modelo. Você pode configurar qualquer modo. Ao salvar, a conversa usará o modo marcado como “Ativo”.</translation>
+            <source>How AwanaGIS reaches a model. Configure any mode; the one marked “Active” is used for chat after you Save.</source>
+            <translation>Defina como o AwanaGIS se conecta a um modelo. Você pode configurar qualquer modo. Ao salvar, a conversa usará o modo marcado como “Ativo”.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1092" />
@@ -1132,8 +1132,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="885" />
-            <source>Claude Code, Codex, OpenCode and others can use the live QGIS session via AgenticGIS's stdio MCP proxy (setup per CLI in the README, "External agent access (MCP)"). Listens on 127.0.0.1 only; takes effect immediately.</source>
-            <translation>Claude Code, Codex, OpenCode e outros podem usar a sessão ativa do QGIS pelo proxy MCP via stdio do AgenticGIS. Veja a configuração de cada CLI na seção “External agent access (MCP)” do README. O proxy escuta apenas em 127.0.0.1. A alteração tem efeito imediato.</translation>
+            <source>Claude Code, Codex, OpenCode and others can use the live QGIS session via AwanaGIS's stdio MCP proxy (setup per CLI in the README, "External agent access (MCP)"). Listens on 127.0.0.1 only; takes effect immediately.</source>
+            <translation>Claude Code, Codex, OpenCode e outros podem usar a sessão ativa do QGIS pelo proxy MCP via stdio do AwanaGIS. Veja a configuração de cada CLI na seção “External agent access (MCP)” do README. O proxy escuta apenas em 127.0.0.1. A alteração tem efeito imediato.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="901" />
@@ -1322,8 +1322,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1206" />
-            <source>Delegates to the selected local CLI. AgenticGIS never reads OAuth tokens.</source>
-            <translation>Usa a CLI local selecionada. O AgenticGIS nunca lê tokens OAuth.</translation>
+            <source>Delegates to the selected local CLI. AwanaGIS never reads OAuth tokens.</source>
+            <translation>Usa a CLI local selecionada. O AwanaGIS nunca lê tokens OAuth.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1227" />
@@ -1514,6 +1514,41 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <location filename="../gui/settings_dialog.py" line="1823" />
             <source>Please enter a base URL for the custom endpoint.</source>
             <translation>Insira uma URL base para o endpoint personalizado.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="922" />
+            <source>Import…</source>
+            <translation>Importar…</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="926" />
+            <source>Import from AgenticGIS</source>
+            <translation>Importar do AgenticGIS</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="927" />
+            <source>Opt-in copy of non-secret preferences and chat sessions. API keys, tokens, and permissions are never copied, and AgenticGIS data is untouched.</source>
+            <translation>Cópia opcional de preferências não secretas e sessões de conversa. Chaves de API, tokens e permissões nunca são copiados, e os dados do AgenticGIS permanecem intactos.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="942" />
+            <source>Import {prefs} non-secret preference(s) and {sessions} chat session(s) from AgenticGIS? API keys, tokens, and security approvals will not be copied, and AgenticGIS settings remain untouched.</source>
+            <translation>Importar {prefs} preferência(s) não secreta(s) e {sessions} sessão(ões) de conversa do AgenticGIS? Chaves de API, tokens e aprovações de segurança não serão copiados, e as configurações do AgenticGIS permanecerão intactas.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="958" />
+            <source>Import complete</source>
+            <translation>Importação concluída</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="959" />
+            <source>Imported {prefs} preference(s) and {sessions} session(s) into AwanaGIS.</source>
+            <translation>Importadas {prefs} preferência(s) e {sessions} sessão(ões) para o AwanaGIS.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="967" />
+            <source>Import warning</source>
+            <translation>Aviso na importação</translation>
         </message>
     </context>
     <context>
