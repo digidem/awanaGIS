@@ -325,6 +325,18 @@ class ArchiveCheckTests(unittest.TestCase):
                 any(f["category"] == "METADATA_DEPRECATED" for f in rep_qt6["file_findings"])
             )
 
+            # Unreadable/unsupported ZIP member (testzip raises) returns blocking error instead of traceback
+            unreadable_zip = _build_valid_zip(tmp_dir / "unreadable.zip")
+            with patch("zipfile.ZipFile.testzip", side_effect=NotImplementedError("unsupported compression")):
+                rep_unreadable = check_plugin.validate_and_extract_archive(
+                    unreadable_zip, tmp_dir / "ext_unreadable"
+                )
+            self.assertFalse(rep_unreadable["ok"])
+            self.assertTrue(
+                any("Failed to verify ZIP member integrity" in e for e in rep_unreadable["blocking_errors"]),
+                rep_unreadable,
+            )
+
 
 class ScannerAdapterTests(unittest.TestCase):
     def _make_target(self, tmp: str) -> Path:
@@ -486,6 +498,9 @@ class ScannerAdapterTests(unittest.TestCase):
                         {"type": "Secret Keyword", "hashed_secret": confirmed_secret_hash, "is_secret": True},
                         {"type": "Secret Keyword", "hashed_secret": new_hash},
                     ],
+                    "./.env": [
+                        {"type": "Secret Keyword", "hashed_secret": known_hash, "is_secret": False},
+                    ],
                 },
             }
             baseline_path = target / ".secrets.baseline"
@@ -496,6 +511,7 @@ class ScannerAdapterTests(unittest.TestCase):
             scan_ok = {
                 "results": {
                     "./plugin.py": [{"type": "Secret Keyword", "hashed_secret": known_hash, "line_number": 5}],
+                    ".env": [{"type": "Secret Keyword", "hashed_secret": known_hash, "line_number": 1}],
                 },
             }
             with patch(
@@ -504,10 +520,24 @@ class ScannerAdapterTests(unittest.TestCase):
             ) as mock_run:
                 res = check_plugin._run_secrets(target)
             self.assertTrue(res["ok"], res)
-            self.assertEqual(res["baselined_count"], 1)
+            self.assertEqual(res["baselined_count"], 2)
             self.assertIn("--no-verify", mock_run.call_args.args[0])
             self.assertNotIn("--baseline", mock_run.call_args.args[0])
             self.assertEqual(baseline_path.read_bytes(), baseline_bytes)
+
+            # Hidden baseline entry ".env" MUST NOT suppress non-hidden "env"
+            scan_nonhidden = {
+                "results": {
+                    "./env": [{"type": "Secret Keyword", "hashed_secret": known_hash, "line_number": 1}],
+                },
+            }
+            with patch(
+                "ci.check_plugin.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_nonhidden), ""),
+            ):
+                res_env = check_plugin._run_secrets(target)
+            self.assertFalse(res_env["ok"])
+            self.assertEqual(res_env["blocking_findings"][0]["file"], "env")
 
             # Entry marked is_secret=True or unaudited (missing is_secret) still fails
             for active_hash in (confirmed_secret_hash, new_hash):
@@ -911,6 +941,24 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertTrue(
                 any("unlisted_mod.py" in e for e in unlisted_rep["errors"]),
                 unlisted_rep,
+            )
+
+            # Disambiguation <comment> mismatch must fail parity even when source & context match
+            (repo / "unlisted_mod.py").unlink()
+            (i18n / "AgenticGIS_es.ts").write_text(
+                "<TS version='2.1'><context><name>ChatDock</name>"
+                "<message><source>Ready</source><comment>old-disambiguation</comment>"
+                "<translation>Listo</translation></message>"
+                "</context></TS>\n",
+                encoding="utf-8",
+            )
+            with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                 patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
+                disambig_rep = check_plugin.check_i18n(repo, 6)
+            self.assertFalse(disambig_rep["ok"])
+            self.assertTrue(
+                any("AgenticGIS_es.ts" in e for e in disambig_rep["errors"]),
+                disambig_rep,
             )
 
 

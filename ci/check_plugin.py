@@ -16,6 +16,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
@@ -367,7 +368,13 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
         return report
 
     with zf:
-        bad_member = zf.testzip()
+        try:
+            bad_member = zf.testzip()
+        except (RuntimeError, zipfile.BadZipFile, NotImplementedError, OSError, EOFError, zlib.error) as exc:
+            report["blocking_errors"].append(
+                f"Failed to verify ZIP member integrity: {exc}"
+            )
+            return report
         if bad_member is not None:
             report["blocking_errors"].append(
                 f"Corrupt ZIP member (CRC check failed): {bad_member}"
@@ -630,6 +637,13 @@ def _run_bandit(target_dir: Path) -> dict:
     return result
 
 
+def _normalize_secret_path(raw_path: str) -> str:
+    norm = raw_path
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm
+
+
 def _load_secrets_baseline(baseline_path: Path) -> tuple[set[tuple[str, str, str]], str | None]:
     """Parse a reviewed .secrets.baseline read-only into (file, type, hashed_secret) keys."""
     try:
@@ -644,7 +658,7 @@ def _load_secrets_baseline(baseline_path: Path) -> tuple[set[tuple[str, str, str
     for raw_file, hits in payload["results"].items():
         if not isinstance(raw_file, str) or not isinstance(hits, list):
             return set(), "Malformed file entry in .secrets.baseline"
-        norm_file = raw_file.lstrip("./")
+        norm_file = _normalize_secret_path(raw_file)
         for hit in hits:
             if not isinstance(hit, dict):
                 return set(), "Malformed hit entry in .secrets.baseline"
@@ -739,7 +753,7 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
         if not isinstance(hits, list):
             result["errors"].append("Malformed detect-secrets file entry")
             return result
-        norm_file = raw_file.lstrip("./")
+        norm_file = _normalize_secret_path(raw_file)
         for hit in hits:
             if not isinstance(hit, dict):
                 result["errors"].append("Malformed detect-secrets hit entry")
@@ -1117,9 +1131,9 @@ def _parse_pro_file(pro_path: Path) -> tuple[list[str], list[str]]:
     return sources, translations
 
 
-def _ts_entries(ts_path: Path) -> set[tuple[str, str, bool]]:
+def _ts_entries(ts_path: Path) -> set[tuple[str, str, str, bool]]:
     tree = ET.parse(ts_path)
-    entries: set[tuple[str, str, bool]] = set()
+    entries: set[tuple[str, str, str, bool]] = set()
     for ctx in tree.getroot().findall("context"):
         ctx_name = ctx.findtext("name") or ""
         for msg in ctx.findall("message"):
@@ -1127,8 +1141,9 @@ def _ts_entries(ts_path: Path) -> set[tuple[str, str, bool]]:
             if tr is not None and tr.get("type") in ("vanished", "obsolete"):
                 continue
             source = msg.findtext("source") or ""
+            comment = msg.findtext("comment") or ""
             numerus = msg.get("numerus") == "yes"
-            entries.add((ctx_name, source, numerus))
+            entries.add((ctx_name, source, comment, numerus))
     return entries
 
 
