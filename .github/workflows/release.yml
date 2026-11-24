@@ -118,6 +118,10 @@ jobs:
           EXPECTED_SHA256: ${{ needs.ci.outputs.zip_sha256 }}
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
+          if [ -z "$EXPECTED_SHA256" ] || [[ ! "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Missing or malformed ci.outputs.zip_sha256 digest"
+            exit 1
+          fi
           python3 ci/check_plugin.py verify-manifest \
             "$RUNNER_TEMP/pkg/AgenticGIS.zip" \
             "$RUNNER_TEMP/pkg/package-manifest.json" \

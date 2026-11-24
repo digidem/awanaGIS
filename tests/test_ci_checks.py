@@ -689,6 +689,12 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertFalse(
                 check_plugin.verify_manifest(zip_path, manifest, "abc123", "0" * 64)["ok"]
             )
+            self.assertFalse(
+                check_plugin.verify_manifest(zip_path, manifest, "abc123", "")["ok"]
+            )
+            self.assertFalse(
+                check_plugin.verify_manifest(zip_path, manifest, "", sha)["ok"]
+            )
 
             meta_path = tmp_dir / "metadata.txt"
             meta_path.write_text(
@@ -876,6 +882,36 @@ class ScannerAdapterTests(unittest.TestCase):
                         any("AgenticGIS_es.ts" in e for e in inactive_rep["errors"]),
                         inactive_rep,
                     )
+
+            # Restore es.ts, add non-literal forwarding helper (ok), then add unlisted literal call (fails)
+            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
+            (repo / "gui").mkdir()
+            (repo / "gui" / "forwarding.py").write_text(
+                "from qgis.PyQt.QtCore import QCoreApplication\n"
+                "def show(ctx, src):\n"
+                "    return QCoreApplication.translate(ctx, src)\n",
+                encoding="utf-8",
+            )
+            with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                 patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc), \
+                 patch.dict(
+                     sys.modules,
+                     {"qgis": fake_qgis, "qgis.PyQt": fake_pyqt, "qgis.PyQt.QtCore": fake_qtcore},
+                 ):
+                fwd_rep = check_plugin.check_i18n(repo, 6)
+            self.assertTrue(fwd_rep["ok"], fwd_rep)
+
+            (repo / "unlisted_mod.py").write_text(
+                "from qgis.PyQt.QtCore import QCoreApplication\n"
+                "MSG = QCoreApplication.translate('ChatDock', 'Unlisted string')\n",
+                encoding="utf-8",
+            )
+            unlisted_rep = check_plugin.check_i18n(repo, 6)
+            self.assertFalse(unlisted_rep["ok"])
+            self.assertTrue(
+                any("unlisted_mod.py" in e for e in unlisted_rep["errors"]),
+                unlisted_rep,
+            )
 
 
 class RealScannerIntegrationTests(unittest.TestCase):

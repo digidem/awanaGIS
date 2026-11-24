@@ -1132,6 +1132,54 @@ def _ts_entries(ts_path: Path) -> set[tuple[str, str, bool]]:
     return entries
 
 
+def _has_literal_translation_call(py_path: Path) -> bool:
+    tree = ast.parse(py_path.read_text(encoding="utf-8"), filename=str(py_path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        is_translate = (
+            (
+                isinstance(func, ast.Attribute)
+                and func.attr == "translate"
+                and isinstance(func.value, ast.Name)
+                and func.value.id in ("QCoreApplication", "QApplication")
+            )
+            or (isinstance(func, ast.Name) and func.id in ("translate", "QT_TRANSLATE_NOOP"))
+        )
+        if is_translate and len(node.args) >= 2 and all(
+            isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            for arg in node.args[:2]
+        ):
+            return True
+        is_self_tr = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "tr"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "self"
+        )
+        if is_self_tr and node.args and (
+            isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+        ):
+            return True
+    return False
+
+
+def _find_unlisted_translation_sources(repo_root: Path, listed_sources: set[Path]) -> list[str]:
+    excluded_dirs = {"__pycache__", "tests", "ci", "docs", "venv", "build", "dist"}
+    unlisted: list[str] = []
+    for py_path in sorted(repo_root.rglob("*.py")):
+        rel_parts = py_path.relative_to(repo_root).parts
+        if any(part.startswith(".") or part in excluded_dirs for part in rel_parts):
+            continue
+        resolved = py_path.resolve()
+        if resolved in listed_sources:
+            continue
+        if _has_literal_translation_call(py_path):
+            unlisted.append(py_path.relative_to(repo_root).as_posix())
+    return unlisted
+
+
 def check_i18n(repo_root: Path, qt_major: int) -> dict:
     """Verify Qt Linguist extraction parity and compiled QM loading."""
     report: dict = {
@@ -1161,6 +1209,18 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
     missing_sources = [str(p) for p in abs_sources if not p.is_file()]
     if missing_sources:
         report["errors"].append(f"Missing source files from .pro: {missing_sources}")
+        return report
+
+    try:
+        unlisted_sources = _find_unlisted_translation_sources(repo_root, set(abs_sources))
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        report["errors"].append(f"Failed to scan translation sources: {exc}")
+        return report
+    if unlisted_sources:
+        report["errors"].append(
+            "Packaged modules with Qt translation calls missing from i18n/AgenticGIS.pro SOURCES: "
+            + ", ".join(unlisted_sources)
+        )
         return report
 
     catalog_paths: list[tuple[str, Path, Path]] = []
@@ -1480,14 +1540,20 @@ def verify_manifest(
         report["errors"].append(
             f"ZIP SHA-256 mismatch: actual {actual_sha} != manifest {manifest_sha}"
         )
-    if expected_sha256 and actual_sha != expected_sha256:
-        report["errors"].append(
-            f"ZIP SHA-256 mismatch: actual {actual_sha} != expected {expected_sha256}"
-        )
-    if expected_commit and manifest_commit != expected_commit:
-        report["errors"].append(
-            f"Commit SHA mismatch: manifest {manifest_commit} != expected {expected_commit}"
-        )
+    if expected_sha256 is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            report["errors"].append("Invalid expected SHA-256 format")
+        elif actual_sha != expected_sha256:
+            report["errors"].append(
+                f"ZIP SHA-256 mismatch: actual {actual_sha} != expected {expected_sha256}"
+            )
+    if expected_commit is not None:
+        if not expected_commit.strip():
+            report["errors"].append("Expected commit SHA must not be empty")
+        elif manifest_commit != expected_commit:
+            report["errors"].append(
+                f"Commit SHA mismatch: manifest {manifest_commit} != expected {expected_commit}"
+            )
 
     report["ok"] = not report["errors"]
     return report
