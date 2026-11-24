@@ -819,6 +819,21 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>executar uma expressão do Earth Engine e gerar um GIF animado da sequência temporal</translation>
         </message>
         <message>
+            <location filename="../core/toolkit.py" line="1205" />
+            <source>download Brazilian geospatial data ({sources}) and write to {dest}</source>
+            <translation>baixar dados geoespaciais brasileiros ({sources}) e gravar em {dest}</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1234" />
+            <source>probe Brazilian geospatial endpoint metadata ({sources})</source>
+            <translation>verificar metadados de endpoint geoespacial brasileiro ({sources})</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1244" />
+            <source>query IBGE Localidades API for municipality disambiguation</source>
+            <translation>consultar a API de Localidades do IBGE para desambiguação de município</translation>
+        </message>
+        <message>
             <location filename="../core/toolkit.py" line="1226" />
             <source>Allow once</source>
             <translation>Permitir uma vez</translation>
@@ -1825,6 +1840,31 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <location filename="../gui/formatting.py" line="102" />
             <source>Export layout</source>
             <translation>Exportar layout</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="103" />
+            <source>Search Brazilian sources</source>
+            <translation>Buscar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="104" />
+            <source>Inspect Brazilian sources</source>
+            <translation>Inspecionar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="105" />
+            <source>Resolve Brazilian area</source>
+            <translation>Resolver área brasileira</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="106" />
+            <source>Plan Brazilian data load</source>
+            <translation>Planejar carga de dados brasileiros</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="107" />
+            <source>Load Brazilian data</source>
+            <translation>Carregar dados brasileiros</translation>
         </message>
         <message>
             <location filename="../gui/formatting.py" line="114" />

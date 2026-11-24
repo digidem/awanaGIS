@@ -68,6 +68,11 @@ class AwanaGisPlugin:
         # Localhost MCP bridge for external agent CLIs — best-effort, never
         # blocks QGIS startup (Settings → External agent CLIs to disable).
         self._apply_mcp_state()
+        try:
+            from .integrations.brazil.runtime import register_brazil_provider
+            register_brazil_provider()
+        except Exception:  # nosec B110
+            pass
 
     def unload(self):
         self.toolkit.set_ask_user_emitter(None)
@@ -91,6 +96,16 @@ class AwanaGisPlugin:
         except Exception:  # nosec B110
             pass
         self._stop_server()
+        try:
+            from .integrations.brazil.runtime import unregister_brazil_provider
+            unregister_brazil_provider()
+        except Exception:  # nosec B110
+            pass
+        try:
+            from .integrations.brazil.planner import clear_plans
+            clear_plans()
+        except Exception:  # nosec B110
+            pass
         if self._dock is not None:
             try:
                 self._dock._stop_active_worker()
