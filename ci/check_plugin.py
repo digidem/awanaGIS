@@ -242,7 +242,10 @@ def _is_valid_http_url(raw_url: str) -> bool:
     url = raw_url.strip()
     if url.rstrip("/").lower() in FORBIDDEN_PLACEHOLDER_URLS:
         return False
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 

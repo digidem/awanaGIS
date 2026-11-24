@@ -35,8 +35,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "Dry-run release verification from $GITHUB_REF ($GITHUB_SHA); no release will be published."
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "Dry-run release verification from branch $GITHUB_REF ($GITHUB_SHA); no release will be published."
             python3 -c '
           from pathlib import Path
           from ci.check_plugin import _validate_metadata
@@ -45,6 +45,10 @@ jobs:
           print("Dry-run metadata check passed; warnings:", warns)
           '
             exit 0
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Dry-run release verification for tag $GITHUB_REF_NAME ($GITHUB_SHA); publishing remains disabled."
           fi
 
           TAG="${GITHUB_REF_NAME}"

@@ -329,6 +329,14 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(rep_url["ok"])
             self.assertTrue(any("tracker" in e for e in rep_url["blocking_errors"]))
 
+            malformed_url_meta = VALID_METADATA.replace(
+                "tracker=https://example.invalid/issues", "tracker=https://[unclosed/issues"
+            ).encode("utf-8")
+            malformed_url = _build_valid_zip(tmp_dir / "bad_ipv6_url.zip", metadata_override=malformed_url_meta)
+            rep_malformed = check_plugin.validate_and_extract_archive(malformed_url, tmp_dir / "ext_bad_ipv6")
+            self.assertFalse(rep_malformed["ok"])
+            self.assertTrue(any("tracker" in e for e in rep_malformed["blocking_errors"]))
+
             # Invalid metadata URL or syntax error must not echo embedded credentials
             secret_url_token = "SECRET_" + "URL_CREDENTIAL_99"
             secret_url_meta = VALID_METADATA.replace(
