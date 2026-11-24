@@ -928,32 +928,26 @@ def _unwrap_agy_mcp_call(params):
     return normalize_tool_name(tool), args if isinstance(args, dict) else {}
 
 
-_AGY_MCP_REGISTERED = set()
-
-
 def _ensure_agy_mcp(binary, mcp_url):
-    """Register the AwanaGIS bridge in agy's user-level MCP config (once per URL).
+    """Register the current AwanaGIS bridge in agy's user-level MCP config.
 
     agy has no per-run MCP flag, so this writes ``~/.gemini/config/mcp_config.json``
-    via ``agy mcp add`` (add-or-update). The bridge port is fixed, so the entry
-    stays valid between QGIS sessions. Best-effort: failure leaves the text protocol.
+    via ``agy mcp add`` (add-or-update). The bridge port can differ between
+    QGIS processes. Best-effort: failure leaves the text protocol.
     """
-    key = (binary, mcp_url)
-    if key in _AGY_MCP_REGISTERED:
-        return
     try:
         listing = subprocess.run(  # nosec B603
             [binary, "mcp", "list"], capture_output=True, text=True, timeout=10, check=False,
         ).stdout or ""
         if not any(
-            line.split()[:1] == [MCP_SERVER_NAME] and mcp_url in line and "enabled" in line
+            line.split()[:1] == [MCP_SERVER_NAME]
+            and mcp_url in line.split() and "enabled" in line.split()
             for line in listing.splitlines()
         ):
             subprocess.run(  # nosec B603
                 [binary, "mcp", "add", MCP_SERVER_NAME, mcp_url],
                 capture_output=True, timeout=10, check=True,
             )
-        _AGY_MCP_REGISTERED.add(key)
     except Exception:  # nosec B110 - registration is optional
         pass
 

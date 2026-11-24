@@ -100,9 +100,8 @@ def _parse_sessions_payload(raw, *, strict_entries=False):
             continue
         name = str(entry.get("name") or "").strip()
         history = entry.get("backend_history")
-        identity = json.dumps([str(entry.get("created_at") or ""), name,
-                               len(history) if isinstance(history, list) else 0],
-                              separators=(",", ":"), sort_keys=True)
+        identity = json.dumps({k: v for k, v in entry.items() if k != "id"},
+                              sort_keys=True, separators=(",", ":"), default=str)
         sid = str(entry.get("id") or "").strip() or uuid.uuid5(
             uuid.NAMESPACE_URL, "agenticgis-legacy:" + identity
         ).hex

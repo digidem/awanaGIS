@@ -29,6 +29,7 @@ theme = import_module(f"{ROOT.name}.gui.theme")
 config_mod = import_module(f"{ROOT.name}.config")
 session_store = import_module(f"{ROOT.name}.core.session_store")
 migration = import_module(f"{ROOT.name}.core.migration")
+adapters = import_module(f"{ROOT.name}.backends.adapters")
 discovery = import_module(f"{ROOT.name}.server.discovery")
 mcp_server = import_module(f"{ROOT.name}.server.mcp_server")
 ChatDock = import_module(f"{ROOT.name}.gui.chat_dock").ChatDock
@@ -307,6 +308,25 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(second["imported_count"], 0)
             self.assertEqual(second["skipped_count"], 1)
             self.assertEqual(len(json.loads(settings.value(session_store.SETTINGS_KEY))["sessions"]), 1)
+
+    def test_distinct_idless_transcripts_import_and_dedupe(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "distinct.ini"), QSettings.Format.IniFormat)
+            entries = [
+                {"name": "Legacy", "created_at": "2026-10-01", "backend_history": [],
+                 "transcript_events": [{"type": "user", "text": text}]}
+                for text in ("first", "second")
+            ]
+            settings.setValue(migration.LEGACY_SESSIONS_KEY, json.dumps({"sessions": entries}))
+            first = migration.import_sessions_from_agenticgis(settings)
+            second = migration.import_sessions_from_agenticgis(settings)
+            sessions = json.loads(settings.value(session_store.SETTINGS_KEY))["sessions"]
+            self.assertEqual(first["imported_count"], 2)
+            self.assertEqual(second["imported_count"], 0)
+            self.assertEqual(second["skipped_count"], 2)
+            self.assertEqual({s["transcript_events"][0]["text"] for s in sessions},
+                             {"first", "second"})
+            self.assertEqual(len({s["id"] for s in sessions}), 2)
 
     def test_store_normalizes_non_string_active_id(self):
         with TemporaryDirectory() as tmp:
@@ -724,6 +744,30 @@ class PackagingAndSmokeTests(unittest.TestCase):
             self.assertNotIn("awanagis/resources/private.gpkg", names)
             self.assertNotIn("awanagis/resources/server-key.pem", names)
 
+
+
+class AgyMcpRegistrationTests(unittest.TestCase):
+    def test_registration_rechecks_global_config(self):
+        first = "http://127.0.0.1:1234/mcp"
+        second = "http://127.0.0.1:5678/mcp"
+        name = adapters.MCP_SERVER_NAME
+        with patch.object(adapters.subprocess, "run") as run:
+            run.side_effect = [
+                Mock(stdout=f"{name} {second} enabled"), Mock(),
+                Mock(stdout=f"{name} {first} enabled"), Mock(),
+                Mock(stdout=f"{name} {first} enabled"),
+                Mock(stdout=f"{name} {second} enabled"), Mock(),
+            ]
+            adapters._ensure_agy_mcp("agy", first)
+            adapters._ensure_agy_mcp("agy", second)
+            adapters._ensure_agy_mcp("agy", first)
+            adapters._ensure_agy_mcp("agy", first)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [
+            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, first],
+            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, second],
+            ["agy", "mcp", "list"],
+            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, first],
+        ])
 
 
 if __name__ == "__main__":
