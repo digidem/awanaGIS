@@ -222,6 +222,7 @@ class ArchiveCheckTests(unittest.TestCase):
         forbidden = [
             "AgenticGIS/.git/config",
             "AgenticGIS/.env",
+            "AgenticGIS/.secrets.baseline",
             "AgenticGIS/id_rsa",
             "AgenticGIS/core/__pycache__/x.cpython-312.pyc",
             "AgenticGIS/tests/test_x.py",
@@ -321,21 +322,20 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(rep_author["ok"])
             self.assertTrue(any("author" in e for e in rep_author["blocking_errors"]))
 
-            bad_url_meta = VALID_METADATA.replace(
-                "tracker=https://example.invalid/issues", "tracker=http://bugs"
-            ).encode("utf-8")
-            bad_url = _build_valid_zip(tmp_dir / "bad_url.zip", metadata_override=bad_url_meta)
-            rep_url = check_plugin.validate_and_extract_archive(bad_url, tmp_dir / "ext_url")
-            self.assertFalse(rep_url["ok"])
-            self.assertTrue(any("tracker" in e for e in rep_url["blocking_errors"]))
-
-            malformed_url_meta = VALID_METADATA.replace(
-                "tracker=https://example.invalid/issues", "tracker=https://[unclosed/issues"
-            ).encode("utf-8")
-            malformed_url = _build_valid_zip(tmp_dir / "bad_ipv6_url.zip", metadata_override=malformed_url_meta)
-            rep_malformed = check_plugin.validate_and_extract_archive(malformed_url, tmp_dir / "ext_bad_ipv6")
-            self.assertFalse(rep_malformed["ok"])
-            self.assertTrue(any("tracker" in e for e in rep_malformed["blocking_errors"]))
+            for bad_tracker in (
+                "http://bugs",
+                "https://[unclosed/issues",
+                "https://:443/issues",
+                "https://example.org:abc/issues",
+            ):
+                with self.subTest(bad_tracker=bad_tracker):
+                    malformed_meta = VALID_METADATA.replace(
+                        "tracker=https://example.invalid/issues", f"tracker={bad_tracker}"
+                    ).encode("utf-8")
+                    malformed_zip = _build_valid_zip(tmp_dir / "bad_url.zip", metadata_override=malformed_meta)
+                    rep_malformed = check_plugin.validate_and_extract_archive(malformed_zip, tmp_dir / "ext_bad_url")
+                    self.assertFalse(rep_malformed["ok"])
+                    self.assertTrue(any("tracker" in e for e in rep_malformed["blocking_errors"]))
 
             # Invalid metadata URL or syntax error must not echo embedded credentials
             secret_url_token = "SECRET_" + "URL_CREDENTIAL_99"
@@ -563,7 +563,7 @@ class ScannerAdapterTests(unittest.TestCase):
                     ],
                 },
             }
-            baseline_path = target / ".secrets.baseline"
+            baseline_path = Path(tmp) / ".secrets.baseline"
             baseline_bytes = json.dumps(baseline_data).encode("utf-8")
             baseline_path.write_bytes(baseline_bytes)
 
@@ -578,12 +578,20 @@ class ScannerAdapterTests(unittest.TestCase):
                 "ci.check_plugin.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_ok), ""),
             ) as mock_run:
-                res = check_plugin._run_secrets(target)
+                res = check_plugin._run_secrets(target, baseline_path=baseline_path)
             self.assertTrue(res["ok"], res)
             self.assertEqual(res["baselined_count"], 2)
             self.assertIn("--no-verify", mock_run.call_args.args[0])
             self.assertNotIn("--baseline", mock_run.call_args.args[0])
             self.assertEqual(baseline_path.read_bytes(), baseline_bytes)
+
+            # Baseline inside target_dir is rejected
+            inner_baseline = target / ".secrets.baseline"
+            inner_baseline.write_bytes(baseline_bytes)
+            res_inner = check_plugin._run_secrets(target, baseline_path=inner_baseline)
+            self.assertFalse(res_inner["ok"])
+            self.assertTrue(res_inner["errors"])
+            inner_baseline.unlink()
 
             # Hidden baseline entry ".env" MUST NOT suppress non-hidden "env"
             scan_nonhidden = {
@@ -595,7 +603,7 @@ class ScannerAdapterTests(unittest.TestCase):
                 "ci.check_plugin.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_nonhidden), ""),
             ):
-                res_env = check_plugin._run_secrets(target)
+                res_env = check_plugin._run_secrets(target, baseline_path=baseline_path)
             self.assertFalse(res_env["ok"])
             self.assertEqual(res_env["blocking_findings"][0]["file"], "env")
 
@@ -611,13 +619,13 @@ class ScannerAdapterTests(unittest.TestCase):
                         "ci.check_plugin.subprocess.run",
                         return_value=subprocess.CompletedProcess([], 0, json.dumps(scan_fail), ""),
                     ):
-                        res = check_plugin._run_secrets(target)
+                        res = check_plugin._run_secrets(target, baseline_path=baseline_path)
                     self.assertFalse(res["ok"])
                     self.assertEqual(len(res["blocking_findings"]), 1)
 
             # Malformed baseline fails with error
             baseline_path.write_text("{bad-json", encoding="utf-8")
-            res = check_plugin._run_secrets(target)
+            res = check_plugin._run_secrets(target, baseline_path=baseline_path)
             self.assertFalse(res["ok"])
             self.assertTrue(res["errors"])
 
@@ -1145,9 +1153,9 @@ class RealScannerIntegrationTests(unittest.TestCase):
                 text=True,
             )
             baseline_payload = json.loads(baseline_proc.stdout)
-            baseline_file = synth / ".secrets.baseline"
+            baseline_file = tmp_dir / ".secrets.baseline"
             baseline_file.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
-            unaudited_rep = check_plugin.run_scans(synth, "secrets", None)
+            unaudited_rep = check_plugin.run_scans(synth, "secrets", None, baseline_path=baseline_file)
             self.assertFalse(unaudited_rep["ok"])
 
             # Only an explicitly reviewed baseline (is_secret=False) suppresses known entries read-only
@@ -1158,14 +1166,14 @@ class RealScannerIntegrationTests(unittest.TestCase):
             baseline_file.write_text(reviewed_text, encoding="utf-8")
             baseline_bytes = baseline_file.read_bytes()
 
-            baselined_rep = check_plugin.run_scans(synth, "secrets", None)
+            baselined_rep = check_plugin.run_scans(synth, "secrets", None, baseline_path=baseline_file)
             self.assertTrue(baselined_rep["ok"], baselined_rep)
             self.assertGreater(baselined_rep["checks"][0]["baselined_count"], 0)
             self.assertEqual(baseline_file.read_bytes(), baseline_bytes)
 
             second_secret = "AKIA" + "IOSFODNN7" + "EXAMPLENEW"
             (synth / "leak2.py").write_text(f'aws_id = "{second_secret}"\n', encoding="utf-8")
-            new_secret_rep = check_plugin.run_scans(synth, "secrets", None)
+            new_secret_rep = check_plugin.run_scans(synth, "secrets", None, baseline_path=baseline_file)
             self.assertFalse(new_secret_rep["ok"])
             new_secret_text = json.dumps(new_secret_rep) + "\n" + check_plugin._format_scan_summary(new_secret_rep)
             self.assertNotIn(secret_token, new_secret_text)

@@ -27,7 +27,6 @@ PLUGIN_MAX_EXPANDED_SIZE = 100_000_000
 QM_MAGIC = b"\x3c\xb8\x64\x18\xca\xef\x9c\x95\xcd\x21\x1c\xbf\x60\xa1\xbd\xdd"
 HIDDEN_ALLOWLIST = frozenset({
     ".bandit",
-    ".secrets.baseline",
     ".flake8",
     ".gitignore",
     ".gitattributes",
@@ -74,7 +73,7 @@ FORBIDDEN_PATH_COMPONENTS = frozenset({
     ".pytest_cache",
     "htmlcov",
 })
-FORBIDDEN_FILENAMES = frozenset({".coverage"})
+FORBIDDEN_FILENAMES = frozenset({".coverage", ".secrets.baseline"})
 FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".pyd", ".db")
 REQUIRED_METADATA_KEYS = (
     "name",
@@ -244,9 +243,11 @@ def _is_valid_http_url(raw_url: str) -> bool:
         return False
     try:
         parsed = urlparse(url)
+        hostname = parsed.hostname
+        _ = parsed.port
     except ValueError:
         return False
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc) and bool(hostname)
 
 
 def _validate_metadata(
@@ -732,7 +733,11 @@ def _load_secrets_baseline(baseline_path: Path) -> tuple[set[tuple[str, str, str
     return entries, None
 
 
-def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
+def _run_secrets(
+    target_dir: Path,
+    exclude_metadata: bool = True,
+    baseline_path: Path | None = None,
+) -> dict:
     result = {
         "name": "secrets",
         "blocking": True,
@@ -750,12 +755,19 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
     result["files_checked"] = len(all_files)
 
     baseline_entries: set[tuple[str, str, str]] = set()
-    baseline = target_dir / ".secrets.baseline"
-    if baseline.is_file():
-        baseline_entries, baseline_err = _load_secrets_baseline(baseline)
-        if baseline_err:
-            result["errors"].append(baseline_err)
+    if baseline_path is not None:
+        resolved_target = target_dir.resolve()
+        resolved_baseline = baseline_path.resolve()
+        if resolved_baseline.is_relative_to(resolved_target):
+            result["errors"].append(
+                "Secrets baseline must live outside the scanned plugin package"
+            )
             return result
+        if resolved_baseline.is_file():
+            baseline_entries, baseline_err = _load_secrets_baseline(resolved_baseline)
+            if baseline_err:
+                result["errors"].append(baseline_err)
+                return result
 
     # Never pass --baseline to detect-secrets 1.5.0: it rewrites the file and emits no JSON stdout.
     cmd = [
@@ -766,11 +778,7 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
     ]
     if exclude_metadata:
         cmd.extend(["--exclude-files", r"^(\./)?metadata\.txt$"])
-    cmd.extend([
-        "--exclude-files",
-        r"^(\./)?\.secrets\.baseline$",
-        ".",
-    ])
+    cmd.append(".")
 
     try:
         proc = subprocess.run(
@@ -1120,6 +1128,7 @@ def run_scans(
     check_mode: str,
     flake8_config: Path | None,
     include_metadata_in_secrets: bool = False,
+    baseline_path: Path | None = None,
 ) -> dict:
     """Run selected repository-aligned scanners against an extracted plugin directory."""
     if not target_dir.is_dir():
@@ -1145,7 +1154,13 @@ def run_scans(
         if name == "bandit":
             checks.append(_run_bandit(target_dir))
         elif name == "secrets":
-            checks.append(_run_secrets(target_dir, exclude_metadata=not include_metadata_in_secrets))
+            checks.append(
+                _run_secrets(
+                    target_dir,
+                    exclude_metadata=not include_metadata_in_secrets,
+                    baseline_path=baseline_path,
+                )
+            )
         elif name == "compile":
             checks.append(_run_compile(target_dir))
         elif name == "static":
@@ -1808,6 +1823,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_scan.add_argument("--flake8-config", type=Path, default=None)
     p_scan.add_argument(
+        "--baseline-file",
+        type=Path,
+        default=None,
+        help="Optional reviewed .secrets.baseline outside the scanned plugin package",
+    )
+    p_scan.add_argument(
         "--include-metadata",
         action="store_true",
         help="Also scan metadata.txt during secrets detection (for pre-upload gating)",
@@ -1846,6 +1867,7 @@ def main(argv: list[str] | None = None) -> int:
             args.check,
             args.flake8_config,
             include_metadata_in_secrets=args.include_metadata,
+            baseline_path=args.baseline_file,
         )
         summary = _format_scan_summary(report)
     elif args.command == "i18n":

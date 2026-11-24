@@ -75,7 +75,8 @@ jobs:
           python3 ci/check_plugin.py scan \
             "$RUNNER_TEMP/extracted/AgenticGIS" \
             --check secrets \
-            --include-metadata
+            --include-metadata \
+            --baseline-file .secrets.baseline
 
       - name: Run CI archive and scanner unit tests
         env:
@@ -184,6 +185,7 @@ jobs:
           python3 ci/check_plugin.py scan \
             "$RUNNER_TEMP/extracted/AgenticGIS" \
             --check secrets \
+            --baseline-file .secrets.baseline \
             --summary-out "$GITHUB_STEP_SUMMARY"
 
   quality:
