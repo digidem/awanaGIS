@@ -57,9 +57,20 @@ def _run_smoke() -> None:
 
     def _on_message(message, tag, level) -> None:
         level_int = int(level)
-        if (level_int == critical_level and tag in ("AgenticGIS", "Python error")) or (
-            level_int == warning_level and tag == "Python warning"
-        ):
+        python_error_tags = {
+            "Python error",
+            QCoreApplication.translate("Python", "Python error"),
+        }
+        python_warning_tags = {
+            "Python warning",
+            QCoreApplication.translate("Python", "Python warning"),
+        }
+        is_agentic_critical = level_int == critical_level and tag == "AgenticGIS"
+        is_python_diag = (
+            level_int in (critical_level, warning_level)
+            and (tag in python_error_tags or tag in python_warning_tags)
+        )
+        if is_agentic_critical or is_python_diag:
             log_errors.append({
                 "tag": str(tag),
                 "level": str(level_int),

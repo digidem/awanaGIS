@@ -58,9 +58,12 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "::error::GitHub Release for $TAG already exists"
+          RELEASE_STATE=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "missing")
+          if [ "$RELEASE_STATE" = "published" ]; then
+            echo "::error::Published GitHub Release for $TAG already exists"
             exit 1
+          elif [ "$RELEASE_STATE" = "draft" ]; then
+            echo "Found existing unpublished draft release for $TAG; retry will refresh assets and publish it."
           fi
 
   ci:
@@ -123,17 +126,33 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
           PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
         run: |
-          EXTRA_FLAGS=()
-          if [ "$PRERELEASE" = "true" ]; then
-            EXTRA_FLAGS+=(--prerelease)
+          RELEASE_STATE=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "missing")
+          if [ "$RELEASE_STATE" = "published" ]; then
+            echo "::error::Published GitHub Release for $TAG already exists"
+            exit 1
+          elif [ "$RELEASE_STATE" = "draft" ]; then
+            gh release upload "$TAG" \
+              --clobber \
+              "$RUNNER_TEMP/pkg/AgenticGIS-${VERSION}.zip" \
+              "$RUNNER_TEMP/pkg/SHA256SUMS.txt" \
+              "$RUNNER_TEMP/pkg/package-manifest.json"
+            gh release edit "$TAG" \
+              --title "AgenticGIS $TAG" \
+              --prerelease="$PRERELEASE" \
+              --draft=false
+          else
+            EXTRA_FLAGS=()
+            if [ "$PRERELEASE" = "true" ]; then
+              EXTRA_FLAGS+=(--prerelease)
+            fi
+            gh release create "$TAG" \
+              --verify-tag \
+              --draft \
+              --title "AgenticGIS $TAG" \
+              --generate-notes \
+              "${EXTRA_FLAGS[@]}" \
+              "$RUNNER_TEMP/pkg/AgenticGIS-${VERSION}.zip" \
+              "$RUNNER_TEMP/pkg/SHA256SUMS.txt" \
+              "$RUNNER_TEMP/pkg/package-manifest.json"
+            gh release edit "$TAG" --draft=false
           fi
-          gh release create "$TAG" \
-            --verify-tag \
-            --draft \
-            --title "AgenticGIS $TAG" \
-            --generate-notes \
-            "${EXTRA_FLAGS[@]}" \
-            "$RUNNER_TEMP/pkg/AgenticGIS-${VERSION}.zip" \
-            "$RUNNER_TEMP/pkg/SHA256SUMS.txt" \
-            "$RUNNER_TEMP/pkg/package-manifest.json"
-          gh release edit "$TAG" --draft=false

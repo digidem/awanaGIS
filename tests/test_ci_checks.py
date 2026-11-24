@@ -520,13 +520,19 @@ class ScannerAdapterTests(unittest.TestCase):
     def test_static_ast_dependency_and_qt_compat_guards(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = self._make_target(tmp)
-            # Guarded optional import and sibling fallback pass
+            # Guarded optional import (top-level and function-local) and sibling fallback pass
             (target / "guarded.py").write_text(
                 "from qgis.PyQt.QtCore import Qt\n"
                 "try:\n"
                 "    import ee\n"
                 "except ImportError:\n"
                 "    ee = None\n"
+                "def fn_guarded():\n"
+                "    try:\n"
+                "        import ee\n"
+                "    except ImportError:\n"
+                "        ee = None\n"
+                "    return ee\n"
                 "try:\n"
                 "    from . import helper\n"
                 "except ImportError:\n"
@@ -537,17 +543,38 @@ class ScannerAdapterTests(unittest.TestCase):
             ok_rep = check_plugin.run_scans(target, "static", None)
             self.assertTrue(ok_rep["ok"], ok_rep)
 
-            # Unguarded optional import fails
+            # Unguarded optional import (top-level and function-local) fails
             (target / "unguarded_ee.py").write_text("import ee\n", encoding="utf-8")
             ee_rep = check_plugin.run_scans(target, "static", None)
             self.assertFalse(ee_rep["ok"])
             (target / "unguarded_ee.py").unlink()
 
-            # Third-party dependency fails
+            (target / "unguarded_fn_ee.py").write_text(
+                "def bad():\n    import ee\n    return ee\n",
+                encoding="utf-8",
+            )
+            fn_ee_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(fn_ee_rep["ok"])
+            self.assertEqual(
+                fn_ee_rep["checks"][0]["blocking_findings"][0]["rule"],
+                "UNGUARDED_OPTIONAL_IMPORT",
+            )
+            (target / "unguarded_fn_ee.py").unlink()
+
+            # Third-party dependency and post-Python-3.9 stdlib module fail
             (target / "dep.py").write_text("import requests\n", encoding="utf-8")
             dep_rep = check_plugin.run_scans(target, "static", None)
             self.assertFalse(dep_rep["ok"])
             (target / "dep.py").unlink()
+
+            (target / "py311_stdlib.py").write_text("import tomllib\n", encoding="utf-8")
+            toml_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(toml_rep["ok"])
+            self.assertEqual(
+                toml_rep["checks"][0]["blocking_findings"][0]["rule"],
+                "UNEXPECTED_DEPENDENCY",
+            )
+            (target / "py311_stdlib.py").unlink()
 
             # Direct PyQt5/6 import and .exec_() fail
             (target / "qt_bad.py").write_text(

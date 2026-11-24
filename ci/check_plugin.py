@@ -101,6 +101,24 @@ OPTIONAL_GUARDED_IMPORTS = frozenset({
     "ee",
     "ee_plugin",
 })
+CALLER_GUARDED_OPTIONAL_IMPORTS = frozenset({
+    ("core/toolkit.py", "_ensure_gee_initialized", "ee"),
+    ("core/toolkit.py", "_burn_labels_into_gif", "PIL"),
+})
+POST_PY39_STDLIB_MODULES = frozenset({
+    "_android_support",
+    "_apple_support",
+    "_colorize",
+    "_ios_support",
+    "_opcode_metadata",
+    "_pyrepl",
+    "_typing",
+    "_wmi",
+    "_zstd",
+    "annotationlib",
+    "compression",
+    "tomllib",
+})
 FORBIDDEN_QT_IMPORTS = frozenset({"PyQt5", "PyQt6", "sip"})
 FORBIDDEN_QT_METHODS = frozenset({"exec_", "print_"})
 RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)(-(?:alpha|beta|rc)\.?\d+)?$")
@@ -791,10 +809,14 @@ def _walk_static_ast(
     findings: list[dict],
     in_guard: bool,
     in_import_fallback: bool,
+    current_func: str | None = None,
 ) -> None:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         for child in node.body:
-            _walk_static_ast(child, py_file, rel_path, stdlib, findings, True, in_import_fallback)
+            _walk_static_ast(
+                child, py_file, rel_path, stdlib, findings,
+                False, False, node.name,
+            )
         return
     if isinstance(node, ast.Try):
         guard_try = _is_import_guard_try(node)
@@ -802,16 +824,19 @@ def _walk_static_ast(
         for child in node.body:
             _walk_static_ast(
                 child, py_file, rel_path, stdlib, findings,
-                in_guard or guard_try, in_import_fallback,
+                in_guard or guard_try, in_import_fallback, current_func,
             )
         for handler in node.handlers:
             for child in handler.body:
                 _walk_static_ast(
                     child, py_file, rel_path, stdlib, findings,
-                    in_guard, in_import_fallback or sibling_try,
+                    in_guard, in_import_fallback or sibling_try, current_func,
                 )
         for child in node.orelse + node.finalbody:
-            _walk_static_ast(child, py_file, rel_path, stdlib, findings, in_guard, in_import_fallback)
+            _walk_static_ast(
+                child, py_file, rel_path, stdlib, findings,
+                in_guard, in_import_fallback, current_func,
+            )
         return
 
     if isinstance(node, ast.Import):
@@ -819,14 +844,14 @@ def _walk_static_ast(
             top = alias.name.split(".")[0]
             _check_import_name(
                 top, alias.name, node.lineno, py_file, rel_path,
-                stdlib, findings, in_guard, in_import_fallback,
+                stdlib, findings, in_guard, in_import_fallback, current_func,
             )
     elif isinstance(node, ast.ImportFrom):
         if node.level == 0 and node.module:
             top = node.module.split(".")[0]
             _check_import_name(
                 top, node.module, node.lineno, py_file, rel_path,
-                stdlib, findings, in_guard, in_import_fallback,
+                stdlib, findings, in_guard, in_import_fallback, current_func,
             )
     elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         if node.func.attr in FORBIDDEN_QT_METHODS:
@@ -838,7 +863,10 @@ def _walk_static_ast(
             })
 
     for child in ast.iter_child_nodes(node):
-        _walk_static_ast(child, py_file, rel_path, stdlib, findings, in_guard, in_import_fallback)
+        _walk_static_ast(
+            child, py_file, rel_path, stdlib, findings,
+            in_guard, in_import_fallback, current_func,
+        )
 
 
 def _check_import_name(
@@ -851,6 +879,7 @@ def _check_import_name(
     findings: list[dict],
     in_guard: bool,
     in_import_fallback: bool,
+    current_func: str | None = None,
 ) -> None:
     if top in FORBIDDEN_QT_IMPORTS:
         findings.append({
@@ -863,7 +892,8 @@ def _check_import_name(
     if top in stdlib or top in ALLOWED_TOP_LEVEL_IMPORTS:
         return
     if top in OPTIONAL_GUARDED_IMPORTS:
-        if not in_guard:
+        caller_guarded = (rel_path, current_func, top) in CALLER_GUARDED_OPTIONAL_IMPORTS
+        if not in_guard and not caller_guarded:
             findings.append({
                 "file": rel_path,
                 "line": lineno,
@@ -896,7 +926,7 @@ def _run_static(target_dir: Path) -> dict:
         result["errors"].append("No Python files found for static AST checks")
         return result
 
-    stdlib = sys.stdlib_module_names | {"__future__"}
+    stdlib = (sys.stdlib_module_names - POST_PY39_STDLIB_MODULES) | {"__future__"}
     for py_file in py_files:
         rel = _rel_display(str(py_file), target_dir)
         try:
