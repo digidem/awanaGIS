@@ -427,6 +427,22 @@ class MigrationTests(unittest.TestCase):
             self.assertIn("leg-4", ids)
             self.assertIn("leg-3", ids)
 
+    def test_reload_flushes_pending_session_save(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "reload.ini"), QSettings.Format.IniFormat)
+            store = session_store.SessionStore(settings=settings)
+            session_id = store.active_session()["id"]
+            events = [{"type": "user", "text": "pending turn"}]
+            store.schedule_save(session_id, transcript_events=events)
+
+            store.reload()
+
+            self.assertEqual(store.get_session(session_id)["transcript_events"], events)
+            persisted = json.loads(settings.value(session_store.SETTINGS_KEY))
+            self.assertEqual(persisted["sessions"][0]["transcript_events"], events)
+            self.assertIsNone(store._pending_save)
+            self.assertFalse(store._save_timer.isActive())
+
     def test_live_session_store_import_and_font_scale_refresh(self):
         with TemporaryDirectory() as tmp:
             settings = QSettings(str(Path(tmp) / "live.ini"), QSettings.Format.IniFormat)
@@ -494,6 +510,13 @@ class MigrationTests(unittest.TestCase):
             self.assertIn(active_id, ids)
             self.assertEqual(
                 dock._session_store.get_session(active_id)["transcript_events"],
+                [{"type": "user", "text": "unsaved edit"}],
+            )
+            persisted = json.loads(settings.value(session_store.SETTINGS_KEY))
+            persisted_sessions = {s["id"]: s for s in persisted["sessions"]}
+            self.assertIn("leg-live", persisted_sessions)
+            self.assertEqual(
+                persisted_sessions[active_id]["transcript_events"],
                 [{"type": "user", "text": "unsaved edit"}],
             )
 
