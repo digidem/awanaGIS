@@ -1,0 +1,70 @@
+{
+  "product": "AwanaGIS",
+  "parent_brand": "Awana Digital",
+  "source_url": "https://app.notion.com/p/3341b08162d580a38611ce745e372f45",
+  "source_reviewed": "2026-11-23",
+  "note": "Official palette/typography below, proposed semantic mappings separately; Notion remains source of truth.",
+  "official": {
+    "primary": {
+      "dark_burgundy": "#6B0030",
+      "burgundy": "#8D003E",
+      "earth": "#932D00"
+    },
+    "secondary": {
+      "pink": "#FF60C0",
+      "orange": "#FF8D00",
+      "pollen": "#FFE460",
+      "fungi": "#00D05F",
+      "forest": "#148658",
+      "cream": "#FDF7EF",
+      "river": "#0063A1",
+      "sky": "#0094FF",
+      "rain": "#B4DDF9"
+    },
+    "font_roles": {
+      "display": "Tomorrow",
+      "body": "Public Sans",
+      "caption": "Space Grotesk"
+    },
+    "logo_variants": {
+      "rectangle": [
+        "Burgundy",
+        "Earth",
+        "Black"
+      ],
+      "circle": [
+        "Burgundy",
+        "Earth",
+        "Black"
+      ],
+      "square": [
+        "Burgundy",
+        "Earth",
+        "Black"
+      ],
+      "wordmark": [
+        "Burgundy",
+        "Earth",
+        "Black",
+        "White"
+      ]
+    }
+  },
+  "awanagis_proposals": {
+    "light": {
+      "primary_surface": "#FDF7EF",
+      "primary_text": "#6B0030",
+      "primary_action": "#8D003E",
+      "accent_warm": "#932D00",
+      "accent_link": "#0063A1",
+      "highlight_on_burgundy": "#FFE460"
+    },
+    "dark": {
+      "policy": "derive from active QGIS/Qt palette; do not force a fabricated brand-neutral dark hex"
+    },
+    "font_fallback": "QGIS / Qt native UI sans-serif",
+    "contrast_normal_text_min": 4.5,
+    "contrast_large_text_and_ui_min": 3.0,
+    "product_logo_status": "needs Awana Digital design approval; parent logo variants are references, not automatic product logo"
+  }
+}
