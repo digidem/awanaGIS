@@ -76,7 +76,7 @@ class SessionStore:
         self._data["sessions"] = sessions[:self._limit]
         ids = {session["id"] for session in self._data["sessions"]}
         active_id = self._data.get("active_session_id")
-        if active_id not in ids:
+        if not isinstance(active_id, str) or active_id not in ids:
             self._data["active_session_id"] = self._data["sessions"][0]["id"] if self._data["sessions"] else None
 
     @staticmethod

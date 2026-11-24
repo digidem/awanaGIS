@@ -112,7 +112,7 @@ AwanaGIS is packaged and namespaced independently so it can coexist side by side
 - MCP discovery registry: `~/.awanagis/mcp.json` (env override `AWANAGIS_MCP_DISCOVERY`) and dynamic loopback port (`0`)
 - Dock object name & title: `AwanaGisDock` / `AwanaGIS`
 
-Fresh installs **never** automatically read, migrate, or delete `AgenticGIS/` settings, API keys, or security approvals. If legacy `AgenticGIS/` preferences or sessions exist on the machine, an **opt-in, read-only** import option is available in **Settings → Appearance → Import from AgenticGIS** (and in `core/migration.py`), which copies only non-secret preferences and chat sessions while leaving `AgenticGIS/` data untouched. API keys and custom endpoint/base URLs are never imported, so credentials cannot be redirected to a legacy endpoint; re-enter them in AwanaGIS settings.
+Fresh installs **never** automatically read, migrate, or delete `AgenticGIS/` settings, API keys, or security approvals. If legacy `AgenticGIS/` preferences or sessions exist on the machine, an **opt-in, read-only** import option is available in **Settings → Appearance → Import from AgenticGIS** (and in `core/migration.py`), which copies only non-secret preferences and chat sessions while leaving `AgenticGIS/` data untouched. API keys, custom endpoint/base URLs, and CLI executable paths and arguments are never imported; re-enter or select them in AwanaGIS settings.
 
 ## Requirements
 

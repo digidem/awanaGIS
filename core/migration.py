@@ -21,8 +21,6 @@ LEGACY_SESSIONS_KEY = f"{LEGACY_GROUP}/sessions_json"
 SAFE_PREFERENCE_KEYS = (
     "connection_mode",
     "cli_tool",
-    "cli_path",
-    "cli_args",
     "cli_model",
     "provider",
     "model",
@@ -100,11 +98,16 @@ def _parse_sessions_payload(raw, *, strict_entries=False):
             if strict_entries:
                 return False, [], "Session entry is not a JSON object."
             continue
-        sid = str(entry.get("id") or "").strip() or uuid.uuid4().hex
         name = str(entry.get("name") or "").strip()
+        history = entry.get("backend_history")
+        identity = json.dumps([str(entry.get("created_at") or ""), name,
+                               len(history) if isinstance(history, list) else 0],
+                              separators=(",", ":"), sort_keys=True)
+        sid = str(entry.get("id") or "").strip() or uuid.uuid5(
+            uuid.NAMESPACE_URL, "agenticgis-legacy:" + identity
+        ).hex
         created = str(entry.get("created_at") or _now())
         updated = str(entry.get("updated_at") or created)
-        history = entry.get("backend_history")
         events = entry.get("transcript_events")
         state = entry.get("backend_state")
         sanitized.append({

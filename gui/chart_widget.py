@@ -49,6 +49,8 @@ class ChartWidget(QFrame):
 
     def __init__(self, chart_data, parent=None):
         super().__init__(parent)
+        if not isinstance(chart_data, dict):
+            chart_data = {}
         self.chart_data = chart_data
         self.chart_type = chart_data.get("chart_type", "bar")
         self.title = chart_data.get("title", "")

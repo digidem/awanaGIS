@@ -218,6 +218,9 @@ class MigrationTests(unittest.TestCase):
             settings.setValue("AgenticGIS/provider", "openai")
             settings.setValue("AgenticGIS/model", "gpt-4o")
             settings.setValue("AgenticGIS/font_scale", 1.25)
+            settings.setValue("AgenticGIS/connection_mode", "cli")
+            settings.setValue("AgenticGIS/cli_path", "/legacy/cli")
+            settings.setValue("AgenticGIS/cli_args", "--legacy")
             settings.setValue("AgenticGIS/api_base_url", "https://legacy.example/v1")
             settings.setValue("AgenticGIS/custom_base_url", "https://custom.example/v1")
             settings.setValue("AgenticGIS/api_key", "sk-secret-legacy")
@@ -269,7 +272,9 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(cfg.get("provider"), "openai")
             self.assertEqual(cfg.get("model"), "gpt-4o")
             self.assertEqual(cfg.get("font_scale"), 1.25)
-            for key in ("api_base_url", "custom_base_url"):
+            self.assertEqual(cfg.get("connection_mode"), "cli")
+            for key in ("api_base_url", "custom_base_url", "cli_path", "cli_args"):
+                self.assertIn(key, preview["excluded_keys"])
                 self.assertIn(key, result["preferences"]["excluded_keys"])
                 self.assertFalse(settings.contains("AwanaGIS/" + key))
 
@@ -289,6 +294,30 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(second["sessions"]["imported_count"], 0)
             self.assertEqual(second["sessions"]["skipped_count"], 1)
             self.assertEqual(settings.value("AgenticGIS/api_key"), "sk-secret-legacy")
+
+    def test_idless_session_import_is_idempotent(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "idless.ini"), QSettings.Format.IniFormat)
+            settings.setValue(migration.LEGACY_SESSIONS_KEY, json.dumps({
+                "sessions": [{"id": " ", "name": "Legacy", "backend_history": [{"role": "user"}]}],
+            }))
+            first = migration.import_sessions_from_agenticgis(settings)
+            second = migration.import_sessions_from_agenticgis(settings)
+            self.assertEqual(first["imported_count"], 1)
+            self.assertEqual(second["imported_count"], 0)
+            self.assertEqual(second["skipped_count"], 1)
+            self.assertEqual(len(json.loads(settings.value(session_store.SETTINGS_KEY))["sessions"]), 1)
+
+    def test_store_normalizes_non_string_active_id(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "active.ini"), QSettings.Format.IniFormat)
+            for active_id in ([], {}, 123):
+                with self.subTest(active_id=active_id):
+                    settings.setValue(session_store.SETTINGS_KEY, json.dumps({
+                        "active_session_id": active_id, "sessions": [{"id": "existing"}],
+                    }))
+                    store = session_store.SessionStore(settings=settings)
+                    self.assertEqual(store.active_session()["id"], "existing")
 
     def test_corrupt_legacy_session_fails_safely(self):
         with TemporaryDirectory() as tmp:

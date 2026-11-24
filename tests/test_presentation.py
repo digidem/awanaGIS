@@ -24,9 +24,20 @@ AgentTurnBubble = import_module(f"{ROOT.name}.gui.agent_turn_bubble").AgentTurnB
 GifWidget = import_module(f"{ROOT.name}.gui.gif_widget").GifWidget
 SessionPopup = import_module(f"{ROOT.name}.gui.session_popup").SessionPopup
 StatsWidget = import_module(f"{ROOT.name}.gui.stats_widget").StatsWidget
+ChartWidget = import_module(f"{ROOT.name}.gui.chart_widget").ChartWidget
 
 
 class PresentationTests(unittest.TestCase):
+    def test_chart_with_non_dict_data_renders_empty(self):
+        for data in ([1], {}, None):
+            with self.subTest(data=data):
+                widget = ChartWidget(data)
+                widget.resize(400, 260)
+                widget.show()
+                self.app.processEvents()
+                self.assertEqual(widget.data, [])
+                widget.close()
+
     def test_generated_chart_titles_preserve_wire_values(self):
         import json
 
