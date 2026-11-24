@@ -500,7 +500,7 @@ def external_db_descriptor(
     proto = str(source.get("protocol") or "")
     origin_class = str(source.get("origin_class") or "")
     norm_status = str(status or "unknown")
-    is_offline = norm_status.startswith("offline_") or norm_status in ("unavailable", "failed")
+    is_offline = norm_status.startswith("offline_") or norm_status == "unavailable"
     fallback = "geobr_terras_indigenas" if (sid == "funai_ti_boundaries" and is_offline) else None
     safe_reason = redact_sensitive_text(reason, redact_coordinates=True).strip()
 

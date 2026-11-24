@@ -329,6 +329,15 @@ class BrazilCatalogTests(unittest.TestCase):
             self.assertEqual(det_rec["sources"][0]["status"], "reachable")
             self.assertEqual(det_rec["sources"][0]["service_status"], "reachable")
 
+        # HTTP 200 HTML maintenance page on WFS GetCapabilities must NOT be marked reachable
+        catalog._PROBE_CACHE.clear()
+        maint_html = b"<!DOCTYPE html><html><title>Maintenance</title><body>Temporarily unavailable</body></html>"
+        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(maint_html)):
+            det_html = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
+            self.assertEqual(det_html["sources"][0]["status"], "unavailable")
+            self.assertEqual(det_html["sources"][0]["service_status"], "offline_http_error")
+            self.assertFalse(det_html["sources"][0]["machine_access_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

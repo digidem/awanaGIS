@@ -439,24 +439,35 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
             status_code = getattr(resp, "status", 200)
             read_limit = (2 * 1024 * 1024) if proto == "wfs" else 65536
             snippet = resp.read(read_limit).decode("utf-8", errors="replace") if method == "GET" else ""
-            if proto == "wfs" and ("FeatureTypeList" in snippet or "WFS_Capabilities" in snippet):
-                typename = entry.get("typename") or ""
-                layer_found = (not typename) or (typename in snippet)
-                svc_status = "reachable" if layer_found else "offline_http_error"
-                reason_txt = (
-                    "WFS GetCapabilities reachable and typename present."
-                    if layer_found
-                    else f"WFS GetCapabilities reachable, but typename '{typename}' not found."
-                )
-                result = {
-                    "status": "reachable" if layer_found else "unavailable",
-                    "service_status": svc_status,
-                    "checked_at": now_iso,
-                    "machine_access_verified": bool(layer_found),
-                    "http_status": status_code,
-                    "typename_verified": layer_found,
-                    "reason": reason_txt,
-                }
+            if proto == "wfs":
+                if "FeatureTypeList" in snippet or "WFS_Capabilities" in snippet:
+                    typename = entry.get("typename") or ""
+                    layer_found = (not typename) or (typename in snippet)
+                    svc_status = "reachable" if layer_found else "offline_http_error"
+                    reason_txt = (
+                        "WFS GetCapabilities reachable and typename present."
+                        if layer_found
+                        else f"WFS GetCapabilities reachable, but typename '{typename}' not found."
+                    )
+                    result = {
+                        "status": "reachable" if layer_found else "unavailable",
+                        "service_status": svc_status,
+                        "checked_at": now_iso,
+                        "machine_access_verified": bool(layer_found),
+                        "http_status": status_code,
+                        "typename_verified": layer_found,
+                        "reason": reason_txt,
+                    }
+                else:
+                    result = {
+                        "status": "unavailable",
+                        "service_status": "offline_http_error",
+                        "checked_at": now_iso,
+                        "machine_access_verified": False,
+                        "http_status": status_code,
+                        "typename_verified": False,
+                        "reason": "WFS GetCapabilities endpoint returned non-capabilities HTML/error response.",
+                    }
             elif proto == "arcgis":
                 try:
                     meta = json.loads(snippet)

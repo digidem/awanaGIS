@@ -723,7 +723,7 @@ def _fetch_source_layer(
             err_msg = getattr(layer, "error_msg", "WFS endpoint unreachable or returned invalid response")
             if sid in ("funai_ti_boundaries", "funai_dsei_areas"):
                 warnings.append(
-                    "Official FUNAI GeoServer was unreachable or failed TLS verification; "
+                    "Official FUNAI GeoServer was unreachable; "
                     "for TI boundaries you may explicitly select 'geobr_terras_indigenas' (dated mirror)."
                 )
             return None, "unavailable", [redact_sensitive_text(err_msg)] + warnings, None
@@ -957,8 +957,9 @@ def run_load_worker(
                 continue
 
             if raw_res is None:
-                raw_err = "; ".join(fetch_warnings) or f"Failed loading {sid}."
-                svc_code, svc_reason = classify_external_service_error(raw_err)
+                connector_err = fetch_warnings[0] if fetch_warnings else f"Failed loading {sid}."
+                raw_err = "; ".join(fetch_warnings) or connector_err
+                svc_code, svc_reason = classify_external_service_error(connector_err)
                 ext_desc = external_db_descriptor(source, status=svc_code, reason=svc_reason)
                 immediate_results.append({
                     "source_id": sid,
@@ -1229,12 +1230,13 @@ def commit_load_results(
 
         if not layer.isValid():
             failed_count += 1
+            ext_status = "fixture" if item.get("is_fixture") else "online"
             results.append({
                 "source_id": sid,
                 "status": "failed",
-                "service_status": "failed",
+                "service_status": "local_open_failed",
                 "layer_ids": [],
-                "external_db": external_db_descriptor(source_meta, status="failed", reason="Persisted layer failed to open."),
+                "external_db": external_db_descriptor(source_meta, status=ext_status),
                 "warnings": item.get("warnings", []),
                 "error": f"Persisted layer '{item['uri']}' failed to open.",
             })

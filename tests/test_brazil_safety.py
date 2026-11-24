@@ -333,7 +333,7 @@ class BrazilSafetyTests(unittest.TestCase):
         with patch.object(
             wfs_mod,
             "fetch_layer",
-            return_value=_InvalidWfs("Falha WFS (Funai:tis_poligonais, host: geoserver.funai.gov.br): Operation timed out"),
+            return_value=_InvalidWfs("Falha WFS (Funai:tis_poligonais, host: geoserver.funai.gov.br): HTTP 503 Service Unavailable"),
         ):
             res = br_tools.br_execute_load(
                 plan["plan_id"],
@@ -345,11 +345,38 @@ class BrazilSafetyTests(unittest.TestCase):
         self.assertEqual(res["status"], "partial")
         self.assertEqual(res["offline_sources"], ["funai_ti_boundaries"])
         by_id = {r["source_id"]: r for r in res["results"]}
-        self.assertEqual(by_id["funai_ti_boundaries"]["service_status"], "offline_timeout")
+        self.assertEqual(by_id["funai_ti_boundaries"]["service_status"], "offline_http_error")
         self.assertEqual(by_id["funai_ti_boundaries"]["external_db"]["fallback_source_id"], "geobr_terras_indigenas")
         self.assertEqual(by_id["icmbio_uc"]["status"], "loaded")
         self.assertIn("geoserver.funai.gov.br", res["user_notice"])
         msg_bar.pushMessage.assert_called_once()
+
+        # Local layer open failure after fetch must not falsely report external DB as offline
+        br_loader = import_module(f"{PKG}.integrations.brazil.loader")
+        bad_open_res = br_loader.commit_load_results(
+            "brplan_dummy",
+            {"area": self.area, "replace_existing": False, "items": []},
+            {
+                "cancelled": False,
+                "immediate_results": [],
+                "staged": [{
+                    "kind": "vector",
+                    "source": catalog.get_source("funai_ti_boundaries"),
+                    "is_fixture": False,
+                    "uri": str(self.tmp / "missing_local.gpkg"),
+                    "display_name": "TI Test",
+                    "output_path": str(self.tmp / "missing_local.gpkg"),
+                    "table_name": "missing",
+                    "clip_mode": "bbox_filter_only",
+                    "extracted_at": "2026-11-24T00:00:00Z",
+                    "truncated": False,
+                }],
+            },
+            project=proj,
+        )
+        self.assertEqual(bad_open_res["offline_sources"], [])
+        self.assertEqual(bad_open_res["results"][0]["service_status"], "local_open_failed")
+        self.assertFalse(bad_open_res["results"][0]["external_db"]["is_offline"])
 
 
 if __name__ == "__main__":
