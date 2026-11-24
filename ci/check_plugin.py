@@ -122,7 +122,6 @@ POST_PY39_STDLIB_MODULES = frozenset({
 FORBIDDEN_QT_IMPORTS = frozenset({"PyQt5", "PyQt6", "sip"})
 FORBIDDEN_QT_METHODS = frozenset({"exec_", "print_"})
 RELEASE_TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)(-(?:alpha|beta|rc)\.?\d+)?$")
-BINARY_SECRET_SUFFIXES = (".pyc", ".pyo", ".so", ".dll", ".exe")
 FLAKE8_LINE_RE = re.compile(
     r"^(?P<path>.+?):(?P<row>\d+):(?P<col>\d+):(?P<code>[A-Z]\d+):(?P<text>.*)$"
 )
@@ -672,7 +671,7 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
 
     all_files = [
         p for p in target_dir.rglob("*")
-        if p.is_file() and not p.name.endswith(BINARY_SECRET_SUFFIXES)
+        if p.is_file()
     ]
     result["files_checked"] = len(all_files)
 
@@ -737,8 +736,6 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
 
     # Never copy hashed_secret or matched secret fragments into CI logs or reports.
     for raw_file, hits in sorted(payload["results"].items()):
-        if raw_file.endswith(BINARY_SECRET_SUFFIXES):
-            continue
         if not isinstance(hits, list):
             result["errors"].append("Malformed detect-secrets file entry")
             return result
@@ -827,6 +824,16 @@ def _walk_static_ast(
     current_func: str | None = None,
 ) -> None:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for field, value in ast.iter_fields(node):
+            if field == "body":
+                continue
+            children = value if isinstance(value, list) else [value]
+            for child in children:
+                if isinstance(child, ast.AST):
+                    _walk_static_ast(
+                        child, py_file, rel_path, stdlib, findings,
+                        in_guard, in_import_fallback, current_func,
+                    )
         for child in node.body:
             _walk_static_ast(
                 child, py_file, rel_path, stdlib, findings,

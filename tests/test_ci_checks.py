@@ -441,6 +441,23 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertNotIn(raw_sentinel, serialized)
             self.assertIn("Secret Keyword", summary)
 
+            # Finding reported on a binary-named file MUST still fail if detect-secrets scanned it
+            binary_named_payload = {
+                "results": {
+                    "./payload.dll": [{
+                        "type": "Secret Keyword",
+                        "filename": "./payload.dll",
+                        "hashed_secret": secret_hash,
+                        "line_number": 3,
+                    }],
+                },
+            }
+            dll_proc = subprocess.CompletedProcess([], 0, json.dumps(binary_named_payload), "")
+            with patch("ci.check_plugin.subprocess.run", return_value=dll_proc):
+                dll_report = check_plugin.run_scans(target, "secrets", None)
+            self.assertFalse(dll_report["ok"])
+            self.assertEqual(dll_report["checks"][0]["blocking_findings"][0]["file"], "payload.dll")
+
             # Missing tool -> error
             with patch("ci.check_plugin.subprocess.run", side_effect=FileNotFoundError()):
                 res = check_plugin._run_secrets(target)
@@ -619,6 +636,20 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertFalse(qt_rep["ok"])
             rules = {f["rule"] for f in qt_rep["checks"][0]["blocking_findings"]}
             self.assertEqual(rules, {"QT_COMPAT"})
+            (target / "qt_bad.py").unlink()
+
+            # Decorators and default arguments are checked in enclosing scope too
+            (target / "qt_sig_bad.py").write_text(
+                "@dec(dlg.exec_())\n"
+                "async def run(x=dlg.print_()):\n"
+                "    return x\n",
+                encoding="utf-8",
+            )
+            sig_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(sig_rep["ok"])
+            sig_lines = sorted(f["line"] for f in sig_rep["checks"][0]["blocking_findings"])
+            self.assertEqual(sig_lines, [1, 2])
+            (target / "qt_sig_bad.py").unlink()
 
     def test_manifest_verification_and_release_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
