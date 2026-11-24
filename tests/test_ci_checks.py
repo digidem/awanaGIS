@@ -184,6 +184,25 @@ class ArchiveCheckTests(unittest.TestCase):
                     self.assertFalse(report["ok"])
                     self.assertEqual(list(extract_dir.iterdir()), [])
 
+            # NUL-truncated ZipInfo.orig_filename is rejected before using truncated filename
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_dir = Path(tmp)
+                nul_zip = _build_valid_zip(
+                    tmp_dir / "nul_hdr.zip",
+                    extra_entries=[("AgenticGIS/nulX.py", b"x = 1\n", stat.S_IFREG | 0o644)],
+                )
+                nul_zip.write_bytes(
+                    nul_zip.read_bytes().replace(b"AgenticGIS/nulX.py", b"AgenticGIS/nul\x00.py")
+                )
+                ext_nul = tmp_dir / "ext_nul"
+                rep_nul = check_plugin.validate_and_extract_archive(nul_zip, ext_nul)
+                self.assertFalse(rep_nul["ok"])
+                self.assertTrue(
+                    any("normalization" in e or "NUL" in e for e in rep_nul["blocking_errors"]),
+                    rep_nul,
+                )
+                self.assertFalse(ext_nul.exists())
+
     def test_forbidden_leaks_are_rejected(self):
         forbidden = [
             "AgenticGIS/.git/config",

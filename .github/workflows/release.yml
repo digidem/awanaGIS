@@ -142,15 +142,21 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
           PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
         run: |
-          TAG_OBJ_TYPE=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
-          TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
-          if [ "$TAG_OBJ_TYPE" = "tag" ]; then
-            TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_SHA}" --jq '.object.sha')
-          fi
-          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
-            echo "::error::Remote tag $TAG points to $TAG_SHA instead of tested commit $GITHUB_SHA"
-            exit 1
-          fi
+          # Note: Keep a repository tag ruleset blocking force-updates and deletions on `v*`
+          # so release tags cannot be retargeted while publishing.
+          verify_tag_sha() {
+            TAG_OBJ_TYPE=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+            TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+            if [ "$TAG_OBJ_TYPE" = "tag" ]; then
+              TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_SHA}" --jq '.object.sha')
+            fi
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::Remote tag $TAG points to $TAG_SHA instead of tested commit $GITHUB_SHA"
+              exit 1
+            fi
+          }
+
+          verify_tag_sha
 
           RELEASE_STATE=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "missing")
           if [ "$RELEASE_STATE" = "published" ]; then
@@ -182,6 +188,7 @@ jobs:
               exit 1
             fi
 
+            verify_tag_sha
             gh release edit "$TAG" \
               --title "AgenticGIS $TAG" \
               --prerelease="$PRERELEASE" \
@@ -200,5 +207,6 @@ jobs:
               "$RUNNER_TEMP/pkg/AgenticGIS-${VERSION}.zip" \
               "$RUNNER_TEMP/pkg/SHA256SUMS.txt" \
               "$RUNNER_TEMP/pkg/package-manifest.json"
+            verify_tag_sha
             gh release edit "$TAG" --draft=false
           fi

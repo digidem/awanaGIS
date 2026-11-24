@@ -405,6 +405,12 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
         file_members: set[str] = set()
 
         for info in infos:
+            raw_orig = getattr(info, "orig_filename", info.filename)
+            if raw_orig != info.filename:
+                report["blocking_errors"].append(
+                    f"Archive member path changed during ZIP header normalization: {raw_orig!r}"
+                )
+                continue
             is_dir = info.is_dir()
             norm_path, path_err = _validate_member_path(info.filename, is_dir)
             if path_err:
