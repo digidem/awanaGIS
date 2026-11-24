@@ -69,6 +69,11 @@ class AgenticGisPlugin:
         self.toolkit.set_ask_user_emitter(None)
         self.toolkit.cancel_pending_ask_user()
         try:
+            from .integrations.smp.exporter import get_export_manager
+            get_export_manager().cleanup_all()
+        except Exception:  # nosec B110
+            pass
+        try:
             self._unload_gui()
         finally:
             if self._translator is not None:

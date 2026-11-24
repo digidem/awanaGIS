@@ -1792,7 +1792,42 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Exportar layout</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="114" />
+            <location filename="../gui/formatting.py" line="103" />
+            <source>Inspect SMP map</source>
+            <translation>Inspecionar mapa SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="104" />
+            <source>Suggest SMP regions</source>
+            <translation>Sugerir regiões SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="105" />
+            <source>Estimate SMP export</source>
+            <translation>Estimar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="106" />
+            <source>Start SMP export</source>
+            <translation>Iniciar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="107" />
+            <source>SMP export status</source>
+            <translation>Status da exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="108" />
+            <source>Cancel SMP export</source>
+            <translation>Cancelar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="109" />
+            <source>Validate SMP file</source>
+            <translation>Validar arquivo SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="121" />
             <source>Tool</source>
             <translation>Ferramenta</translation>
         </message>
