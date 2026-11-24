@@ -1,4 +1,5 @@
-SOURCES = ../backends/adapters.py \
+SOURCES = ../plugin.py \
+    ../backends/adapters.py \
     ../backends/anthropic_http.py \
     ../backends/api_backend.py \
     ../backends/base.py \
@@ -18,6 +19,7 @@ SOURCES = ../backends/adapters.py \
     ../gui/message_bubble.py \
     ../gui/session_popup.py \
     ../gui/settings_dialog.py \
-    ../gui/stats_widget.py
+    ../gui/stats_widget.py \
+    ../integrations/smp/tools.py
 
-TRANSLATIONS = AgenticGIS_pt_BR.ts
+TRANSLATIONS = awanagis_pt_BR.ts

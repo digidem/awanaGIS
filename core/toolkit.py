@@ -798,7 +798,7 @@ class QgisToolkit:
         self._gee_gif_sources = []   # list of file_path
         self._gee_tiff_cleanup_connected = False
         self._gee_manifest_path = os.path.join(
-            tempfile.gettempdir(), "agenticgis_gee_manifest.json"
+            tempfile.gettempdir(), "awanagis_gee_manifest.json"
         )
         self._clean_orphan_gee_tiffs()
         # Logical-name -> layer_id map of agent-created analysis/result layers.
@@ -852,7 +852,10 @@ class QgisToolkit:
                     feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
                     fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
                     source=layer.publicSource(),
-                    is_analysis=bool(layer.customProperty("agenticgis/analysis")),
+                    is_analysis=bool(
+                        layer.customProperty("awanagis/analysis")
+                        or layer.customProperty("agenticgis/analysis")
+                    ),
                 )
             except Exception:  # nosec B110
                 pass
@@ -1195,6 +1198,63 @@ class QgisToolkit:
                 ),
             )
 
+        if tool_name == "br_execute_load":
+            from ..integrations.brazil.planner import get_frozen_plan
+            plan, _err = get_frozen_plan(args.get("plan_id") or "")
+            if plan is not None:
+                sources = ", ".join(plan.get("executable_ids") or []) or "none"
+                hosts = ", ".join(plan.get("hosts") or []) or "external geoportal"
+                dest = plan.get("output_gpkg") or ""
+                return (
+                    f"download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}",
+                    QCoreApplication.translate(
+                        "ExternalAccess",
+                        "download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}",
+                    ).format(sources=sources, hosts=hosts, dest=dest),
+                )
+
+        if tool_name == "br_source_details" and args.get("probe"):
+            from ..integrations.brazil.catalog import get_source
+            from ..integrations.brazil.policy import (
+                is_blocked_sensitive,
+                is_discovery_only,
+                is_portal_only,
+                resolve_external_host,
+            )
+            probeable = []
+            probeable_hosts = []
+            for sid in (args.get("source_ids") or [])[:25]:
+                entry = get_source(str(sid))
+                if entry is not None and not (
+                    is_blocked_sensitive(entry)
+                    or is_discovery_only(entry)
+                    or is_portal_only(entry)
+                    or entry.get("loader_state") in ("manual_required", "unavailable")
+                ):
+                    probeable.append(entry["source_id"])
+                    host = resolve_external_host(entry)
+                    if host and host not in probeable_hosts:
+                        probeable_hosts.append(host)
+            if probeable:
+                sids = ", ".join(probeable)
+                hosts_str = ", ".join(probeable_hosts) or "external geoportal"
+                return (
+                    f"probe external database metadata ({sids}) at [{hosts_str}]",
+                    QCoreApplication.translate(
+                        "ExternalAccess",
+                        "probe external database metadata ({sources}) at [{hosts}]",
+                    ).format(sources=sids, hosts=hosts_str),
+                )
+
+        if tool_name == "br_resolve_area" and args.get("allow_live_lookup"):
+            return (
+                "query IBGE Localidades API for municipality disambiguation",
+                QCoreApplication.translate(
+                    "ExternalAccess",
+                    "query IBGE Localidades API for municipality disambiguation",
+                ),
+            )
+
         return None
 
     def confirm_external_access(self, tool_name, args):
@@ -1254,11 +1314,11 @@ class QgisToolkit:
             })
 
         answer = self._ask_user(
-            f"Allow AgenticGIS to {reason}?",
+            f"Allow AwanaGIS to {reason}?",
             options,
             allow_free_text=False,
             display_question=QCoreApplication.translate(
-                "ExternalAccess", "Allow AgenticGIS to {reason}?"
+                "ExternalAccess", "Allow AwanaGIS to {reason}?"
             ).format(reason=display_reason),
         )
         if isinstance(answer, str):
@@ -1711,7 +1771,7 @@ class QgisToolkit:
                 pump_events=False,
             )
 
-        result = self._run_qgs_task(executor, f"AgenticGIS {name}", worker)
+        result = self._run_qgs_task(executor, f"AwanaGIS {name}", worker)
         log_event(
             "background_tool.end",
             tool=name,
@@ -1926,7 +1986,7 @@ class QgisToolkit:
                 return self._run_pyqgis_inner(code, event, owner, pump_events=False)
 
         result = self._run_qgs_task(
-            executor, "AgenticGIS run_pyqgis (background)", worker
+            executor, "AwanaGIS run_pyqgis (background)", worker
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         log_event(
@@ -1953,7 +2013,7 @@ class QgisToolkit:
             if not path:
                 # Unsaved project — nothing to snapshot.
                 return None
-            fd, tmp_path = tempfile.mkstemp(suffix=".qgz", prefix="agenticgis_snapshot_")
+            fd, tmp_path = tempfile.mkstemp(suffix=".qgz", prefix="awanagis_snapshot_")
             os.close(fd)
             if project.write(tmp_path):
                 log_event("toolkit.project_snapshot", path=tmp_path)
@@ -1974,7 +2034,7 @@ class QgisToolkit:
         # namespace is built once per toolkit and copied per call.
         if self._ns_template is None:
             ns = {
-                "__name__": "__agenticgis__",
+                "__name__": "__awanagis__",
                 "iface": self.iface,
                 "QgsProject": QgsProject,
                 "QgsApplication": QgsApplication,
@@ -2160,7 +2220,7 @@ class QgisToolkit:
             with redirect_stdout(out), redirect_stderr(err):
                 # Intentional user-code execution (PyQGIS escape hatch).
                 # Guarded by _dangerous_calls_blocked() above.
-                exec(compile(code, "<agenticgis>", "exec"), ns)  # nosec B102
+                exec(compile(code, "<awanagis>", "exec"), ns)  # nosec B102
             if _cancel_check():
                 result["ok"] = False
                 result["error"] = "run_pyqgis: cancelled by user"
@@ -2840,7 +2900,7 @@ class QgisToolkit:
             pass
         if is_analysis:
             try:
-                layer.setCustomProperty("agenticgis/analysis", True)
+                layer.setCustomProperty("awanagis/analysis", True)
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
@@ -2936,7 +2996,7 @@ class QgisToolkit:
             import urllib.request
 
             req = urllib.request.Request(
-                url, method="GET", headers={"User-Agent": "AgenticGIS"}
+                url, method="GET", headers={"User-Agent": "AwanaGIS"}
             )
             try:
                 with _safe_urlopen(req, timeout=20) as resp:  # nosec B310
@@ -4341,7 +4401,10 @@ class QgisToolkit:
     def _maybe_delete_layer_file(self, layer):
         """Delete the source file for an is_analysis temp layer."""
         try:
-            is_analysis = bool(layer.customProperty("agenticgis/analysis"))
+            is_analysis = bool(
+                layer.customProperty("awanagis/analysis")
+                or layer.customProperty("agenticgis/analysis")
+            )
         except Exception:
             is_analysis = False
         if not is_analysis:
@@ -5117,7 +5180,7 @@ class QgisToolkit:
         user cancellation.
         """
         name = safe_filename_from_url(url)
-        download_dir = tempfile.mkdtemp(prefix="agenticgis_fetch_")
+        download_dir = tempfile.mkdtemp(prefix="awanagis_fetch_")
         file_path = os.path.join(download_dir, name)
         try:
             total_bytes = int(resp.headers.get("Content-Length") or 0) or None

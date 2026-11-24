@@ -1,16 +1,16 @@
-"""Standalone stdio→HTTP MCP proxy for AgenticGIS (QGIS-free, stdlib only).
+"""Standalone stdio→HTTP MCP proxy for AwanaGIS (QGIS-free, stdlib only).
 
-Most agent CLIs only speak the *stdio* MCP transport, but the AgenticGIS
+Most agent CLIs only speak the *stdio* MCP transport, but the AwanaGIS
 bridge inside QGIS serves *streamable HTTP*. This tiny proxy bridges the
 two: it reads newline-delimited JSON-RPC frames on stdin, forwards each one
 to the live bridge with a plain HTTP POST, and writes the JSON-RPC response
 back on stdout. Any MCP-capable client can therefore launch it as its
 "MCP server":
 
-    claude mcp add agenticgis -s user -- \
-        python3 <plugins>/AgenticGIS/server/mcp_stdio.py
+    claude mcp add awanagis -s user -- \
+        python3 <plugins>/awanagis/server/mcp_stdio.py
 
-With no ``--url`` the proxy reads ``~/.agenticgis/mcp.json`` (written by the
+With no ``--url`` the proxy reads ``~/.awanagis/mcp.json`` (written by the
 plugin) and probes each registered QGIS instance until one answers an
 ``initialize`` request — so several QGIS profiles/versions can run at once
 and the first live one wins.
@@ -44,7 +44,7 @@ def _split_url(url):
 
     parts = urlsplit(url)
     if parts.scheme != "http" or not parts.hostname:
-        raise ProxyError(f"Unsupported AgenticGIS MCP URL (need http://): {url!r}")
+        raise ProxyError(f"Unsupported AwanaGIS MCP URL (need http://): {url!r}")
     return parts.hostname, parts.port or 80, parts.path or "/mcp"
 
 
@@ -111,7 +111,7 @@ def serve(stdin, stdout, post):
                 "jsonrpc": "2.0",
                 "id": mid,
                 "error": {"code": -32603,
-                          "message": f"AgenticGIS bridge unreachable: {exc}"},
+                          "message": f"AwanaGIS bridge unreachable: {exc}"},
             })
             continue
         if status == 200 and body:
@@ -122,7 +122,7 @@ def serve(stdin, stdout, post):
                 "jsonrpc": "2.0",
                 "id": mid,
                 "error": {"code": -32000,
-                          "message": f"AgenticGIS bridge returned HTTP {status}"},
+                          "message": f"AwanaGIS bridge returned HTTP {status}"},
             })
     return 0
 
@@ -149,7 +149,7 @@ def resolve_url(explicit=None, probe_timeout=PROBE_TIMEOUT):
         if status == 200:
             return url
     raise ProxyError(
-        "No live AgenticGIS MCP server found. Start QGIS with the AgenticGIS "
+        "No live AwanaGIS MCP server found. Start QGIS with the AwanaGIS "
         f"plugin enabled (discovery file: {discovery_path()})."
     )
 
@@ -157,16 +157,16 @@ def resolve_url(explicit=None, probe_timeout=PROBE_TIMEOUT):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="mcp_stdio",
-        description="stdio→HTTP MCP proxy for the AgenticGIS QGIS bridge",
+        description="stdio→HTTP MCP proxy for the AwanaGIS QGIS bridge",
     )
-    parser.add_argument("--url", help="bridge URL (default: discover via ~/.agenticgis/mcp.json)")
+    parser.add_argument("--url", help="bridge URL (default: discover via ~/.awanagis/mcp.json)")
     parser.add_argument("--discovery", help="alternate discovery-file path")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                         help="seconds to wait for one forwarded request (default 600)")
     args = parser.parse_args(argv)
 
     if args.discovery:
-        os.environ["AGENTICGIS_MCP_DISCOVERY"] = args.discovery
+        os.environ["AWANAGIS_MCP_DISCOVERY"] = args.discovery
 
     try:
         url = resolve_url(explicit=args.url)

@@ -37,12 +37,16 @@ from qgis.PyQt.QtWidgets import (
 
 from .. import config as config_mod
 from ..backends.feedback import exception_feedback
+from ..core.migration import import_from_agenticgis, inspect_legacy_data
 from .agent_logos import AGENT_LOGOS
 from .backend_feedback import display_backend_feedback
 from ..backends.cli_backend import CLI_AGENT_CATALOG, _agent_id_for_binary_path
 from ..backends import providers
 from .theme import (
+    caption_font,
     clamp_font_scale,
+    curved_scrollbar_qss,
+    display_font,
     set_font_scale,
     ui_font,
     DIALOG_SURFACE as _SURFACE,
@@ -56,6 +60,7 @@ from .theme import (
     DIALOG_TEXT_3 as _TEXT_3,
     DIALOG_ACCENT as _ACCENT,
     DIALOG_ACCENT_HOV as _ACCENT_HOV,
+    DIALOG_ACCENT_TEXT as _ACCENT_TEXT,
     DIALOG_BLUE as _BLUE,
     DOCK_TEXT_4 as _TEXT_4,
     DIALOG_WARN as _WARN,
@@ -79,21 +84,19 @@ def _mono(size=12, weight=None):
 
 
 # ── Stylesheets ───────────────────────────────────────────────────────────────
-_DIALOG_SS = (
-    f"QDialog {{ background: {_SURFACE}; }}"
-    f"QWidget {{ color: {_TEXT}; }}"
-    f"QScrollArea {{ background: transparent; border: none; }}"
-    f"QScrollBar:vertical {{ background: transparent; width: 8px; margin: 2px; }}"
-    f"QScrollBar::handle:vertical {{ background: {_BORDER}; border-radius: 3px; min-height: 24px; }}"
-    f"QScrollBar::handle:vertical:hover {{ background: {_TEXT_4}; }}"
-    f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
-)
-
 _TOOLTIP_SS = (
     f"QToolTip {{"
     f"  background-color: {_SURFACE_HOV}; color: {_TEXT};"
     f"  border: 1px solid {_BORDER}; border-radius: 6px; padding: 5px 8px;"
     f"}}"
+)
+
+_DIALOG_SS = (
+    f"QDialog {{ background: {_SURFACE}; }}"
+    f"QWidget {{ color: {_TEXT}; }}"
+    f"QScrollArea {{ background: transparent; border: none; }}"
+    + curved_scrollbar_qss(thickness=10, handle_radius=4)
+    + _TOOLTIP_SS
 )
 
 _INPUT_SS = (
@@ -227,7 +230,7 @@ _RAIL_SS = (
 
 _BTN_PRIMARY_SS = (
     f"QPushButton {{"
-    f"  background: {_ACCENT}; color: {_SURFACE};"
+    f"  background: {_ACCENT}; color: {_ACCENT_TEXT};"
     f"  border: none; border-radius: 6px; padding: 6px 16px; font-weight: 600;"
     f"}}"
     f"QPushButton:hover {{ background: {_ACCENT_HOV}; }}"
@@ -266,16 +269,8 @@ def _cmb(widget):
 
 
 def _install_tooltip_palette():
-    palette = QToolTip.palette()
-    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
-        palette.setColor(group, QPalette.ColorRole.ToolTipBase, QColor(_SURFACE_HOV))
-        palette.setColor(group, QPalette.ColorRole.ToolTipText, QColor(_TEXT))
-    QToolTip.setPalette(palette)
-    QToolTip.setFont(_mono(11))
-    app = QApplication.instance()
-    if app is not None and "QToolTip" not in app.styleSheet():
-        existing = app.styleSheet().rstrip()
-        app.setStyleSheet((existing + "\n" if existing else "") + _TOOLTIP_SS)
+    """No-op hook retained for compatibility; tooltips are scoped via ``_DIALOG_SS``."""
+    return None
 
 
 def _plugin_version():
@@ -324,13 +319,7 @@ class _ModelPickerWidget(QWidget):
         f"QListWidget::item:selected {{"
         f"  background: {_BORDER}; color: {_TEXT};"
         f"}}"
-        f"QScrollBar:vertical {{"
-        f"  background: {_INPUT_BG}; width: 5px; margin: 0;"
-        f"}}"
-        f"QScrollBar::handle:vertical {{"
-        f"  background: {_BORDER_SOFT}; border-radius: 2px; min-height: 16px;"
-        f"}}"
-        f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+        + curved_scrollbar_qss(thickness=8, handle_radius=3)
     )
 
     def __init__(self, placeholder=None, parent=None):
@@ -683,13 +672,14 @@ def _group_header(title, description=""):
 
 # ── Main dialog ───────────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, *, session_store=None):
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle(QCoreApplication.translate("SettingsDialog", "AgenticGIS — Settings"))
+        self._session_store = session_store
+        self.sessions_imported = False
+        self.setWindowTitle(QCoreApplication.translate("SettingsDialog", "AwanaGIS — Settings"))
         self.setMinimumSize(720, 560)
         self.resize(820, 680)
-        _install_tooltip_palette()
         self.setStyleSheet(_DIALOG_SS)
         self._build_ui()
         self._load()
@@ -712,11 +702,12 @@ class SettingsDialog(QDialog):
         rail_col = QVBoxLayout(rail)
         rail_col.setContentsMargins(10, 16, 10, 12)
         rail_col.setSpacing(6)
-        brand = _lbl("AgenticGIS", color=_TEXT, size=13)
-        brand.setFont(_mono(13, QFont.Weight.DemiBold))
+        brand = _lbl("AwanaGIS", color=_TEXT, size=14)
+        brand.setFont(display_font(14, QFont.Weight.DemiBold))
         brand.setContentsMargins(8, 0, 0, 0)
         rail_col.addWidget(brand)
         group_lbl = _lbl(QCoreApplication.translate("SettingsDialog", "Settings"), color=_TEXT_4, size=11)
+        group_lbl.setFont(caption_font(11))
         group_lbl.setContentsMargins(8, 8, 0, 0)
         rail_col.addWidget(group_lbl)
         self._rail = QListWidget()
@@ -733,6 +724,7 @@ class SettingsDialog(QDialog):
         version = _plugin_version()
         if version:
             ver = _lbl(f"v{version}", color=_TEXT_4, size=11)
+            ver.setFont(caption_font(11))
             ver.setContentsMargins(8, 0, 0, 0)
             rail_col.addWidget(ver)
         root.addWidget(rail)
@@ -834,7 +826,7 @@ class SettingsDialog(QDialog):
         v.setSpacing(12)
         v.addWidget(_group_header(
             QCoreApplication.translate("SettingsDialog", "Connection"),
-            QCoreApplication.translate("SettingsDialog", "How AgenticGIS reaches a model. Configure any mode; the one marked "
+            QCoreApplication.translate("SettingsDialog", "How AwanaGIS reaches a model. Configure any mode; the one marked "
             "“Active” is used for chat after you Save."),
         ))
 
@@ -885,7 +877,7 @@ class SettingsDialog(QDialog):
         card.add_row(
             QCoreApplication.translate("SettingsDialog", "Expose QGIS tools over MCP"),
             QCoreApplication.translate("SettingsDialog", "Claude Code, Codex, OpenCode and others can use the live QGIS session via "
-            "AgenticGIS's stdio MCP proxy (setup per CLI in the README, \"External agent "
+            "AwanaGIS's stdio MCP proxy (setup per CLI in the README, \"External agent "
             "access (MCP)\"). Listens on 127.0.0.1 only; takes effect immediately."),
             self.mcp_enabled_check,
         )
@@ -915,7 +907,66 @@ class SettingsDialog(QDialog):
             self.font_scale_combo,
         )
         v.addWidget(card)
+        legacy = inspect_legacy_data(settings=getattr(self.config, "_s", None))
+        if legacy.get("has_preferences") or legacy.get("has_sessions"):
+            mig_card = _Card()
+            self._import_legacy_btn = _ghost_btn(
+                QCoreApplication.translate("SettingsDialog", "Import…")
+            )
+            self._import_legacy_btn.clicked.connect(self._import_from_agenticgis)
+            mig_card.add_row(
+                QCoreApplication.translate("SettingsDialog", "Import from AgenticGIS"),
+                QCoreApplication.translate(
+                    "SettingsDialog",
+                    "Opt-in copy of non-secret preferences and chat sessions. API keys, tokens, and permissions are never copied, and AgenticGIS data is untouched.",
+                ),
+                self._import_legacy_btn,
+            )
+            v.addWidget(mig_card)
         return page
+
+    def _import_from_agenticgis(self):
+        settings = getattr(self.config, "_s", None)
+        preview = inspect_legacy_data(settings=settings)
+        pref_count = len(preview.get("preference_keys") or [])
+        sess_count = int(preview.get("session_count") or 0)
+        reply = QMessageBox.question(
+            self,
+            QCoreApplication.translate("SettingsDialog", "Import from AgenticGIS"),
+            QCoreApplication.translate(
+                "SettingsDialog",
+                "Import {prefs} non-secret preference(s) and {sessions} chat session(s) from AgenticGIS? API keys, tokens, and security approvals will not be copied, and AgenticGIS settings remain untouched.",
+            ).format(prefs=pref_count, sessions=sess_count),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if self._session_store is not None:
+            self._session_store.flush_save()
+        result = import_from_agenticgis(settings=settings)
+        if result.get("ok"):
+            if self._session_store is not None:
+                self._session_store.reload()
+            imported_prefs = len(result["preferences"].get("imported_keys") or [])
+            imported_sessions = int(result["sessions"].get("imported_count") or 0)
+            if imported_sessions > 0:
+                self.sessions_imported = True
+            self._load()
+            QMessageBox.information(
+                self,
+                QCoreApplication.translate("SettingsDialog", "Import complete"),
+                QCoreApplication.translate(
+                    "SettingsDialog",
+                    "Imported {prefs} preference(s) and {sessions} session(s) into AwanaGIS.",
+                ).format(prefs=imported_prefs, sessions=imported_sessions),
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                QCoreApplication.translate("SettingsDialog", "Import warning"),
+                str(result["sessions"].get("error") or ""),
+            )
 
     # ── stack panels ──────────────────────────────────────────────────────────
     def stack_set(self, index):
@@ -1204,7 +1255,7 @@ class SettingsDialog(QDialog):
         col.addWidget(adv)
 
         self.sub_status = _lbl(
-            QCoreApplication.translate("SettingsDialog", "Delegates to the selected local CLI. AgenticGIS never reads OAuth tokens."),
+            QCoreApplication.translate("SettingsDialog", "Delegates to the selected local CLI. AwanaGIS never reads OAuth tokens."),
             color=_TEXT_4, size=11,
         )
         self.sub_status.setContentsMargins(4, 0, 0, 0)
@@ -1800,6 +1851,24 @@ class SettingsDialog(QDialog):
                 self.cli_auth_status, QCoreApplication.translate("SettingsDialog", "Set up previously — check again to refresh the model list."), _TEXT_3,
             )
         self._refresh_cli_steps()
+
+        if hasattr(self, "mcp_enabled_check"):
+            self.mcp_enabled_check.setChecked(bool(self.config.get("mcp_enabled")))
+        if hasattr(self, "font_scale_combo"):
+            saved_scale = clamp_font_scale(self.config.get("font_scale"))
+            scale_idx = self.font_scale_combo.findData(saved_scale)
+            if scale_idx < 0:
+                scales = sorted({
+                    self.font_scale_combo.itemData(i)
+                    for i in range(self.font_scale_combo.count())
+                    if self.font_scale_combo.itemData(i) is not None
+                } | {saved_scale})
+                self.font_scale_combo.clear()
+                for scale in scales:
+                    self.font_scale_combo.addItem(f"{round(scale * 100)}%", scale)
+                scale_idx = self.font_scale_combo.findData(saved_scale)
+            if scale_idx >= 0:
+                self.font_scale_combo.setCurrentIndex(scale_idx)
 
         self._update_connection_tab_labels()
         self._loaded = True

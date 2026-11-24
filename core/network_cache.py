@@ -19,7 +19,7 @@ from qgis.PyQt.QtNetwork import QNetworkDiskCache
 _CACHE_SIZE_KEY = "cache/size"          # bytes
 _CACHE_DIR_KEY = "cache/directory"
 # Sentinel used to detect a previous run that did not clean up (force-close).
-_DIRTY_KEY = "agenticgis/network_cache_dirty"
+_DIRTY_KEY = "awanagis/network_cache_dirty"
 _MB = 1024 * 1024
 # Default size applied at startup ONLY when QGIS's cache is off (size 0). A
 # user's existing positive size (including QGIS's own default) is never changed.
@@ -46,7 +46,7 @@ class ForcedNetworkDiskCache(QNetworkDiskCache):
             try:
                 from qgis.core import QgsMessageLog
                 QgsMessageLog.logMessage(
-                    f"[AgenticGIS Cache] FORCE tile: {url[:120]}", "AgenticGIS"
+                    f"[AwanaGIS Cache] FORCE tile: {url[:120]}", "AwanaGIS"
                 )
             except Exception:  # nosec B110
                 pass
@@ -57,7 +57,7 @@ class ForcedNetworkDiskCache(QNetworkDiskCache):
                 from qgis.core import QgsMessageLog
                 status = "SAVE" if meta.saveToDisk() else "SKIP"
                 QgsMessageLog.logMessage(
-                    f"[AgenticGIS Cache] {status}: {url[:120]}", "AgenticGIS"
+                    f"[AwanaGIS Cache] {status}: {url[:120]}", "AwanaGIS"
                 )
             except Exception:  # nosec B110
                 pass
@@ -71,8 +71,8 @@ class ForcedNetworkDiskCache(QNetworkDiskCache):
             from qgis.core import QgsMessageLog
             hit = result is not None
             QgsMessageLog.logMessage(
-                f"[AgenticGIS Cache] {'HIT' if hit else 'MISS'}: {url[:120]}",
-                "AgenticGIS",
+                f"[AwanaGIS Cache] {'HIT' if hit else 'MISS'}: {url[:120]}",
+                "AwanaGIS",
             )
         except Exception:  # nosec B110
             pass
@@ -107,7 +107,7 @@ class _ForcedCacheInstaller:
         try:
             from qgis.core import QgsMessageLog
             QgsMessageLog.logMessage(
-                "[AgenticGIS Cache] ForcedNetworkDiskCache installed", "AgenticGIS"
+                "[AwanaGIS Cache] ForcedNetworkDiskCache installed", "AwanaGIS"
             )
         except Exception:  # nosec B110
             pass

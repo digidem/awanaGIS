@@ -83,7 +83,7 @@ class PermissionTests(unittest.TestCase):
     def language(self, portuguese):
         if not portuguese:
             return
-        qm = ROOT / "i18n" / "AgenticGIS_pt_BR.qm"
+        qm = ROOT / "i18n" / "awanagis_pt_BR.qm"
         self.translator = QTranslator()
         self.assertTrue(self.translator.load(str(qm)))
         self.assertTrue(QCoreApplication.installTranslator(self.translator))
@@ -113,8 +113,8 @@ class PermissionTests(unittest.TestCase):
                         reason = "run an Earth Engine expression and add the result to the canvas"
                         visible_reason = "executar uma expressão do Earth Engine e adicionar o resultado ao mapa" if portuguese else reason
                     question = (
-                        f"Autorizar o AgenticGIS a {visible_reason}?"
-                        if portuguese else f"Allow AgenticGIS to {reason}?"
+                        f"Autorizar o AwanaGIS a {visible_reason}?"
+                        if portuguese else f"Allow AwanaGIS to {reason}?"
                     )
                     self.select(toolkit, dock, choice, visible_choice, question=question, escape=escape)
                     result = toolkit.confirm_external_access(tool, args)
@@ -127,7 +127,7 @@ class PermissionTests(unittest.TestCase):
                     self.settings.sync()
                     disk = QSettings(self.settings.fileName(), QSettings.Format.IniFormat)
                     self.assertEqual(
-                        disk.value("AgenticGIS/external_access_always_allowed", False, bool),
+                        disk.value("AwanaGIS/external_access_always_allowed", False, bool),
                         choice == "Always allow",
                     )
                     toolkit.set_ask_user_emitter(None)

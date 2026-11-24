@@ -1,0 +1,24 @@
+AwanaGIS
+Copyright (C) 2026 Awana Digital
+Combined distribution licensed under the GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later).
+
+This product combines and adapts the following upstream works:
+
+1. AgenticGIS (base architecture & plugin runtime)
+   Copyright (C) 2026 Muhammad Alichamdan <malichamdan@gmail.com>
+   Repository: https://github.com/ultramenid/AgenticGIS
+   Baseline SHA: 1e4f70b488824982a835c89c202454ec92dafae7 (v0.4.6), plus PT-BR i18n commits (f0c552a, 51c8a79)
+   Original License: GPL-2.0-or-later (compatible with GPL-3.0-or-later combined distribution)
+
+2. GISBR (Brazilian geospatial data catalog & Processing algorithms, adapted in integrations/brazil/vendor/gisbr/)
+   Repository: https://github.com/d-camargo/gisbr
+   Pinned SHA: 06d84dfab9942e4e840637bb8d8f96af173330ad
+   License: GPL-3.0 (see LICENSES/GPL-3.0.txt and integrations/brazil/VENDOR_ATTRIBUTION.md)
+
+3. CoMapeo Map Builder / qgis-smp-plugin (raster .smp tile renderer, adapted in integrations/smp/vendor/)
+   Copyright (C) 2026 Awana Digital / Digital Democracy
+   Repository: https://github.com/digidem/qgis-smp-plugin
+   Pinned SHA: 34715788e94718d036a58f9992d7ef69b9ecf3d5 (v0.9.0)
+   Original License: MIT (see LICENSES/MIT-comapeo-smp.txt and integrations/smp/VENDOR_ATTRIBUTION.md)
+
+See LICENSE, THIRD_PARTY_LICENSES.md, and resources/ASSET_PROVENANCE.md for complete notices and asset provenance.

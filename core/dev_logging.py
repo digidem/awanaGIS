@@ -2,11 +2,11 @@
 
 Disabled by default. Enable with:
 
-    AGENTICGIS_DEV_LOG=1
+    AWANAGIS_DEV_LOG=1
 
 Optional path override:
 
-    AGENTICGIS_DEV_LOG_PATH=/path/to/agenticgis-dev.log
+    AWANAGIS_DEV_LOG_PATH=/path/to/awanagis-dev.log
 """
 
 import json
@@ -18,7 +18,7 @@ import time
 _LOCK = threading.Lock()
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ENV_PATH = os.path.join(_PROJECT_ROOT, ".env")
-_DEFAULT_LOG_PATH = os.path.join(_PROJECT_ROOT, "agenticgis-dev.log")
+_DEFAULT_LOG_PATH = os.path.join(_PROJECT_ROOT, "awanagis-dev.log")
 _DOTENV = None
 
 
@@ -58,15 +58,15 @@ def _config_value(key, default=""):
 
 
 def enabled():
-    value = _config_value("AGENTICGIS_DEV_LOG")
+    value = _config_value("AWANAGIS_DEV_LOG")
     return value.lower() in ("1", "true", "yes", "on")
 
 
 def log_path():
-    env_path = os.environ.get("AGENTICGIS_DEV_LOG_PATH")
+    env_path = os.environ.get("AWANAGIS_DEV_LOG_PATH")
     if env_path:
         return env_path
-    path = _dotenv_values().get("AGENTICGIS_DEV_LOG_PATH", _DEFAULT_LOG_PATH)
+    path = _dotenv_values().get("AWANAGIS_DEV_LOG_PATH", _DEFAULT_LOG_PATH)
     if not os.path.isabs(path):
         return os.path.abspath(os.path.join(_PROJECT_ROOT, path))
     return path

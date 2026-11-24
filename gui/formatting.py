@@ -53,6 +53,7 @@ def format_relative_time(value, now=None):
 _ARG_KEYS = (
     "alg_id", "path", "file_path", "filename", "layer", "layer_name", "layer_id",
     "query", "sql", "expression", "url", "name", "id",
+    "plan_id", "ibge_code", "territory_id",
 )
 
 
@@ -100,13 +101,25 @@ _TOOL_LABELS = {
     "save_project_as": QT_TRANSLATE_NOOP("ToolNames", "Save project as"),
     "create_layout": QT_TRANSLATE_NOOP("ToolNames", "Create layout"),
     "export_layout": QT_TRANSLATE_NOOP("ToolNames", "Export layout"),
+    "br_search_sources": QT_TRANSLATE_NOOP("ToolNames", "Search Brazilian sources"),
+    "br_source_details": QT_TRANSLATE_NOOP("ToolNames", "Inspect Brazilian sources"),
+    "br_resolve_area": QT_TRANSLATE_NOOP("ToolNames", "Resolve Brazilian area"),
+    "br_plan_load": QT_TRANSLATE_NOOP("ToolNames", "Plan Brazilian data load"),
+    "br_execute_load": QT_TRANSLATE_NOOP("ToolNames", "Load Brazilian data"),
+    "smp_inspect_map": QT_TRANSLATE_NOOP("ToolNames", "Inspect SMP map"),
+    "smp_suggest_regions": QT_TRANSLATE_NOOP("ToolNames", "Suggest SMP regions"),
+    "smp_estimate": QT_TRANSLATE_NOOP("ToolNames", "Estimate SMP export"),
+    "smp_start_export": QT_TRANSLATE_NOOP("ToolNames", "Start SMP export"),
+    "smp_export_status": QT_TRANSLATE_NOOP("ToolNames", "SMP export status"),
+    "smp_cancel_export": QT_TRANSLATE_NOOP("ToolNames", "Cancel SMP export"),
+    "smp_validate_file": QT_TRANSLATE_NOOP("ToolNames", "Validate SMP file"),
 }
 
 
 def humanize_tool_name(name):
     """``"list_layers"`` → ``"List layers"``; MCP prefixes are dropped."""
     raw_name = str(name or "")
-    if raw_name.startswith("mcp__agenticgis__"):
+    if raw_name.startswith(("mcp__awanagis__", "mcp__agenticgis__")):
         raw_name = raw_name.split("__", 2)[-1]
     if raw_name in _TOOL_LABELS:
         return QCoreApplication.translate("ToolNames", _TOOL_LABELS[raw_name])

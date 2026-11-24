@@ -91,7 +91,7 @@ class MainThreadExecutor(QObject):
             # unbounded queue of zombie jobs on the main thread.
             if self._current_job_id is not None:
                 raise RuntimeError(
-                    "AgenticGIS: main thread is busy with another operation; "
+                    "AwanaGIS: main thread is busy with another operation; "
                     "do not stack MainThreadExecutor.run_sync calls."
                 )
             self._current_job_id = jid
@@ -118,7 +118,7 @@ class MainThreadExecutor(QObject):
                         timeout=timeout,
                     )
                     raise TimeoutError(
-                        "AgenticGIS: main-thread operation timed out "
+                        "AwanaGIS: main-thread operation timed out "
                         f"after {timeout}s (the QGIS UI may be busy)."
                     )
                 elapsed += wait_interval
@@ -133,7 +133,7 @@ class MainThreadExecutor(QObject):
                     elapsed_ms=int((time.perf_counter() - start) * 1000),
                 )
                 raise TimeoutError(
-                    "AgenticGIS: main-thread operation was cancelled."
+                    "AwanaGIS: main-thread operation was cancelled."
                 )
             log_event(
                 "main_thread.result",

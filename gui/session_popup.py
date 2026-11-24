@@ -10,6 +10,7 @@ from .formatting import format_relative_time
 from .theme import (
     fs,
     sans_family,
+    curved_scrollbar_qss,
     DOCK_SURFACE as _SURFACE,
     DOCK_SURFACE_2 as _SURFACE_2,
     DOCK_BORDER as _BORDER,
@@ -195,12 +196,10 @@ class SessionPopup(QFrame):
         # The scroll area contains independently focusable session controls.
         scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{ border:none; background:transparent; }}
-            QScrollBar:vertical {{ background:transparent; width:6px; }}
-            QScrollBar::handle:vertical {{ background:{_BORDER}; border-radius:3px; min-height:24px; }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
-        """)
+        scroll.setStyleSheet(
+            "QScrollArea { border:none; background:transparent; }\n"
+            + curved_scrollbar_qss(thickness=8, handle_radius=3)
+        )
         scroll.setWidget(body)
         scroll.setMaximumHeight(380)
         scroll.setMinimumHeight(min(380, max(60, 52 * len(self._rows))))

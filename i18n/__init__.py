@@ -41,7 +41,7 @@ def load_plugin_translator(locale, directory=None):
     if locale is None:
         return None
     for candidate in dict.fromkeys((locale, locale.partition("_")[0])):
-        catalog = directory / f"AgenticGIS_{candidate}.qm"
+        catalog = directory / f"awanagis_{candidate}.qm"
         if catalog.is_file():
             translator = QTranslator()
             if translator.load(str(catalog), "", "\x1f") and not translator.isEmpty():

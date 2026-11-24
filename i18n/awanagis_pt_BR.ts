@@ -500,8 +500,8 @@
         </message>
         <message>
             <location filename="../gui/chat_dock.py" line="467" />
-            <source>Ask AgenticGIS…  (↑ for history)</source>
-            <translation>Pergunte ao AgenticGIS…  (↑ para ver o histórico)</translation>
+            <source>Ask AwanaGIS…  (↑ for history)</source>
+            <translation>Pergunte ao AwanaGIS…  (↑ para ver o histórico)</translation>
         </message>
         <message>
             <location filename="../gui/chat_dock.py" line="515" />
@@ -819,6 +819,21 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>executar uma expressão do Earth Engine e gerar um GIF animado da sequência temporal</translation>
         </message>
         <message>
+            <location filename="../core/toolkit.py" line="1205" />
+            <source>download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}</source>
+            <translation>baixar dados geoespaciais brasileiros ({sources}) de banco(s) de dados externo(s) [{hosts}] e gravar em {dest}</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1234" />
+            <source>probe external database metadata ({sources}) at [{hosts}]</source>
+            <translation>verificar metadados de banco(s) de dados externo(s) ({sources}) em [{hosts}]</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1244" />
+            <source>query IBGE Localidades API for municipality disambiguation</source>
+            <translation>consultar a API de Localidades do IBGE para desambiguação de município</translation>
+        </message>
+        <message>
             <location filename="../core/toolkit.py" line="1226" />
             <source>Allow once</source>
             <translation>Permitir uma vez</translation>
@@ -860,8 +875,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1256" />
-            <source>Allow AgenticGIS to {reason}?</source>
-            <translation>Autorizar o AgenticGIS a {reason}?</translation>
+            <source>Allow AwanaGIS to {reason}?</source>
+            <translation>Autorizar o AwanaGIS a {reason}?</translation>
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1157" />
@@ -1062,8 +1077,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="689" />
-            <source>AgenticGIS — Settings</source>
-            <translation>AgenticGIS — Configurações</translation>
+            <source>AwanaGIS — Settings</source>
+            <translation>AwanaGIS — Configurações</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="822" />
@@ -1102,8 +1117,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="835" />
-            <source>How AgenticGIS reaches a model. Configure any mode; the one marked “Active” is used for chat after you Save.</source>
-            <translation>Defina como o AgenticGIS se conecta a um modelo. Você pode configurar qualquer modo. Ao salvar, a conversa usará o modo marcado como “Ativo”.</translation>
+            <source>How AwanaGIS reaches a model. Configure any mode; the one marked “Active” is used for chat after you Save.</source>
+            <translation>Defina como o AwanaGIS se conecta a um modelo. Você pode configurar qualquer modo. Ao salvar, a conversa usará o modo marcado como “Ativo”.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1092" />
@@ -1132,8 +1147,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="885" />
-            <source>Claude Code, Codex, OpenCode and others can use the live QGIS session via AgenticGIS's stdio MCP proxy (setup per CLI in the README, "External agent access (MCP)"). Listens on 127.0.0.1 only; takes effect immediately.</source>
-            <translation>Claude Code, Codex, OpenCode e outros podem usar a sessão ativa do QGIS pelo proxy MCP via stdio do AgenticGIS. Veja a configuração de cada CLI na seção “External agent access (MCP)” do README. O proxy escuta apenas em 127.0.0.1. A alteração tem efeito imediato.</translation>
+            <source>Claude Code, Codex, OpenCode and others can use the live QGIS session via AwanaGIS's stdio MCP proxy (setup per CLI in the README, "External agent access (MCP)"). Listens on 127.0.0.1 only; takes effect immediately.</source>
+            <translation>Claude Code, Codex, OpenCode e outros podem usar a sessão ativa do QGIS pelo proxy MCP via stdio do AwanaGIS. Veja a configuração de cada CLI na seção “External agent access (MCP)” do README. O proxy escuta apenas em 127.0.0.1. A alteração tem efeito imediato.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="901" />
@@ -1322,8 +1337,8 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1206" />
-            <source>Delegates to the selected local CLI. AgenticGIS never reads OAuth tokens.</source>
-            <translation>Usa a CLI local selecionada. O AgenticGIS nunca lê tokens OAuth.</translation>
+            <source>Delegates to the selected local CLI. AwanaGIS never reads OAuth tokens.</source>
+            <translation>Usa a CLI local selecionada. O AwanaGIS nunca lê tokens OAuth.</translation>
         </message>
         <message>
             <location filename="../gui/settings_dialog.py" line="1227" />
@@ -1514,6 +1529,41 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <location filename="../gui/settings_dialog.py" line="1823" />
             <source>Please enter a base URL for the custom endpoint.</source>
             <translation>Insira uma URL base para o endpoint personalizado.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="922" />
+            <source>Import…</source>
+            <translation>Importar…</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="926" />
+            <source>Import from AgenticGIS</source>
+            <translation>Importar do AgenticGIS</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="927" />
+            <source>Opt-in copy of non-secret preferences and chat sessions. API keys, tokens, and permissions are never copied, and AgenticGIS data is untouched.</source>
+            <translation>Cópia opcional de preferências não secretas e sessões de conversa. Chaves de API, tokens e permissões nunca são copiados, e os dados do AgenticGIS permanecem intactos.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="942" />
+            <source>Import {prefs} non-secret preference(s) and {sessions} chat session(s) from AgenticGIS? API keys, tokens, and security approvals will not be copied, and AgenticGIS settings remain untouched.</source>
+            <translation>Importar {prefs} preferência(s) não secreta(s) e {sessions} sessão(ões) de conversa do AgenticGIS? Chaves de API, tokens e aprovações de segurança não serão copiados, e as configurações do AgenticGIS permanecerão intactas.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="958" />
+            <source>Import complete</source>
+            <translation>Importação concluída</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="959" />
+            <source>Imported {prefs} preference(s) and {sessions} session(s) into AwanaGIS.</source>
+            <translation>Importadas {prefs} preferência(s) e {sessions} sessão(ões) para o AwanaGIS.</translation>
+        </message>
+        <message>
+            <location filename="../gui/settings_dialog.py" line="967" />
+            <source>Import warning</source>
+            <translation>Aviso na importação</translation>
         </message>
     </context>
     <context>
@@ -1792,9 +1842,122 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Exportar layout</translation>
         </message>
         <message>
+            <location filename="../gui/formatting.py" line="105" />
+            <source>Search Brazilian sources</source>
+            <translation>Buscar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="106" />
+            <source>Inspect Brazilian sources</source>
+            <translation>Inspecionar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="107" />
+            <source>Resolve Brazilian area</source>
+            <translation>Resolver área brasileira</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="108" />
+            <source>Plan Brazilian data load</source>
+            <translation>Planejar carga de dados brasileiros</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="109" />
+            <source>Load Brazilian data</source>
+            <translation>Carregar dados brasileiros</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="110" />
+            <source>Inspect SMP map</source>
+            <translation>Inspecionar mapa SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="111" />
+            <source>Suggest SMP regions</source>
+            <translation>Sugerir regiões SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="112" />
+            <source>Estimate SMP export</source>
+            <translation>Estimar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="113" />
+            <source>Start SMP export</source>
+            <translation>Iniciar exportação SMP</translation>
+        </message>
+        <message>
             <location filename="../gui/formatting.py" line="114" />
+            <source>SMP export status</source>
+            <translation>Status da exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="115" />
+            <source>Cancel SMP export</source>
+            <translation>Cancelar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="116" />
+            <source>Validate SMP file</source>
+            <translation>Validar arquivo SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="136" />
             <source>Tool</source>
             <translation>Ferramenta</translation>
+        </message>
+    </context>
+    <context>
+        <name>SmpExport</name>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="169" />
+            <source>Approve export (including restricted layers)</source>
+            <translation>Aprovar exportação (incluindo camadas restritas)</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="172" />
+            <source>Export this exact SMP plan, including restricted layers, to the path above.</source>
+            <translation>Exportar este plano SMP exato, incluindo camadas restritas, para o caminho acima.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="180" />
+            <source>Approve export</source>
+            <translation>Aprovar exportação</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="181" />
+            <source>Export this exact SMP plan to the destination file above.</source>
+            <translation>Exportar este plano SMP exato para o arquivo de destino acima.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="190" />
+            <source>Cancel</source>
+            <translation>Cancelar</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="191" />
+            <source>Do not create or overwrite any SMP file.</source>
+            <translation>Não criar nem sobrescrever nenhum arquivo SMP.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="246" />
+            <source>Approve sampling</source>
+            <translation>Aprovar amostragem</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="247" />
+            <source>Render a small representative tile sample for size estimation.</source>
+            <translation>Renderizar uma pequena amostra representativa de tiles para estimativa de tamanho.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="253" />
+            <source>Skip sampling</source>
+            <translation>Pular amostragem</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="254" />
+            <source>Keep estimation render-free and use rough tile counts only.</source>
+            <translation>Manter a estimativa sem renderização e usar apenas contagens aproximadas de tiles.</translation>
         </message>
     </context>
 </TS>

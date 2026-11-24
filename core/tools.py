@@ -10,6 +10,18 @@ import time
 import traceback
 
 from .dev_logging import log_event
+from ..integrations.brazil.loader import (
+    commit_load_results,
+    prepare_load_context,
+    run_load_worker,
+)
+from ..integrations.brazil.planner import get_frozen_plan
+from ..integrations.brazil.tools import (
+    BRAZIL_DISPATCH_TABLE,
+    BRAZIL_TOOL_NAMES,
+    BRAZIL_TOOL_SPECS,
+    _current_project_dir,
+)
 
 TOOL_SPECS = [
     {
@@ -1088,6 +1100,153 @@ TOOL_SPECS = [
             "required": ["layout_id", "output_path"],
         },
     },
+    *BRAZIL_TOOL_SPECS,
+    {
+        "name": "smp_inspect_map",
+        "method": None,
+        "description": (
+            "Inspect the active QGIS project, canvas extent, visible layers "
+            "(in render order with redacted URIs, online status, attribution, "
+            "and export_policy), selected features, and SMP encoder capabilities."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_hidden": {
+                    "type": "boolean",
+                    "description": "Also include hidden layers in hidden_layers (default false).",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "smp_suggest_regions",
+        "method": None,
+        "description": (
+            "Derive 2-3 practical World/Region/Local CoMapeo SMP candidates "
+            "(Compact, Balanced, Detailed) in EPSG:4326 and EPSG:3857 from "
+            "project geometry, selection, canvas, or bounds, honoring storage budgets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "area_reference": {
+                    "type": "object",
+                    "description": "Optional broader Region/Area reference: {type:'canvas|layer|selection|bounds|br_resolved_area', id?, layer_id?, bounds?, crs?}.",
+                },
+                "local_reference": {
+                    "type": "object",
+                    "description": "Optional high-detail Local focus reference: {type:'canvas|layer|selection|bounds', id?, layer_id?, bounds?, crs?}.",
+                },
+                "region_buffer_km": {"type": "number", "minimum": 0, "default": 2.0},
+                "local_buffer_km": {"type": "number", "minimum": 0, "default": 0.5},
+                "include_world": {"type": "boolean", "default": False},
+                "world_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24, "default": 3},
+                "constraints": {
+                    "type": "object",
+                    "description": "Optional constraints: {target_size_mb?, max_time_minutes?, preferred_format?, include_region?}.",
+                },
+            },
+        },
+    },
+    {
+        "name": "smp_estimate",
+        "method": None,
+        "description": (
+            "Compute exact XYZ tile counts, disk checks, policy/remote warnings, "
+            "optional stratified sample-calibrated size/duration intervals, and "
+            "register an immutable plan_id required by smp_start_export."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "local_bounds": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": "Local extent [west, south, east, north] in EPSG:4326.",
+                },
+                "local_min_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "local_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "include_world": {"type": "boolean", "default": False},
+                "world_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24, "default": 3},
+                "include_region": {"type": "boolean", "default": False},
+                "region_bounds": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+                "region_min_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "region_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "tile_format": {"type": "string", "enum": ["PNG", "JPG", "WEBP"], "default": "PNG"},
+                "quality": {"type": "integer", "minimum": 1, "maximum": 100, "default": 85},
+                "output_dir": {"type": "string"},
+                "layer_ids": {"type": "array", "items": {"type": "string"}},
+                "sample": {"type": "boolean", "default": False},
+                "sample_mode": {"type": "string", "enum": ["none", "small"]},
+                "sample_size": {"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
+                "target_size_mb": {"type": "number", "minimum": 0.1},
+                "allow_online_sampling": {"type": "boolean", "default": False},
+                "allow_restricted_sampling": {"type": "boolean", "default": False},
+            },
+            "required": ["local_bounds", "local_min_zoom", "local_max_zoom"],
+        },
+    },
+    {
+        "name": "smp_start_export",
+        "method": None,
+        "description": (
+            "Start a background CoMapeo .smp export from an immutable plan_id. "
+            "Requires explicit user confirmation (approved=True) for the exact plan and output_path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string"},
+                "output_path": {"type": "string", "description": "Destination .smp file path."},
+                "approved": {"type": "boolean", "default": False},
+                "overwrite": {"type": "boolean", "default": False},
+                "approved_restricted_layers": {"type": "boolean", "default": False},
+            },
+            "required": ["plan_id", "output_path", "approved"],
+        },
+    },
+    {
+        "name": "smp_export_status",
+        "method": None,
+        "description": "Poll progress, tile counts, elapsed/ETA, and result of an SMP export job.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}},
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "smp_cancel_export",
+        "method": None,
+        "description": "Cooperatively cancel a running SMP export job and clean staging files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}},
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "smp_validate_file",
+        "method": None,
+        "description": "Validate an .smp ZIP archive structure, style.json, tiles, and PIL readability.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "run_external": {"type": "boolean", "default": True},
+            },
+            "required": ["file_path"],
+        },
+    },
 ]
 
 TOOL_BY_NAME = {spec["name"]: spec for spec in TOOL_SPECS}
@@ -1261,6 +1420,193 @@ def _nudge_pyqgis_streak(toolkit, name, result):
     return result
 
 
+def _is_on_main_thread(executor):
+    main_tid = getattr(executor, "_main_thread_id", None)
+    if main_tid is None:
+        try:
+            from qgis.PyQt.QtCore import QCoreApplication, QThread
+            app = QCoreApplication.instance()
+            if app is not None and app.thread() is not None:
+                return QThread.currentThread() == app.thread()
+        except Exception:
+            pass
+        return False
+    try:
+        from qgis.PyQt.QtCore import QThread
+        return QThread.currentThreadId() == main_tid
+    except Exception:
+        return False
+
+
+def _can_use_qgs_task(toolkit, executor):
+    if toolkit is None or not hasattr(toolkit, "_run_qgs_task"):
+        return False
+    if type(getattr(toolkit, "_run_qgs_task", None)).__module__.startswith("unittest.mock"):
+        return False
+    if getattr(executor, "_main_thread_id", None) is None:
+        return False
+    return not _is_on_main_thread(executor)
+
+
+def _run_off_gui_thread(toolkit, executor, description, fn, *, prefer_qgs_task=True):
+    """Run ``fn(task_or_none)`` off the QGIS GUI main thread."""
+    if prefer_qgs_task and _can_use_qgs_task(toolkit, executor):
+        return toolkit._run_qgs_task(executor, description, fn)
+
+    if not _is_on_main_thread(executor):
+        return fn(None)
+
+    import threading
+    slot = {"done": threading.Event(), "value": None, "error": None}
+
+    def _runner():
+        try:
+            slot["value"] = fn(None)
+        except BaseException as exc:  # noqa: BLE001
+            slot["error"] = exc
+        finally:
+            slot["done"].set()
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    try:
+        from qgis.PyQt.QtCore import QCoreApplication
+        app = QCoreApplication.instance()
+    except Exception:
+        app = None
+    while not slot["done"].wait(0.02):
+        if app is not None:
+            app.processEvents()
+    if slot["error"] is not None:
+        raise slot["error"]
+    return slot["value"]
+
+
+def _dispatch_brazil_tool(toolkit, executor, name, method, args, should_stop=None):
+    if _dispatch_cancelled(should_stop):
+        return _cancelled_result()
+
+    if name == "br_search_sources":
+        return method(**args)
+
+    if name == "br_source_details":
+        if args.get("probe"):
+            return _run_off_gui_thread(
+                toolkit,
+                executor,
+                "AwanaGIS Brazil: source probe",
+                lambda _task: _cancelled_result() if _dispatch_cancelled(should_stop) else method(**args),
+            )
+        return method(**args)
+
+    if name == "br_resolve_area":
+        area_type = str(args.get("type") or "").strip().lower()
+        if area_type in ("project_layer", "indigenous_territory"):
+            return executor.run_sync(
+                lambda: _cancelled_result() if _dispatch_cancelled(should_stop) else method(**args)
+            )
+        return _run_off_gui_thread(
+            toolkit,
+            executor,
+            "AwanaGIS Brazil: resolve area",
+            lambda _task: _cancelled_result() if _dispatch_cancelled(should_stop) else method(**args),
+            prefer_qgs_task=bool(args.get("allow_live_lookup")),
+        )
+
+    if name == "br_plan_load":
+        plan_args = dict(args)
+        if not plan_args.get("output_gpkg") and "project_dir" not in plan_args:
+            plan_args["project_dir"] = executor.run_sync(_current_project_dir)
+        return method(**plan_args)
+
+    if name == "br_execute_load":
+        extra_keys = set(args.keys()) - {"plan_id"}
+        if extra_keys:
+            return {
+                "ok": False,
+                "status": "invalid_input",
+                "cancelled": False,
+                "results": [],
+                "error": f"br_execute_load accepts only plan_id; rejected unexpected keys: {sorted(extra_keys)}",
+            }
+
+        plan_id = args.get("plan_id")
+        if not plan_id or not isinstance(plan_id, str):
+            return {
+                "ok": False,
+                "status": "invalid_plan",
+                "cancelled": False,
+                "results": [],
+                "error": "plan_id must be a non-empty string issued by br_plan_load.",
+            }
+
+        plan, plan_err = get_frozen_plan(plan_id)
+        if plan is None:
+            return {
+                "ok": False,
+                "status": "invalid_plan",
+                "cancelled": False,
+                "results": [],
+                "error": plan_err,
+            }
+
+        cancel_reg = getattr(toolkit, "_cancel", None)
+
+        def _run_load():
+            def _combined_stop(task=None):
+                if _dispatch_cancelled(should_stop):
+                    return True
+                if cancel_reg is not None and cancel_reg.is_cancelled():
+                    return True
+                if task is not None:
+                    try:
+                        if task.isCanceled():
+                            return True
+                    except Exception:
+                        pass
+                return False
+
+            if _combined_stop():
+                return _cancelled_result()
+
+            # Phase 1: brief main-thread snapshot of QgsProject transformContext
+            ctx = executor.run_sync(prepare_load_context)
+
+            # Phase 2: worker-thread network fetch, clipping, and atomic staged writes
+            worker_out = _run_off_gui_thread(
+                toolkit,
+                executor,
+                f"AwanaGIS Brazil: {plan_id}",
+                lambda task: run_load_worker(
+                    plan,
+                    transform_context=ctx.get("transform_context"),
+                    should_stop=lambda: _combined_stop(task),
+                ),
+            )
+
+            # If QgsTask wrapper itself timed out or errored before returning worker_out dict
+            if isinstance(worker_out, dict) and worker_out.get("ok") is False and "staged" not in worker_out:
+                return worker_out
+
+            # Phase 3: brief main-thread QgsProject layer registration & provenance tagging
+            return executor.run_sync(
+                lambda: commit_load_results(
+                    plan_id,
+                    plan,
+                    worker_out,
+                    should_stop=_combined_stop,
+                    iface=getattr(toolkit, "iface", None),
+                )
+            )
+
+        if cancel_reg is not None and hasattr(cancel_reg, "scope"):
+            with cancel_reg.scope():
+                return _run_load()
+        return _run_load()
+
+    return executor.run_sync(lambda: method(**args))
+
+
 def _dispatch(toolkit, executor, name, arguments, should_stop=None):
     spec = TOOL_BY_NAME.get(name)
     if spec is None:
@@ -1274,7 +1620,13 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
         }
         log_event("tool.dispatch.error", tool=name, error_type="UnknownTool", error=result["error"])
         return result
-    method = getattr(toolkit, spec["method"])
+    is_smp = name.startswith("smp_")
+    if is_smp:
+        method = None
+    elif name in BRAZIL_TOOL_NAMES:
+        method = BRAZIL_DISPATCH_TABLE[name]
+    else:
+        method = getattr(toolkit, spec["method"])
     args = dict(arguments or {})
     start = time.perf_counter()
     log_event("tool.dispatch.start", tool=name, arg_keys=sorted(args.keys()))
@@ -1317,6 +1669,12 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
                 _log_dispatch_end(name, "denied", start, denied)
                 return denied
 
+        if is_smp:
+            from ..integrations.smp.tools import dispatch_smp_tool
+            result = dispatch_smp_tool(toolkit, executor, name, args)
+            _log_dispatch_end(name, "smp", start, result)
+            return result
+
         if name == "run_pyqgis" and hasattr(toolkit, "run_pyqgis_background"):
             wants_bg = bool(args.get("background"))
             auto_bg = not wants_bg and _should_auto_background_pyqgis(args.get("code"))
@@ -1358,11 +1716,16 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
             return result
 
         can_run_background = getattr(toolkit, "can_run_background", None)
-        if can_run_background is not None and can_run_background(name):
+        if name not in BRAZIL_TOOL_NAMES and can_run_background is not None and can_run_background(name):
             if _dispatch_cancelled(should_stop):
                 return _cancelled_result()
             result = toolkit.run_background_tool(executor, name, args)
             _log_dispatch_end(name, "background", start, result)
+            return result
+
+        if name in BRAZIL_TOOL_NAMES:
+            result = _dispatch_brazil_tool(toolkit, executor, name, method, args, should_stop)
+            _log_dispatch_end(name, "brazil_tool", start, result)
             return result
 
         def run_method():
