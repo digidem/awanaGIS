@@ -20,6 +20,8 @@ from .manifest import CATALOG_VERSION
 from .planner import get_frozen_plan
 from .policy import (
     check_source_loadable,
+    classify_external_service_error,
+    external_db_descriptor,
     redact_sensitive_text,
     sanitize_cql_literal,
     tag_layer_provenance,
@@ -917,7 +919,14 @@ def run_load_worker(
 
             if _is_cancelled(should_stop):
                 cancelled = True
-                immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled before fetch."]})
+                immediate_results.append({
+                    "source_id": sid,
+                    "status": "cancelled",
+                    "service_status": "cancelled",
+                    "layer_ids": [],
+                    "external_db": external_db_descriptor(source, status="cancelled"),
+                    "warnings": ["Cancelled before fetch."],
+                })
                 continue
 
             raw_res, fetch_kind, fetch_warnings, raster_year = _fetch_source_layer(
@@ -937,16 +946,28 @@ def run_load_worker(
 
             if fetch_kind == "cancelled" or _is_cancelled(should_stop):
                 cancelled = True
-                immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled during fetch."]})
+                immediate_results.append({
+                    "source_id": sid,
+                    "status": "cancelled",
+                    "service_status": "cancelled",
+                    "layer_ids": [],
+                    "external_db": external_db_descriptor(source, status="cancelled"),
+                    "warnings": ["Cancelled during fetch."],
+                })
                 continue
 
             if raw_res is None:
+                raw_err = "; ".join(fetch_warnings) or f"Failed loading {sid}."
+                svc_code, svc_reason = classify_external_service_error(raw_err)
+                ext_desc = external_db_descriptor(source, status=svc_code, reason=svc_reason)
                 immediate_results.append({
                     "source_id": sid,
                     "status": fetch_kind if fetch_kind in ("unavailable", "failed") else "failed",
+                    "service_status": svc_code,
                     "layer_ids": [],
+                    "external_db": ext_desc,
                     "warnings": fetch_warnings,
-                    "error": "; ".join(fetch_warnings) or f"Failed loading {sid}.",
+                    "error": raw_err,
                 })
                 continue
 
@@ -957,6 +978,7 @@ def run_load_worker(
                 staged.append({
                     "kind": "raster",
                     "source": source,
+                    "is_fixture": bool(fixtures.get(sid)),
                     "uri": str(raw_res),
                     "display_name": f"{source['name_pt']} — {area.get('name') or area.get('id')}",
                     "output_path": str(raw_res),
@@ -974,11 +996,14 @@ def run_load_worker(
 
             # Vector branch
             if raw_res.featureCount() == 0:
+                svc_status = "fixture" if fixtures.get(sid) else "online"
                 immediate_results.append({
                     "source_id": sid,
                     "status": "empty",
+                    "service_status": svc_status,
                     "layer_ids": [],
                     "feature_count": 0,
+                    "external_db": external_db_descriptor(source, status=svc_status),
                     "warnings": fetch_warnings + ["Service returned 0 features for the requested area."],
                 })
                 continue
@@ -1085,6 +1110,7 @@ def run_load_worker(
             staged.append({
                 "kind": "vector",
                 "source": source,
+                "is_fixture": bool(fixtures.get(sid)),
                 "uri": gpkg_uri,
                 "display_name": f"{source['name_pt']} — {area.get('name') or area.get('id')}",
                 "output_path": str(actual_gpkg),
@@ -1097,12 +1123,16 @@ def run_load_worker(
                 "warnings": fetch_warnings,
             })
         except Exception as exc:
+            err_str = redact_sensitive_text(f"Source load failed ({type(exc).__name__}): {exc}", redact_coordinates=True)
+            svc_code, svc_reason = classify_external_service_error(err_str)
             immediate_results.append({
                 "source_id": sid,
                 "status": "failed",
+                "service_status": svc_code,
                 "layer_ids": [],
+                "external_db": external_db_descriptor(source, status=svc_code, reason=svc_reason),
                 "warnings": [],
-                "error": redact_sensitive_text(f"Source load failed ({type(exc).__name__}): {exc}", redact_coordinates=True),
+                "error": err_str,
             })
 
     return {
@@ -1112,6 +1142,48 @@ def run_load_worker(
     }
 
 
+def _summarize_external_db_signals(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str], str]:
+    signals: List[Dict[str, Any]] = []
+    offline_sources: List[str] = []
+    seen = set()
+    for r in results:
+        sig = r.get("external_db")
+        if not isinstance(sig, dict):
+            continue
+        sid = sig.get("source_id")
+        if sid and sid not in seen:
+            seen.add(sid)
+            signals.append(sig)
+            if sig.get("is_offline"):
+                offline_sources.append(sid)
+    if not signals:
+        return [], [], ""
+    offline_msgs = [s["user_signal"] for s in signals if s.get("is_offline")]
+    online_hosts = sorted({s["host"] for s in signals if not s.get("is_offline") and s.get("host")})
+    parts = []
+    if offline_msgs:
+        parts.append("Offline/unreachable external DB(s): " + "; ".join(offline_msgs))
+    if online_hosts:
+        parts.append("External DB host(s) accessed: " + ", ".join(online_hosts))
+    return signals, offline_sources, " | ".join(parts)
+
+
+def _push_external_db_message_bar(iface: Any, notice: str, *, has_offline: bool) -> None:
+    if iface is None or not notice:
+        return
+    try:
+        from qgis.core import Qgis
+
+        msg_bar_fn = getattr(iface, "messageBar", None)
+        bar = msg_bar_fn() if callable(msg_bar_fn) else None
+        if bar is None:
+            return
+        level = Qgis.Warning if has_offline else Qgis.Info
+        bar.pushMessage("AwanaGIS — External DB", notice, level=level, duration=8 if has_offline else 4)
+    except Exception:
+        pass
+
+
 def commit_load_results(
     plan_id: str,
     plan: Dict[str, Any],
@@ -1119,6 +1191,7 @@ def commit_load_results(
     *,
     project=None,
     should_stop: Optional[Callable[[], bool]] = None,
+    iface: Any = None,
 ) -> Dict[str, Any]:
     """Register validated persisted layers in ``QgsProject`` on the main thread."""
     from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
@@ -1135,13 +1208,16 @@ def commit_load_results(
     empty_count = sum(1 for r in results if r.get("status") == "empty")
 
     for item in worker_output.get("staged") or []:
-        sid = item["source"]["source_id"]
+        source_meta = item["source"]
+        sid = source_meta["source_id"]
         if _is_cancelled(should_stop):
             cancelled = True
             results.append({
                 "source_id": sid,
                 "status": "cancelled",
+                "service_status": "cancelled",
                 "layer_ids": [],
+                "external_db": external_db_descriptor(source_meta, status="cancelled"),
                 "warnings": ["Cancelled before project registration; layer not added to project."],
             })
             continue
@@ -1156,7 +1232,9 @@ def commit_load_results(
             results.append({
                 "source_id": sid,
                 "status": "failed",
+                "service_status": "failed",
                 "layer_ids": [],
+                "external_db": external_db_descriptor(source_meta, status="failed", reason="Persisted layer failed to open."),
                 "warnings": item.get("warnings", []),
                 "error": f"Persisted layer '{item['uri']}' failed to open.",
             })
@@ -1166,7 +1244,7 @@ def commit_load_results(
         fcount = reg_layer.featureCount() if item["kind"] == "vector" else None
         prov = tag_layer_provenance(
             reg_layer,
-            item["source"],
+            source_meta,
             area,
             clip_mode=item["clip_mode"],
             extracted_at=item["extracted_at"],
@@ -1177,9 +1255,11 @@ def commit_load_results(
             data_reference_year=item.get("data_reference_year"),
         )
         loaded_count += 1
+        svc_status = "fixture" if item.get("is_fixture") else "online"
         results.append({
             "source_id": sid,
             "status": "truncated" if item["truncated"] else "loaded",
+            "service_status": svc_status,
             "layer_ids": [reg_layer.id()],
             "layer_names": [reg_layer.name()],
             "feature_count": fcount,
@@ -1188,6 +1268,7 @@ def commit_load_results(
             "clip_mode": item["clip_mode"],
             "truncated": item["truncated"],
             "provenance": prov,
+            "external_db": external_db_descriptor(source_meta, status=svc_status),
             "warnings": item.get("warnings", []),
         })
 
@@ -1195,20 +1276,26 @@ def commit_load_results(
     for item in plan.get("items") or []:
         if item.get("readiness") == "skipped":
             reused_count += 1
+            src_obj = get_source(item["source_id"]) or {"source_id": item["source_id"]}
             results.append({
                 "source_id": item["source_id"],
                 "status": "reused",
+                "service_status": "reused",
                 "layer_ids": [],
                 "output": item.get("output_target"),
+                "external_db": external_db_descriptor(src_obj, status="reused"),
                 "warnings": [item.get("reason", "Already exists; reused.")],
             })
         elif item.get("readiness") == "manual":
+            src_obj = get_source(item["source_id"]) or {"source_id": item["source_id"]}
             results.append({
                 "source_id": item["source_id"],
                 "status": "manual_required",
+                "service_status": "manual_required",
                 "layer_ids": [],
                 "instructions": item.get("reason"),
                 "portal_url": item.get("portal_url", ""),
+                "external_db": external_db_descriptor(src_obj, status="manual_required"),
                 "warnings": [],
             })
 
@@ -1225,6 +1312,10 @@ def commit_load_results(
     else:
         overall_status = "failed"
 
+    ext_signals, offline_sources, user_notice = _summarize_external_db_signals(results)
+    if loaded_count > 0 or offline_sources:
+        _push_external_db_message_bar(iface, user_notice, has_offline=bool(offline_sources))
+
     return {
         "ok": overall_status in ("loaded", "reused", "partial", "empty"),
         "status": overall_status,
@@ -1236,6 +1327,9 @@ def commit_load_results(
             "ufs": area.get("ufs"),
         },
         "results": results,
+        "external_db_signals": ext_signals,
+        "offline_sources": offline_sources,
+        "user_notice": user_notice,
         "cancelled": cancelled,
     }
 
@@ -1247,6 +1341,7 @@ def execute_load(
     project=None,
     local_fixtures: Optional[Dict[str, str]] = None,
     executor=None,
+    iface: Any = None,
 ) -> Dict[str, Any]:
     """Execute a frozen ``plan_id`` with main-thread project isolation, cancellation, and atomic output."""
     if _is_cancelled(should_stop):
@@ -1270,6 +1365,6 @@ def execute_load(
 
     if executor is not None:
         return executor.run_sync(
-            lambda: commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop)
+            lambda: commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop, iface=iface)
         )
-    return commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop)
+    return commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop, iface=iface)

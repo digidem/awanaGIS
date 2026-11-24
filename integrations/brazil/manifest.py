@@ -335,12 +335,12 @@ CURATED_INDIGENOUS_SOURCES: List[Dict[str, Any]] = [
         "axis": "indigenous_territories",
         "axis_pt": "terras_indigenas",
         "origin_class": "official_direct",
-        "loader_state": "pending_probe",
+        "loader_state": "loadable",
         "load_policy": "allowed_public_polygon",
         "sensitivity": "territory_boundary",
         "terms_checked": True,
-        "machine_access_verified": False,
-        "last_checked_at": "2026-11-23T21:52:00Z",
+        "machine_access_verified": True,
+        "last_checked_at": "2026-11-24T20:23:00Z",
         "source_year": None,
         "available_years": None,
         "publisher": "FUNAI / CGGEO",
@@ -366,9 +366,9 @@ CURATED_INDIGENOUS_SOURCES: List[Dict[str, Any]] = [
             "tis_poligonais", "limites oficiais",
         ],
         "verification_evidence": (
-            "Documented on FUNAI GeoServer catalog page; TLS probe on 2026-11-23 failed "
-            "certificate chain verification (missing intermediate CA on geoserver.funai.gov.br; "
-            "TLS bypass prohibited). Offer geobr_terras_indigenas as dated mirror when unreachable."
+            "Live WFS 2.0.0 verified (Funai:tis_poligonais) using bundled Sectigo Public Server "
+            "Authentication CA OV R36 intermediate PEM (strict TLS preserved). Government GeoServer "
+            "may go offline intermittently; offer geobr_terras_indigenas as dated mirror fallback."
         ),
         "catalog_origin": "curated_indigenous",
         "aliases": ["funai_tis_poligonais"],
@@ -500,12 +500,12 @@ CURATED_INDIGENOUS_SOURCES: List[Dict[str, Any]] = [
         "axis": "indigenous_territories",
         "axis_pt": "terras_indigenas",
         "origin_class": "official_direct",
-        "loader_state": "pending_probe",
+        "loader_state": "loadable",
         "load_policy": "allowed_public_polygon",
         "sensitivity": "administrative_point",
         "terms_checked": True,
-        "machine_access_verified": False,
-        "last_checked_at": "2026-11-23T21:52:00Z",
+        "machine_access_verified": True,
+        "last_checked_at": "2026-11-24T20:23:00Z",
         "source_year": None,
         "available_years": None,
         "publisher": "FUNAI / CGGEO",
@@ -515,7 +515,7 @@ CURATED_INDIGENOUS_SOURCES: List[Dict[str, Any]] = [
         "attribution": "FUNAI / CGGEO",
         "portal_url": "https://www.gov.br/funai/pt-br/atuacao/terras-indigenas/geoprocessamento-e-mapas/geoserver-funai",
         "service_url": "https://geoserver.funai.gov.br/geoserver/Funai/ows",
-        "typename": "",
+        "typename": "Funai:tis_cr",
         "uf_scope": ["BR"],
         "escala_max": "macrorregiao",
         "srs": "EPSG:4674",
@@ -525,7 +525,10 @@ CURATED_INDIGENOUS_SOURCES: List[Dict[str, Any]] = [
         "requires_login": None,
         "arquivo_glob": [],
         "keywords": ["funai", "cr", "ctl", "coordenacao regional", "regional offices"],
-        "verification_evidence": "Public CR/CTL administrative office locations listed on FUNAI GeoServer page; pending GetCapabilities probe.",
+        "verification_evidence": (
+            "Live WFS 2.0.0 verified (Funai:tis_cr; Funai:tis_ctl also exposed) using bundled "
+            "Sectigo intermediate PEM (strict TLS preserved). Subject to intermittent upstream availability."
+        ),
         "catalog_origin": "curated_indigenous",
         "aliases": [],
     },

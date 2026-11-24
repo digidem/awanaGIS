@@ -1203,13 +1203,14 @@ class QgisToolkit:
             plan, _err = get_frozen_plan(args.get("plan_id") or "")
             if plan is not None:
                 sources = ", ".join(plan.get("executable_ids") or []) or "none"
+                hosts = ", ".join(plan.get("hosts") or []) or "external geoportal"
                 dest = plan.get("output_gpkg") or ""
                 return (
-                    f"download Brazilian geospatial data ({sources}) and write to {dest}",
+                    f"download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}",
                     QCoreApplication.translate(
                         "ExternalAccess",
-                        "download Brazilian geospatial data ({sources}) and write to {dest}",
-                    ).format(sources=sources, dest=dest),
+                        "download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}",
+                    ).format(sources=sources, hosts=hosts, dest=dest),
                 )
 
         if tool_name == "br_source_details" and args.get("probe"):
@@ -1218,8 +1219,10 @@ class QgisToolkit:
                 is_blocked_sensitive,
                 is_discovery_only,
                 is_portal_only,
+                resolve_external_host,
             )
             probeable = []
+            probeable_hosts = []
             for sid in (args.get("source_ids") or [])[:25]:
                 entry = get_source(str(sid))
                 if entry is not None and not (
@@ -1229,14 +1232,18 @@ class QgisToolkit:
                     or entry.get("loader_state") in ("manual_required", "unavailable")
                 ):
                     probeable.append(entry["source_id"])
+                    host = resolve_external_host(entry)
+                    if host and host not in probeable_hosts:
+                        probeable_hosts.append(host)
             if probeable:
                 sids = ", ".join(probeable)
+                hosts_str = ", ".join(probeable_hosts) or "external geoportal"
                 return (
-                    f"probe Brazilian geospatial endpoint metadata ({sids})",
+                    f"probe external database metadata ({sids}) at [{hosts_str}]",
                     QCoreApplication.translate(
                         "ExternalAccess",
-                        "probe Brazilian geospatial endpoint metadata ({sources})",
-                    ).format(sources=sids),
+                        "probe external database metadata ({sources}) at [{hosts}]",
+                    ).format(sources=sids, hosts=hosts_str),
                 )
 
         if tool_name == "br_resolve_area" and args.get("allow_live_lookup"):

@@ -287,6 +287,70 @@ class BrazilSafetyTests(unittest.TestCase):
         self.assertEqual(cancelled["status"], "cancelled")
         self.assertFalse(Path(gpkg).exists())
 
+    def test_external_db_signaling_and_partial_offline_resilience(self):
+        from unittest.mock import MagicMock
+        from qgis.core import QgsProject
+
+        wfs_mod = import_module(f"{PKG}.integrations.brazil.vendor.gisbr.core.connectors.wfs")
+        gpkg = str(self.tmp / "resilience.gpkg")
+        plan = br_tools.br_plan_load(["funai_ti_boundaries", "icmbio_uc"], self.area, output_gpkg=gpkg)
+        self.assertTrue(plan["can_execute"])
+        self.assertIn("geoserver.funai.gov.br", plan["external_db_notice"])
+        self.assertEqual({d["source_id"] for d in plan["external_databases"]}, {"funai_ti_boundaries", "icmbio_uc"})
+
+        # Permission prompts explicitly name the external DB hosts
+        settings = QSettings(str(self.tmp / "perms2.ini"), QSettings.Format.IniFormat)
+        cfg = Config()
+        cfg._s = settings
+        cfg.set("external_access_always_allowed", False)
+        with patch.object(QgisToolkit, "_clean_orphan_gee_tiffs"):
+            tk = QgisToolkit(iface=None, config=cfg)
+        reasons_exec = tk._external_access_reasons("br_execute_load", {"plan_id": plan["plan_id"]})
+        self.assertIn("geoserver.funai.gov.br", reasons_exec[0])
+        reasons_probe = tk._external_access_reasons(
+            "br_source_details", {"source_ids": ["funai_ti_boundaries"], "probe": True}
+        )
+        self.assertIn("geoserver.funai.gov.br", reasons_probe[0])
+
+        # Multi-source load: FUNAI times out/offline, ICMBio succeeds via local fixture -> partial success + signals
+        uc_geojson = self.tmp / "uc_fixture.geojson"
+        uc_geojson.write_text(
+            '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"nome":"UC Test"},'
+            '"geometry":{"type":"Polygon","coordinates":[[[-52.1,-6.7],[-51.9,-6.7],[-51.9,-6.5],[-52.1,-6.5],[-52.1,-6.7]]]}}]}',
+            encoding="utf-8",
+        )
+
+        class _InvalidWfs:
+            def __init__(self, msg):
+                self.error_msg = msg
+            def isValid(self):
+                return False
+
+        msg_bar = MagicMock()
+        mock_iface = MagicMock()
+        mock_iface.messageBar.return_value = msg_bar
+        proj = QgsProject()
+        with patch.object(
+            wfs_mod,
+            "fetch_layer",
+            return_value=_InvalidWfs("Falha WFS (Funai:tis_poligonais, host: geoserver.funai.gov.br): Operation timed out"),
+        ):
+            res = br_tools.br_execute_load(
+                plan["plan_id"],
+                project=proj,
+                local_fixtures={"icmbio_uc": str(uc_geojson)},
+                iface=mock_iface,
+            )
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["status"], "partial")
+        self.assertEqual(res["offline_sources"], ["funai_ti_boundaries"])
+        by_id = {r["source_id"]: r for r in res["results"]}
+        self.assertEqual(by_id["funai_ti_boundaries"]["service_status"], "offline_timeout")
+        self.assertEqual(by_id["funai_ti_boundaries"]["external_db"]["fallback_source_id"], "geobr_terras_indigenas")
+        self.assertEqual(by_id["icmbio_uc"]["status"], "loaded")
+        self.assertIn("geoserver.funai.gov.br", res["user_notice"])
+        msg_bar.pushMessage.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,14 +18,18 @@ from .manifest import (
 )
 from .policy import (
     allowed_catalog_hosts,
+    classify_external_service_error,
+    external_db_descriptor,
     is_blocked_sensitive,
     is_discovery_only,
     is_portal_only,
     redact_sensitive_text,
+    resolve_external_host,
     validate_allowlisted_url,
     validate_catalog_entry,
 )
 from .vendor.gisbr.core.sources import SOURCES as GISBR_RAW_SOURCES
+from .vendor.gisbr.core.ssl_support import build_python_ssl_context
 
 # Scale ranking mirrored from GISBR Recorte/diagnostico
 _SCALE_RANK = {
@@ -68,6 +72,7 @@ _SYNONYM_GROUPS = (
 _PROBE_CACHE: Dict[str, Dict[str, Any]] = {}
 _PROBE_LOCK = threading.Lock()
 _PROBE_TTL_SECONDS = 300.0
+_PROBE_FAILURE_TTL_SECONDS = 30.0
 
 
 def _fold_text(text: Any) -> str:
@@ -203,6 +208,17 @@ def _score_entry(entry: Dict[str, Any], folded_query: str, expanded_terms: List[
 def _public_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Format a source entry for ``br_search_sources`` output."""
     uf_scope = entry.get("uf_scope") or ["BR"]
+    ext_host = resolve_external_host(entry)
+    if entry.get("loader_state") in ("loadable", "pending_probe", "unavailable"):
+        ext_notice = (
+            f"External online database ({entry['publisher']} @ {ext_host}) — "
+            "subject to upstream availability; may go offline intermittently."
+        )
+    else:
+        ext_notice = (
+            f"External reference ({entry['publisher']} @ {ext_host}, "
+            f"policy={entry['load_policy']}) — no automated download."
+        )
     return {
         "id": entry["source_id"],
         "source_id": entry["source_id"],
@@ -233,6 +249,8 @@ def _public_summary(entry: Dict[str, Any]) -> Dict[str, Any]:
         "attribution": entry.get("attribution", ""),
         "origin_url": entry.get("portal_url") or entry.get("service_url") or "",
         "portal_url": entry.get("portal_url") or "",
+        "external_host": ext_host,
+        "external_service_notice": ext_notice,
         "last_verified_at": entry.get("last_checked_at"),
         "last_checked_at": entry.get("last_checked_at"),
         "requires_parquet": entry.get("requires_parquet", False),
@@ -363,11 +381,13 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
             "reason": entry.get("unavailable_reason") or "Marked unavailable in pinned catalog.",
         }
 
-    # Check short-lived cache
+    # Check short-lived cache (shorter TTL for offline failures so recoveries surface quickly)
     with _PROBE_LOCK:
         cached = _PROBE_CACHE.get(sid)
-        if cached and (datetime.now(timezone.utc).timestamp() - cached["_ts"]) < _PROBE_TTL_SECONDS:
-            return {k: v for k, v in cached.items() if k != "_ts"}
+        if cached:
+            ttl = _PROBE_TTL_SECONDS if cached.get("machine_access_verified") else _PROBE_FAILURE_TTL_SECONDS
+            if (datetime.now(timezone.utc).timestamp() - cached["_ts"]) < ttl:
+                return {k: v for k, v in cached.items() if k != "_ts"}
 
     proto = entry.get("protocol", "")
     base_url = (entry.get("service_url") or "").strip()
@@ -378,18 +398,22 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
     if not base_url:
         return {
             "status": "unsupported",
+            "service_status": "unsupported",
             "checked_at": now_iso,
             "machine_access_verified": False,
             "reason": "No direct machine service URL configured for this source.",
+            "external_db": external_db_descriptor(entry, status="unsupported", reason="No direct URL configured."),
         }
 
     ok_url, url_err = validate_allowlisted_url(base_url, _ALLOWED_HOSTS)
     if not ok_url:
         return {
             "status": "unsupported",
+            "service_status": "unsupported",
             "checked_at": now_iso,
             "machine_access_verified": False,
             "reason": url_err,
+            "external_db": external_db_descriptor(entry, status="unsupported", reason=url_err),
         }
 
     probe_url = base_url
@@ -404,45 +428,52 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
         method = "HEAD"
 
     result: Dict[str, Any]
+    ssl_ctx = build_python_ssl_context()
     try:
         req = urllib.request.Request(
             probe_url,
             method=method,
             headers={"User-Agent": "AwanaGIS-Probe/0.1 (read-only metadata check)"},
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # uses default strict TLS verification
+        with urllib.request.urlopen(req, timeout=timeout, context=ssl_ctx) as resp:  # strict TLS with bundled intermediates
             status_code = getattr(resp, "status", 200)
             read_limit = (2 * 1024 * 1024) if proto == "wfs" else 65536
             snippet = resp.read(read_limit).decode("utf-8", errors="replace") if method == "GET" else ""
             if proto == "wfs" and ("FeatureTypeList" in snippet or "WFS_Capabilities" in snippet):
                 typename = entry.get("typename") or ""
                 layer_found = (not typename) or (typename in snippet)
+                svc_status = "reachable" if layer_found else "offline_http_error"
+                reason_txt = (
+                    "WFS GetCapabilities reachable and typename present."
+                    if layer_found
+                    else f"WFS GetCapabilities reachable, but typename '{typename}' not found."
+                )
                 result = {
                     "status": "reachable" if layer_found else "unavailable",
+                    "service_status": svc_status,
                     "checked_at": now_iso,
                     "machine_access_verified": bool(layer_found),
                     "http_status": status_code,
                     "typename_verified": layer_found,
-                    "reason": (
-                        "WFS GetCapabilities reachable and typename present."
-                        if layer_found
-                        else f"WFS GetCapabilities reachable, but typename '{typename}' not found."
-                    ),
+                    "reason": reason_txt,
                 }
             elif proto == "arcgis":
                 try:
                     meta = json.loads(snippet)
                     if isinstance(meta, dict) and "error" in meta:
+                        reason_txt = redact_sensitive_text(str(meta["error"])[:240])
                         result = {
                             "status": "unavailable",
+                            "service_status": "offline_http_error",
                             "checked_at": now_iso,
                             "machine_access_verified": False,
                             "http_status": status_code,
-                            "reason": redact_sensitive_text(str(meta["error"])[:240]),
+                            "reason": reason_txt,
                         }
                     else:
                         result = {
                             "status": "reachable",
+                            "service_status": "reachable",
                             "checked_at": now_iso,
                             "machine_access_verified": True,
                             "http_status": status_code,
@@ -452,33 +483,57 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
                 except ValueError:
                     result = {
                         "status": "unavailable",
+                        "service_status": "offline_http_error",
                         "checked_at": now_iso,
                         "machine_access_verified": False,
                         "http_status": status_code,
                         "reason": "ArcGIS REST metadata returned non-JSON response.",
                     }
             else:
+                ok_http = 200 <= status_code < 400
                 result = {
-                    "status": "reachable" if 200 <= status_code < 400 else "unavailable",
+                    "status": "reachable" if ok_http else "unavailable",
+                    "service_status": "reachable" if ok_http else "offline_http_error",
                     "checked_at": now_iso,
-                    "machine_access_verified": 200 <= status_code < 400,
+                    "machine_access_verified": ok_http,
                     "http_status": status_code,
                     "reason": f"Endpoint responded HTTP {status_code}.",
                 }
-    except urllib.error.URLError as exc:
+    except urllib.error.HTTPError as exc:
+        raw_err = f"HTTP {exc.code}: {exc.reason}"
+        svc_code, svc_reason = classify_external_service_error(raw_err)
         result = {
             "status": "unavailable",
+            "service_status": svc_code,
             "checked_at": now_iso,
             "machine_access_verified": False,
-            "reason": redact_sensitive_text(f"Probe failed: {exc.reason}"),
+            "http_status": exc.code,
+            "reason": redact_sensitive_text(f"Probe failed ({svc_reason}): {raw_err}"),
+        }
+    except urllib.error.URLError as exc:
+        raw_err = str(exc.reason)
+        svc_code, svc_reason = classify_external_service_error(raw_err)
+        result = {
+            "status": "unavailable",
+            "service_status": svc_code,
+            "checked_at": now_iso,
+            "machine_access_verified": False,
+            "reason": redact_sensitive_text(f"Probe failed ({svc_reason}): {raw_err}"),
         }
     except Exception as exc:
+        raw_err = f"{type(exc).__name__}: {exc}"
+        svc_code, svc_reason = classify_external_service_error(raw_err)
         result = {
             "status": "unavailable",
+            "service_status": svc_code,
             "checked_at": now_iso,
             "machine_access_verified": False,
-            "reason": redact_sensitive_text(f"Probe failed ({type(exc).__name__}): {exc}"),
+            "reason": redact_sensitive_text(f"Probe failed ({svc_reason}): {raw_err}"),
         }
+
+    ext_desc = external_db_descriptor(entry, status=result["service_status"], reason=result["reason"])
+    result["external_db"] = ext_desc
+    result["user_signal"] = ext_desc["user_signal"]
 
     with _PROBE_LOCK:
         _PROBE_CACHE[sid] = {**result, "_ts": datetime.now(timezone.utc).timestamp()}
@@ -521,8 +576,14 @@ def source_details(source_ids: List[str], *, probe: bool = False) -> Dict[str, A
             probe_res = _probe_endpoint(entry)
             item["probe"] = probe_res
             item["status"] = probe_res["status"]
+            item["service_status"] = probe_res.get("service_status", probe_res["status"])
             item["last_verified_at"] = probe_res["checked_at"]
             item["machine_access_verified"] = probe_res.get("machine_access_verified", False)
+            ext_desc = probe_res.get("external_db") or external_db_descriptor(
+                entry, status=item["service_status"], reason=probe_res.get("reason", "")
+            )
+            item["external_db"] = ext_desc
+            item["user_signal"] = ext_desc["user_signal"]
         else:
             item["status"] = (
                 "blocked_sensitive"
@@ -545,13 +606,20 @@ def source_details(source_ids: List[str], *, probe: bool = False) -> Dict[str, A
                     )
                 )
             )
+            ext_desc = external_db_descriptor(entry, status=item["status"])
+            item["service_status"] = item["status"]
+            item["external_db"] = ext_desc
+            item["user_signal"] = ext_desc["user_signal"]
         details.append(item)
 
+    signals = [d["external_db"] for d in details if d.get("external_db")]
     return {
         "ok": len(details) > 0 and len(unknown_ids) == 0,
         "sources": details,
         "unknown_source_ids": unknown_ids,
         "probed": bool(probe),
+        "external_db_signals": signals,
+        "user_notice": "; ".join(s["user_signal"] for s in signals),
         "catalog_version": CATALOG_VERSION,
         "error": f"Unknown source IDs: {', '.join(unknown_ids)}" if unknown_ids else None,
     }

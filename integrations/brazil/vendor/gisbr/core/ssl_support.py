@@ -16,6 +16,7 @@ Regras (ver §10 do CLAUDE.md):
 """
 
 from pathlib import Path
+import ssl
 
 try:
     from qgis.PyQt.QtNetwork import QSslCertificate, QSslConfiguration
@@ -140,3 +141,27 @@ def install_default_ca_certificates():
         return False
     _default_installed = True
     return True
+
+
+def _pem_files():
+    """Return sorted ``*.pem`` certificate bundles in ``CERTS_DIR``."""
+    try:
+        return sorted(CERTS_DIR.glob("*.pem"))
+    except Exception as exc:
+        _errors.append("Falha ao varrer {}: {}".format(CERTS_DIR, exc))
+        return []
+
+
+def build_python_ssl_context():
+    """Return a strict stdlib ``ssl.SSLContext`` augmented with ``core/certs/*.pem``.
+
+    System root CAs and strict certificate/hostname verification remain active;
+    plugin PEM files only add missing intermediate/root trust anchors.
+    """
+    ctx = ssl.create_default_context()
+    for pem in _pem_files():
+        try:
+            ctx.load_verify_locations(cafile=str(pem))
+        except Exception as exc:
+            _errors.append("Falha ao carregar {} no contexto SSL Python: {}".format(pem.name, exc))
+    return ctx

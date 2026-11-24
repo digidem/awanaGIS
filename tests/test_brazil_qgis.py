@@ -671,7 +671,7 @@ class BrazilQgisTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-        def fake_probe_urlopen(req, timeout=8.0):
+        def fake_probe_urlopen(req, timeout=8.0, **_kwargs):
             observed["probe_tid"] = threading.get_ident()
             return _Resp(caps_xml)
 

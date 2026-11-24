@@ -15,6 +15,7 @@ from .catalog import get_source
 from .manifest import CATALOG_VERSION
 from .policy import (
     check_source_loadable,
+    external_db_descriptor,
     is_blocked_sensitive,
     is_discovery_only,
     is_portal_only,
@@ -243,6 +244,7 @@ def plan_load(
     parquet_ok = None
     items: List[Dict[str, Any]] = []
     executable_ids: List[str] = []
+    external_databases: List[Dict[str, Any]] = []
     hosts: set = set()
     warnings: List[str] = []
     disclosures: List[str] = []
@@ -419,6 +421,11 @@ def plan_load(
             f"license={source.get('license', 'unknown')}, sensitivity={source['sensitivity']}"
         )
 
+        ext_desc = external_db_descriptor(source, status="planned_external")
+        if ext_desc.get("host"):
+            hosts.add(ext_desc["host"])
+        external_databases.append(ext_desc)
+
         items.append({
             "source_id": canonical_id,
             "title": source["name"],
@@ -433,11 +440,17 @@ def plan_load(
             "clip_mode": clip_mode,
             "requested_year": req_year or source.get("source_year"),
             "estimated_size": _estimate_size_category(source, area),
+            "external_db": ext_desc,
             "warnings": src_warnings,
         })
         executable_ids.append(canonical_id)
 
     can_execute = len(executable_ids) > 0
+    external_db_notice = (
+        "External databases to contact: "
+        + ", ".join(f"{d['source_id']} ({d['publisher']} @ {d['host']})" for d in external_databases)
+        + ". External government/public geoportals may go offline intermittently."
+    ) if external_databases else ""
     area_fingerprint_payload = {
         "type": area.get("type"),
         "id": area.get("id"),
@@ -469,6 +482,8 @@ def plan_load(
             "include_non_government": bool(include_non_government),
             "years": years_map,
             "hosts": sorted(hosts),
+            "external_databases": external_databases,
+            "external_db_notice": external_db_notice,
             "warnings": warnings,
             "disclosures": disclosures,
         }
@@ -492,6 +507,8 @@ def plan_load(
         "output_gpkg": str(gpkg_path),
         "replace_existing": bool(replace_existing),
         "hosts": sorted(hosts),
+        "external_databases": external_databases,
+        "external_db_notice": external_db_notice,
         "disk_free_mb": disk_free_mb,
         "items": items,
         "warnings": warnings,

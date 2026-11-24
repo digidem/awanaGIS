@@ -1595,6 +1595,7 @@ def _dispatch_brazil_tool(toolkit, executor, name, method, args, should_stop=Non
                     plan,
                     worker_out,
                     should_stop=_combined_stop,
+                    iface=getattr(toolkit, "iface", None),
                 )
             )
 

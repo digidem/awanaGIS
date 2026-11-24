@@ -820,13 +820,13 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1205" />
-            <source>download Brazilian geospatial data ({sources}) and write to {dest}</source>
-            <translation>baixar dados geoespaciais brasileiros ({sources}) e gravar em {dest}</translation>
+            <source>download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}</source>
+            <translation>baixar dados geoespaciais brasileiros ({sources}) de banco(s) de dados externo(s) [{hosts}] e gravar em {dest}</translation>
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1234" />
-            <source>probe Brazilian geospatial endpoint metadata ({sources})</source>
-            <translation>verificar metadados de endpoint geoespacial brasileiro ({sources})</translation>
+            <source>probe external database metadata ({sources}) at [{hosts}]</source>
+            <translation>verificar metadados de banco(s) de dados externo(s) ({sources}) em [{hosts}]</translation>
         </message>
         <message>
             <location filename="../core/toolkit.py" line="1244" />

@@ -423,3 +423,109 @@ def check_layer_export_allowed(layer: Any) -> Tuple[bool, str]:
     if sensitivity in ("blocked_isolated_peoples", "restricted_locality_point") or export_policy == "restricted_no_export":
         return False, "Layer is tagged with restricted Indigenous sensitivity and cannot be exported."
     return True, ""
+
+
+_PROTOCOL_DEFAULT_HOSTS: Dict[str, str] = {
+    "geobr": "www.ipea.gov.br",
+    "ibge_tabular": "servicodados.ibge.gov.br",
+    "osm": "overpass-api.de",
+}
+
+
+def resolve_external_host(source: Dict[str, Any]) -> str:
+    """Return the primary hostname for an external Brazilian geospatial source."""
+    for key in ("service_url", "portal_url"):
+        raw = (source.get(key) or "").strip()
+        if raw:
+            host = (urlparse(raw).hostname or "").strip().lower()
+            if host:
+                return host
+    proto = str(source.get("protocol") or "").strip().lower()
+    return _PROTOCOL_DEFAULT_HOSTS.get(proto, "external")
+
+
+def classify_external_service_error(error_text: Any) -> Tuple[str, str]:
+    """Classify an external DB failure into a machine code and human explanation."""
+    cleaned = redact_sensitive_text(error_text or "", redact_coordinates=True)
+    low = cleaned.lower()
+    if "timeout" in low or "timed out" in low:
+        return "offline_timeout", "External database timed out and may be temporarily offline."
+    if any(tok in low for tok in ("ssl", "tls", "certificate", "handshake")):
+        return "offline_tls", "External database TLS/certificate verification failed."
+    if any(
+        tok in low
+        for tok in (
+            "name or service not known",
+            "nodename nor servname",
+            "temporary failure in name resolution",
+            "connection refused",
+            "connection reset",
+            "network is unreachable",
+            "no route to host",
+            "getaddrinfo",
+        )
+    ):
+        return "offline_dns_or_network", "External database host is unreachable (DNS or network failure)."
+    if any(
+        tok in low
+        for tok in (
+            "http 5",
+            "http error 5",
+            "502",
+            "503",
+            "504",
+            "500",
+            "404",
+            "serviceexception",
+            "pagina de erro html",
+            "excecao wfs",
+            "erro no servico",
+        )
+    ):
+        return "offline_http_error", "External database returned an upstream server/service error."
+    return "offline_unavailable", "External database is currently offline or returned an invalid response."
+
+
+def external_db_descriptor(
+    source: Dict[str, Any],
+    *,
+    status: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Build a structured external-database status record for explicit user signaling."""
+    sid = str(source.get("source_id") or source.get("id") or "unknown")
+    publisher = str(source.get("publisher") or source.get("distributor") or sid)
+    distributor = str(source.get("distributor") or publisher)
+    host = resolve_external_host(source)
+    proto = str(source.get("protocol") or "")
+    origin_class = str(source.get("origin_class") or "")
+    norm_status = str(status or "unknown")
+    is_offline = norm_status.startswith("offline_") or norm_status in ("unavailable", "failed")
+    fallback = "geobr_terras_indigenas" if (sid == "funai_ti_boundaries" and is_offline) else None
+    safe_reason = redact_sensitive_text(reason, redact_coordinates=True).strip()
+
+    if is_offline:
+        signal = f"External DB OFFLINE ({publisher} @ {host}, status={norm_status})"
+        if fallback:
+            signal += f" — fallback available: {fallback}"
+        if safe_reason:
+            signal += f": {safe_reason}"
+    elif norm_status in ("online", "reachable"):
+        signal = f"External DB ONLINE ({publisher} @ {host})"
+    elif norm_status == "planned_external":
+        signal = f"Will contact external DB {publisher} ({host}) — subject to upstream availability"
+    else:
+        signal = f"External DB [{norm_status}] ({publisher} @ {host})"
+
+    return {
+        "source_id": sid,
+        "publisher": publisher,
+        "distributor": distributor,
+        "host": host,
+        "protocol": proto,
+        "origin_class": origin_class,
+        "status": norm_status,
+        "is_offline": is_offline,
+        "fallback_source_id": fallback,
+        "user_signal": signal,
+    }

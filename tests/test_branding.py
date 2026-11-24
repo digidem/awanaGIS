@@ -456,7 +456,7 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
                     unexpected.append(f"{rel}:{idx}: {line.strip()}")
         self.assertEqual(unexpected, [], f"Unexpected AgenticGIS hits: {unexpected}")
 
-    def test_icon_readability_and_provenance_draft_status(self):
+    def test_icon_readability_and_provenance(self):
         svg_path = ROOT / "resources" / "icon.svg"
         png_path = ROOT / "resources" / "icon.png"
         prov_path = ROOT / "resources" / "ASSET_PROVENANCE.md"
@@ -465,34 +465,51 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
         self.assertTrue(prov_path.is_file())
 
         prov_text = prov_path.read_text(encoding="utf-8").lower()
-        self.assertIn("draft", prov_text)
-        self.assertIn("signoff", prov_text)
+        self.assertIn("approved", prov_text)
+        self.assertIn("awana digital", prov_text)
 
-        renderer = QSvgRenderer(str(svg_path))
-        self.assertTrue(renderer.isValid())
-        for size in (16, 24, 32, 64, 128):
-            img = QImage(size, size, QImage.Format.Format_ARGB32)
-            img.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(img)
-            renderer.render(painter, QRectF(0, 0, size, size))
-            painter.end()
-            # Ensure non-empty foreground and background pixel groups at every target size
-            fg_pixels = 0
-            bg_pixels = 0
-            for y in range(size):
-                for x in range(size):
-                    c = img.pixelColor(x, y)
-                    if c.alpha() < 180:
-                        continue
-                    if c.red() > 210 and c.green() > 200:
-                        fg_pixels += 1
-                    elif 80 <= c.red() <= 170 and c.green() < 40:
-                        bg_pixels += 1
-            self.assertGreater(fg_pixels, 0, f"No light foreground pixels at {size}x{size}")
-            self.assertGreater(bg_pixels, 0, f"No burgundy background pixels at {size}x{size}")
-
+        self.assertLess(png_path.stat().st_size, 25_000)
         with Image.open(png_path) as pil_img:
             self.assertEqual(pil_img.size, (128, 128))
+
+        base_qimg = QImage(str(png_path))
+        self.assertFalse(base_qimg.isNull())
+        renderer = QSvgRenderer(str(svg_path))
+        self.assertTrue(renderer.isValid())
+
+        for size in (16, 24, 32, 64, 128):
+            scaled = base_qimg.scaled(
+                size,
+                size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            trans_px = 0
+            burg_px = 0
+            for y in range(size):
+                for x in range(size):
+                    c = scaled.pixelColor(x, y)
+                    if c.alpha() < 20:
+                        trans_px += 1
+                    elif c.alpha() >= 180 and c.red() >= 80 and c.green() <= 50:
+                        burg_px += 1
+            self.assertGreater(trans_px, 0, f"No transparent background pixels in PNG at {size}x{size}")
+            self.assertGreater(burg_px, 0, f"No burgundy foreground pixels in PNG at {size}x{size}")
+
+            svg_img = QImage(size, size, QImage.Format.Format_ARGB32)
+            svg_img.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(svg_img)
+            renderer.render(painter, QRectF(0, 0, size, size))
+            painter.end()
+            svg_burg = sum(
+                1
+                for y in range(size)
+                for x in range(size)
+                if svg_img.pixelColor(x, y).alpha() >= 180
+                and svg_img.pixelColor(x, y).red() >= 80
+                and svg_img.pixelColor(x, y).green() <= 50
+            )
+            self.assertGreater(svg_burg, 0, f"No burgundy pixels in SVG at {size}x{size}")
 
 
 class PackagingAndSmokeTests(unittest.TestCase):

@@ -264,6 +264,71 @@ class BrazilCatalogTests(unittest.TestCase):
             self.assertTrue(label)
             self.assertNotIn("_", label)
 
+    def test_funai_cert_context_and_offline_probe_classification(self):
+        import ssl
+        import urllib.error
+        from datetime import datetime, timezone
+
+        ssl_support = import_module(f"{PKG}.integrations.brazil.vendor.gisbr.core.ssl_support")
+        cert_file = (
+            ROOT / "integrations" / "brazil" / "vendor" / "gisbr" / "core" / "certs" / "funai_sectigo_ov_r36.pem"
+        )
+        self.assertTrue(cert_file.is_file())
+        ctx = ssl_support.build_python_ssl_context()
+        self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(ctx.check_hostname)
+
+        funai_ti = catalog.get_source("funai_ti_boundaries")
+        funai_cr = catalog.get_source("funai_regional_offices")
+        self.assertEqual(funai_ti["loader_state"], "loadable")
+        self.assertTrue(funai_ti["machine_access_verified"])
+        self.assertEqual(funai_cr["loader_state"], "loadable")
+        self.assertEqual(funai_cr["typename"], "Funai:tis_cr")
+
+        # Search results include external host and outage notice
+        res_search = br_tools.br_search_sources(query="funai_ti_boundaries")
+        self.assertTrue(res_search["ok"])
+        first = next(s for s in res_search["sources"] if s["id"] == "funai_ti_boundaries")
+        self.assertEqual(first["external_host"], "geoserver.funai.gov.br")
+        self.assertIn("may go offline", first["external_service_notice"].lower())
+
+        # Offline errors classify cleanly and suggest geobr mirror fallback for FUNAI TI
+        err_cases = [
+            (urllib.error.URLError(TimeoutError("timed out")), "offline_timeout"),
+            (urllib.error.URLError(ssl.SSLError("CERTIFICATE_VERIFY_FAILED")), "offline_tls"),
+            (urllib.error.HTTPError("https://geoserver.funai.gov.br", 503, "Service Unavailable", {}, None), "offline_http_error"),
+            (urllib.error.URLError(OSError("Name or service not known")), "offline_dns_or_network"),
+        ]
+        for exc, expected_code in err_cases:
+            catalog._PROBE_CACHE.clear()
+            with patch.object(catalog.urllib.request, "urlopen", side_effect=exc):
+                det = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
+                self.assertTrue(det["ok"])
+                src = det["sources"][0]
+                self.assertEqual(src["status"], "unavailable")
+                self.assertEqual(src["service_status"], expected_code)
+                self.assertTrue(src["external_db"]["is_offline"])
+                self.assertEqual(src["external_db"]["fallback_source_id"], "geobr_terras_indigenas")
+                self.assertIn("geoserver.funai.gov.br", det["user_notice"])
+
+        # Failed probe cache expires after 30s (_PROBE_FAILURE_TTL_SECONDS) so recoveries re-probe
+        catalog._PROBE_CACHE["funai_ti_boundaries"] = {
+            "status": "unavailable",
+            "service_status": "offline_timeout",
+            "checked_at": "2026-11-24T00:00:00Z",
+            "machine_access_verified": False,
+            "reason": "stale failure",
+            "_ts": datetime.now(timezone.utc).timestamp() - 45.0,
+        }
+        caps_ok = (
+            b"<WFS_Capabilities><FeatureTypeList><FeatureType>"
+            b"<Name>Funai:tis_poligonais</Name></FeatureType></FeatureTypeList></WFS_Capabilities>"
+        )
+        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(caps_ok)):
+            det_rec = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
+            self.assertEqual(det_rec["sources"][0]["status"], "reachable")
+            self.assertEqual(det_rec["sources"][0]["service_status"], "reachable")
+
 
 if __name__ == "__main__":
     unittest.main()

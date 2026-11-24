@@ -352,6 +352,7 @@ def br_execute_load(
     project=None,
     local_fixtures: Optional[Dict[str, str]] = None,
     executor=None,
+    iface: Any = None,
 ) -> Dict[str, Any]:
     """Execute a frozen ``plan_id`` with strict policy checks and atomic layer registration."""
     if not plan_id or not isinstance(plan_id, str):
@@ -369,6 +370,7 @@ def br_execute_load(
             project=project,
             local_fixtures=local_fixtures,
             executor=executor,
+            iface=iface,
         )
     except Exception as exc:
         return {
@@ -439,6 +441,7 @@ class BrazilDataService:
         project=None,
         local_fixtures: Optional[Dict[str, str]] = None,
         executor=None,
+        iface: Any = None,
     ) -> Dict[str, Any]:
         return br_execute_load(
             plan_id,
@@ -446,6 +449,7 @@ class BrazilDataService:
             project=project,
             local_fixtures=local_fixtures,
             executor=executor,
+            iface=iface,
         )
 
     def shutdown(self) -> None:

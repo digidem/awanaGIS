@@ -8,6 +8,9 @@ AwanaGIS bundles a pinned, isolated runtime subset of **GISBR** so users do not 
 - **Pinned Commit SHA:** `06d84dfab9942e4e840637bb8d8f96af173330ad`
 - **License:** GNU General Public License v3.0 (see [`vendor/gisbr/LICENSE`](./vendor/gisbr/LICENSE))
 - **Combined Work Notice:** AwanaGIS derives from AgenticGIS (GPL-2.0-or-later) and includes adapted GISBR runtime modules (GPL-3.0); the combined distribution is conveyed in compliance with **GPL-3.0**.
+- **Bundled CA Intermediate Anchors (`vendor/gisbr/core/certs/`):**
+  - `ca_roots.pem`, `ipea_chain.pem` (from upstream GISBR).
+  - `funai_sectigo_ov_r36.pem`: Public Sectigo OV R36 intermediate CA certificate (`CN=Sectigo Public Server Authentication CA OV R36`, issued by `CN=Sectigo Public Server Authentication Root R46`) for `geoserver.funai.gov.br`, which omits its intermediate CA in the TLS handshake; added solely to restore strict-TLS chain validation without disabling certificate verification.
 
 ## Vendored Runtime Scope
 

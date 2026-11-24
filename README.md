@@ -187,4 +187,4 @@ AwanaGIS combines the branded AwanaGIS workspace and preserved PT-BR localizatio
   - Adapted [GISBR](https://github.com/d-camargo/gisbr) (`06d84df`, `GPL-3.0`).
   - Adapted [CoMapeo Map Builder (`qgis-smp-plugin`)](https://github.com/digidem/qgis-smp-plugin) (`3471578`, `MIT`, Awana Digital).
   - See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
-- **Brand & visual identity:** Uses Awana Digital's official color palette and typography roles (`gui/brand.py`, `gui/theme.py`). `resources/icon.svg` and `resources/icon.png` are draft proposals awaiting Awana Digital design-team signoff (`resources/ASSET_PROVENANCE.md`).
+- **Brand & visual identity:** Uses Awana Digital's official color palette, typography roles (`gui/brand.py`, `gui/theme.py`), and resized/compressed official AwanaGIS icon (`resources/icon.png`, `resources/icon.svg`; see [`resources/ASSET_PROVENANCE.md`](resources/ASSET_PROVENANCE.md)).

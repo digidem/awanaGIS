@@ -34,5 +34,5 @@ Because AwanaGIS bundles adapted **GPL-3.0** modules from GISBR alongside **GPL-
 - Official Awana Digital brand font roles (`Tomorrow`, `Public Sans`, `Space Grotesk`) are referenced by family name in `gui/brand.py` and `gui/theme.py` when present on the host OS.
 - **No external font binaries are bundled** in this repository or plugin ZIP; the UI falls back cleanly to the native QGIS / Qt system sans-serif font.
 
-## 5. Draft Product Icon (`resources/icon.svg`, `resources/icon.png`)
-- Newly authored draft AwanaGIS icon in Awana Digital's official palette (`#6B0030`, `#8D003E`, `#FDF7EF`, `#FFE460`), awaiting Awana Digital design-team signoff. See [`resources/ASSET_PROVENANCE.md`](resources/ASSET_PROVENANCE.md).
+## 5. Product Icon (`resources/icon.svg`, `resources/icon.png`)
+- Derived from the official Awana Digital mark supplied by the maintainer, resized to `128x128` and compressed with `pngquant` + `oxipng` (`9,676` bytes). See [`resources/ASSET_PROVENANCE.md`](resources/ASSET_PROVENANCE.md).

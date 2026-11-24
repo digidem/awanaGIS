@@ -260,12 +260,22 @@ class CrossFeatureIntegrationTests(unittest.TestCase):
             # No deadlock when _write_vector_atomically holds lock and hardlinks return EPERM
             layer = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string", "nolink_pts", "memory")
             nolink_gpkg = tmp_path / "nolink_out.gpkg"
-            with patch("integrations.brazil.loader.os.link", side_effect=OSError(errno.EPERM, "hardlinks disabled")):
+            with patch.object(br_loader.os, "link", side_effect=OSError(errno.EPERM, "hardlinks disabled")):
                 ok_wl, msg_wl, final_wl = br_loader._write_vector_atomically(
                     layer, nolink_gpkg, "nolink_pts", replace_existing=False
                 )
             self.assertTrue(ok_wl, msg_wl)
             self.assertTrue(final_wl.exists())
+
+            # Package includes compressed official icon and Sectigo FUNAI intermediate CA PEM
+            from awanagis.scripts import package_plugin
+            import zipfile
+            pkg_root = Path(__file__).resolve().parents[1]
+            out_zip = tmp_path / "pkg_verify.zip"
+            zpath, _, _, znames = package_plugin.build_plugin_zip(pkg_root, out_zip)
+            self.assertIn("awanagis/integrations/brazil/vendor/gisbr/core/certs/funai_sectigo_ov_r36.pem", znames)
+            with zipfile.ZipFile(zpath) as zf:
+                self.assertLess(len(zf.read("awanagis/resources/icon.png")), 25_000)
 
 
 if __name__ == "__main__":
