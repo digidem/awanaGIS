@@ -25,7 +25,7 @@ from .theme import (
     ui_font,
     DOCK_SURFACE as _SURFACE,
     DOCK_SURFACE_2 as _SURFACE_2,
-    DOCK_BORDER as _SURFACE_HOV,
+    DOCK_SURFACE_2 as _SURFACE_HOV,
     DOCK_CANVAS as _INPUT_BG,
     DOCK_BORDER as _BORDER,
     DOCK_BORDER_SOFT as _BORDER_SOFT,
@@ -34,6 +34,7 @@ from .theme import (
     DOCK_TEXT_3 as _TEXT_3,
     DOCK_ACCENT as _ACCENT,
     DOCK_ACCENT_HOV as _ACCENT_HOV,
+    DOCK_ACCENT_TEXT as _ACCENT_TEXT,
     DOCK_BLUE as _BLUE,
     DOCK_WARN as _WARN,
 )
@@ -119,7 +120,7 @@ class _OptionRow(QFrame):
         bg = _SURFACE_HOV if self._hovered else _SURFACE_2
         border = _BLUE if self.hasFocus() else _BORDER
         if self._pressed:
-            bg = _ACCENT
+            bg = _SURFACE_2
             border = _ACCENT
         self.setStyleSheet(f"""
             QFrame#AskUserOptionRow {{
@@ -285,7 +286,7 @@ class AskUserCard(QFrame):
             send.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {_ACCENT};
-                    color: {_SURFACE};
+                    color: {_ACCENT_TEXT};
                     border: none;
                     border-radius: 8px;
                     padding: 7px 12px;

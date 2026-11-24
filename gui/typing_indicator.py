@@ -15,7 +15,7 @@ _CURSOR_OFF = " "
 class TypingIndicator(QWidget):
     """Blinking terminal-cursor indicator displayed while the agent is working."""
 
-    def __init__(self, text="AgenticGIS", parent=None):
+    def __init__(self, text="AwanaGIS", parent=None):
         super().__init__(parent)
         self.base_text = text
         self._cursor_visible = True

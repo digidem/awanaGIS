@@ -1,34 +1,47 @@
-"""Canonical design tokens for the AgenticGIS UI.
+"""Canonical design tokens for the AwanaGIS UI, backed by ``gui.brand``.
 
-One neutral dark palette (modelled on monocode's: hue-less greys, hairline
-strokes, a single blue accent) shared by the dock and the settings dialog.
-The ``DIALOG_*`` names are kept as aliases so existing imports keep working.
+Resolves Awana Digital's light theme (Cream / Dark Burgundy / Burgundy) or
+derives dark surfaces dynamically from the active QGIS/Qt ``QPalette``.
+``DOCK_*`` and ``DIALOG_*`` module-level exports are preserved so existing
+widget imports continue working cleanly.
 """
 
-# ── Palette ──────────────────────────────────────────────────────────────────
-DOCK_CANVAS = "#171717"        # window background
-DOCK_SURFACE = "#1d1d1d"       # cards, composer
-DOCK_SURFACE_2 = "#262626"     # raised / hover / selected
-DOCK_BORDER = "#2c2c2c"        # card and input borders
-DOCK_BORDER_SOFT = "#222222"   # hairline dividers
-DOCK_TEXT = "#ebebeb"
-DOCK_TEXT_2 = "#9a9a9a"
-DOCK_TEXT_3 = "#767676"
-DOCK_TEXT_4 = "#565656"
-DOCK_ACCENT = "#ebebeb"        # primary button fill
-DOCK_ACCENT_DIM = "#bdbdbd"
-DOCK_ACCENT_HOV = "#ffffff"
-DOCK_BLUE = "#459bf7"          # focus rings, toggles, "active" marks
-DOCK_PURPLE = "#767676"
-DOCK_WARN = "#e0a43c"
-DOCK_SUCCESS = "#4fbf87"
-DOCK_DANGER = "#ef5b6b"
-DOCK_CODE_GREEN = "#ebebeb"
+from . import brand as _brand
+
+# ── Active semantic token snapshot ───────────────────────────────────────────
+_TOKENS = _brand.resolve_semantic_tokens()
+
+DOCK_CANVAS = _TOKENS["canvas"]
+DOCK_SURFACE = _TOKENS["surface"]
+DOCK_SURFACE_2 = _TOKENS["surface_2"]
+DOCK_BORDER = _TOKENS["border"]
+DOCK_BORDER_SOFT = _TOKENS["border_soft"]
+DOCK_TEXT = _TOKENS["text"]
+DOCK_TEXT_2 = _TOKENS["text_2"]
+DOCK_TEXT_3 = _TOKENS["text_3"]
+DOCK_TEXT_4 = _TOKENS["text_4"]
+DOCK_ACCENT = _TOKENS["accent"]
+DOCK_ACCENT_DIM = _TOKENS["accent_dim"]
+DOCK_ACCENT_HOV = _TOKENS["accent_hov"]
+DOCK_ACCENT_TEXT = _TOKENS["accent_text"]
+DOCK_BLUE = _TOKENS["blue"]
+DOCK_PURPLE = _TOKENS["text_3"]
+DOCK_WARN = _TOKENS["warn"]
+DOCK_SUCCESS = _TOKENS["success"]
+DOCK_DANGER = _TOKENS["danger"]
+DOCK_DANGER_BG = _TOKENS["danger_bg"]
+DOCK_DANGER_BORDER = _TOKENS["danger_border"]
+DOCK_DANGER_TEXT = _TOKENS["danger_text"]
+DOCK_CODE_GREEN = _TOKENS["code_green"]
+DOCK_HIGHLIGHT = _TOKENS["highlight"]
+DOCK_HIGHLIGHT_FG = _TOKENS["highlight_fg"]
+DOCK_CHART_START = _TOKENS["chart_start"]
+DOCK_CHART_END = _TOKENS["chart_end"]
 
 DIALOG_SURFACE = DOCK_CANVAS
 DIALOG_SURFACE_2 = DOCK_SURFACE
 DIALOG_SURFACE_HOV = DOCK_SURFACE_2
-DIALOG_INPUT_BG = "#191919"
+DIALOG_INPUT_BG = _TOKENS["input_bg"]
 DIALOG_BORDER = DOCK_BORDER
 DIALOG_BORDER_SOFT = DOCK_BORDER_SOFT
 DIALOG_TEXT = DOCK_TEXT
@@ -36,25 +49,61 @@ DIALOG_TEXT_2 = DOCK_TEXT_2
 DIALOG_TEXT_3 = DOCK_TEXT_3
 DIALOG_ACCENT = DOCK_ACCENT
 DIALOG_ACCENT_HOV = DOCK_ACCENT_HOV
+DIALOG_ACCENT_TEXT = DOCK_ACCENT_TEXT
 DIALOG_BLUE = DOCK_BLUE
 DIALOG_WARN = DOCK_WARN
 DIALOG_SUCCESS = DOCK_SUCCESS
 DIALOG_DANGER = DOCK_DANGER
 
+
+def active_tokens(palette=None):
+    """Return fresh semantic tokens for the active QGIS/Qt palette."""
+    return _brand.resolve_semantic_tokens(palette=palette)
+
+
+def curved_scrollbar_qss(
+    tokens=None,
+    *,
+    thickness=10,
+    handle_radius=4,
+    include_horizontal=False,
+    selector_prefix="",
+):
+    """Widget-scoped curved-corner floating pill scrollbar QSS."""
+    return _brand.curved_scrollbar_qss(
+        tokens or _TOKENS,
+        thickness=thickness,
+        handle_radius=handle_radius,
+        include_horizontal=include_horizontal,
+        selector_prefix=selector_prefix,
+    )
+
+
 # ── Font stacks ──────────────────────────────────────────────────────────────
-# Prose uses the QGIS UI font; code, tables and tool rows stay monospace.
-# Qt doesn't resolve the generic ``monospace``, so name the fonts each OS ships.
+# Prose uses Public Sans (body), titles Tomorrow (display), captions Space
+# Grotesk (caption), falling back gracefully to QGIS's native UI font. Code
+# stays monospace.
 MONO_STACK = "'JetBrains Mono','SF Mono','Menlo','Consolas','DejaVu Sans Mono','Courier New',monospace"
 
 
+def display_font(size=15, weight=None):
+    """QFont for headings/titles using Tomorrow with QGIS UI fallback."""
+    return _brand.make_role_font("display", fs(size), weight=weight)
+
+
+def body_font(size=12, weight=None):
+    """QFont for body/chat prose using Public Sans with QGIS UI fallback."""
+    return _brand.make_role_font("body", fs(size), weight=weight)
+
+
+def caption_font(size=11, weight=None):
+    """QFont for compact labels/captions using Space Grotesk with QGIS UI fallback."""
+    return _brand.make_role_font("caption", fs(size), weight=weight)
+
+
 def ui_font(size=12, weight=None):
-    """QFont for interface text: the QGIS UI font at ``size`` px (scaled)."""
-    from qgis.PyQt.QtGui import QFont
-    font = QFont()
-    font.setPixelSize(fs(size))
-    if weight is not None:
-        font.setWeight(weight)
-    return font
+    """QFont for interface text: body role (Public Sans / QGIS UI fallback) at ``size`` px."""
+    return body_font(size, weight=weight)
 
 
 def mono_font(size=12):
@@ -66,16 +115,9 @@ def mono_font(size=12):
     return font
 
 
-def sans_family():
-    """CSS family for prose: the QGIS application font (follows QGIS Options)."""
-    try:
-        from qgis.PyQt.QtWidgets import QApplication
-        family = QApplication.font().family()
-        if family:
-            return f"'{family}',sans-serif"
-    except Exception:  # nosec B110 - outside Qt (tests) fall back to generic
-        pass
-    return "sans-serif"
+def sans_family(role="body"):
+    """CSS family for prose: brand role family with QGIS UI sans-serif fallback."""
+    return _brand.font_stack_css(role)
 
 
 # ── Font scale ───────────────────────────────────────────────────────────────
