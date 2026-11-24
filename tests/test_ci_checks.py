@@ -159,6 +159,21 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(report["ok"])
             self.assertTrue(any("Duplicate normalized member" in e for e in report["blocking_errors"]))
 
+            # Implicit directory case collisions (without explicit dir entries) are rejected
+            dir_dup_zip = _build_valid_zip(
+                tmp_dir / "dir_dup.zip",
+                extra_entries=[
+                    ("AgenticGIS/core/a.py", b"a = 1\n", stat.S_IFREG | 0o644),
+                    ("AgenticGIS/Core/b.py", b"b = 2\n", stat.S_IFREG | 0o644),
+                ],
+            )
+            rep_dir_dup = check_plugin.validate_and_extract_archive(dir_dup_zip, tmp_dir / "ext_dir_dup")
+            self.assertFalse(rep_dir_dup["ok"])
+            self.assertTrue(
+                any("Case-colliding directory prefix" in e for e in rep_dir_dup["blocking_errors"]),
+                rep_dir_dup,
+            )
+
     def test_unsafe_members_are_rejected_before_extraction(self):
         unsafe_cases = [
             ("AgenticGIS/../escape.py", b"x = 1\n", stat.S_IFREG | 0o644),
@@ -990,6 +1005,16 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertTrue(
                 any("AgenticGIS_es.ts" in e for e in disambig_rep["errors"]),
                 disambig_rep,
+            )
+
+            # Unlisted/unpaired translation catalog in i18n/ MUST fail
+            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
+            (i18n / "AgenticGIS_fr.qm").write_bytes(b"QM_FR")
+            unlisted_cat = check_plugin.check_i18n(repo, 6)
+            self.assertFalse(unlisted_cat["ok"])
+            self.assertTrue(
+                any("AgenticGIS_fr.qm" in e for e in unlisted_cat["errors"]),
+                unlisted_cat,
             )
 
 

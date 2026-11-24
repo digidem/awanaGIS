@@ -401,7 +401,7 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
         seen_raw: set[str] = set()
         seen_normalized: dict[str, str] = {}
-        implied_dirs_ci: set[str] = set()
+        implied_dirs_ci: dict[str, str] = {}
         file_infos: list[tuple[zipfile.ZipInfo, str]] = []
         file_members: set[str] = set()
 
@@ -447,8 +447,20 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
             parts = norm_path.split("/")
             parent_depth = len(parts) + 1 if is_dir else len(parts)
+            dir_collision = False
             for idx in range(1, parent_depth):
-                implied_dirs_ci.add("/".join(parts[:idx]).lower())
+                dir_prefix = "/".join(parts[:idx])
+                dir_key = dir_prefix.lower()
+                existing_dir = implied_dirs_ci.get(dir_key)
+                if existing_dir is not None and existing_dir != dir_prefix:
+                    report["blocking_errors"].append(
+                        f"Case-colliding directory prefix: {dir_prefix} collides with {existing_dir}"
+                    )
+                    dir_collision = True
+                    break
+                implied_dirs_ci[dir_key] = dir_prefix
+            if dir_collision:
+                continue
 
             if is_dir:
                 continue
@@ -1264,6 +1276,17 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
         catalog_paths.append((rel_ts, tracked_ts, tracked_qm))
         if not tracked_ts.is_file() or not tracked_qm.is_file():
             report["errors"].append(f"Missing tracked TS/QM catalog: {tracked_ts} / {tracked_qm}")
+    declared_catalog_files = {p for _, ts, qm in catalog_paths for p in (ts, qm)}
+    for pattern in ("*.ts", "*.qm"):
+        for found_path in sorted(i18n_dir.rglob(pattern)):
+            rel_parts = found_path.relative_to(i18n_dir).parts
+            if any(part.startswith(".") or part == "__pycache__" for part in rel_parts):
+                continue
+            if found_path.resolve() not in declared_catalog_files:
+                report["errors"].append(
+                    "Unlisted or unpaired translation catalog in i18n/: "
+                    + found_path.relative_to(i18n_dir).as_posix()
+                )
     if report["errors"]:
         return report
 
