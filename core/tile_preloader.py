@@ -27,7 +27,7 @@ from qgis.core import (
 
 def _log(msg):
     try:
-        QgsMessageLog.logMessage(f"[AgenticGIS TilePreloader] {msg}", "AgenticGIS")
+        QgsMessageLog.logMessage(f"[AwanaGIS TilePreloader] {msg}", "AwanaGIS")
     except Exception:  # nosec B110
         pass
 

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from qgis.PyQt.QtCore import QSettings, QTimer
 
 
-SETTINGS_KEY = "AgenticGIS/sessions_json"
+SETTINGS_KEY = "AwanaGIS/sessions_json"
 SCHEMA_VERSION = 1
 DEFAULT_SESSION_NAME = "New session"
 WARN_SESSION_BYTES = 1_000_000
@@ -18,7 +18,7 @@ def _now():
 
 
 class SessionStore:
-    """Small JSON store for global AgenticGIS chat sessions."""
+    """Small JSON store for global AwanaGIS chat sessions."""
 
     def __init__(self, settings=None, limit=20, *, default_name=DEFAULT_SESSION_NAME):
         self._default_name = default_name
