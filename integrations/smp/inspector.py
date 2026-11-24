@@ -109,6 +109,20 @@ def _layer_entry(layer, visible, project):
     policy = classify_layer_policy(layer)
     sensitivity = layer_sensitivity(layer)
 
+    if policy == "blocked_sensitive":
+        extent_payload = {
+            "bounds_wgs84": None,
+            "bounds_layer_crs": None,
+            "redacted": True,
+        }
+        selected_out = 0
+    else:
+        extent_payload = {
+            "bounds_wgs84": _rect_to_list(wgs84_rect),
+            "bounds_layer_crs": _rect_to_list(extent_rect),
+        }
+        selected_out = selected_count
+
     return {
         "id": layer.id(),
         "name": layer.name(),
@@ -117,10 +131,7 @@ def _layer_entry(layer, visible, project):
         "provider": str(layer.providerType() or ""),
         "source_uri_redacted": redact_uri(layer_source_uri(layer)),
         "crs": crs_authid,
-        "extent": {
-            "bounds_wgs84": _rect_to_list(wgs84_rect),
-            "bounds_layer_crs": _rect_to_list(extent_rect),
-        },
+        "extent": extent_payload,
         "scale_visibility": {
             "enabled": has_scale_vis,
             "min_scale": min_scale,
@@ -131,7 +142,7 @@ def _layer_entry(layer, visible, project):
         "attribution": layer_attribution(layer),
         "sensitivity": sensitivity,
         "export_policy": policy,
-        "selected_count": selected_count,
+        "selected_count": selected_out,
         "is_modified": is_modified,
     }
 
@@ -210,6 +221,8 @@ def inspect_map(iface=None, include_hidden=False):
     if canvas_extent_info["bounds_wgs84"] is None and visible_layers:
         union_wgs84 = None
         for entry in visible_layers:
+            if entry.get("export_policy") == "blocked_sensitive":
+                continue
             b = entry["extent"]["bounds_wgs84"]
             if b is not None:
                 r = QgsRectangle(*b)
@@ -227,12 +240,14 @@ def inspect_map(iface=None, include_hidden=False):
             if canvas is None:
                 warnings.append("Map canvas unavailable (headless mode); extent derived from visible layers.")
 
-    # Selected features extent across vector layers.
+    # Selected features extent across exportable vector layers (exclude blocked_sensitive).
     selected_layer_ids = []
     selection_union_wgs84 = None
     selected_feature_count = 0
     for layer in project.mapLayers().values():
         if layer is None or not callable(getattr(layer, "selectedFeatureCount", None)):
+            continue
+        if classify_layer_policy(layer) == "blocked_sensitive":
             continue
         try:
             scount = int(layer.selectedFeatureCount())

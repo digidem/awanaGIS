@@ -128,6 +128,7 @@ def _validate_requested_year(source: Dict[str, Any], requested_year: Optional[in
         return f"Invalid year '{requested_year}' for {source['source_id']}; must be an integer."
 
     sid = source["source_id"]
+    proto = source.get("protocol", "")
     if sid == "geobr_setores":
         try:
             avail = list(gisbr_catalog.available_years("census_tract"))
@@ -139,6 +140,10 @@ def _validate_requested_year(source: Dict[str, Any], requested_year: Optional[in
         avail = list(source["available_years"])
         if year_int not in avail:
             return f"Year {year_int} is not supported for '{sid}'. Supported years: {avail[0]}..{avail[-1]}"
+    elif proto in ("ibge_tabular", "wfs", "arcgis", "zip_remoto") and sid != "inpe_prodes":
+        return f"Source '{sid}' (protocol '{proto}') does not support year filtering; omit 'years' for this source."
+    elif proto == "geobr" and not (source.get("_raw_gisbr") or {}).get("supports_year", True):
+        return f"Source '{sid}' does not support year filtering; omit 'years' for this source."
     return None
 
 

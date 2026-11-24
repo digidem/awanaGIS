@@ -319,6 +319,24 @@ def _run_tile_sample(gen, render_layers, tiles_by_zoom, tile_format, quality, sa
     }
 
 
+def inspect_sampling_layers(layer_ids=None):
+    """Return lists of restricted/online layers in the effective sampling set."""
+    project = QgsProject.instance()
+    try:
+        render_layers, _ = _resolve_approved_layers(project, layer_ids)
+    except Exception:
+        return {"restricted_layers": [], "online_layers": []}
+    restricted = []
+    online = []
+    for layer in render_layers:
+        pol = classify_layer_policy(layer)
+        if pol == "restricted":
+            restricted.append({"id": layer.id(), "name": layer.name()})
+        if is_online_layer(layer):
+            online.append({"id": layer.id(), "name": layer.name(), "provider": str(layer.providerType() or "")})
+    return {"restricted_layers": restricted, "online_layers": online}
+
+
 def estimate_plan(
     local_bounds,
     local_min_zoom,
@@ -339,6 +357,8 @@ def estimate_plan(
     target_size_mb=None,
     allow_online_sampling=False,
     allow_restricted_sampling=False,
+    _trusted_sampling_approved=False,
+    sampling_approval_callback=None,
     registry=None,
 ):
     """Build an immutable export plan with exact XYZ tile counts and honest estimates."""
@@ -476,21 +496,51 @@ def estimate_plan(
     sample_stats = None
     sampling_blocked_reason = None
     if use_sample:
-        if restricted_layers and not allow_restricted_sampling:
-            sampling_blocked_reason = "restricted_sampling_unapproved"
-            warnings.append(
-                "Tile sampling skipped because restricted layers are included; "
-                "pass allow_restricted_sampling=True after user authorization or exclude restricted layers. "
-                "Falling back to uncalibrated rough estimation."
+        online_layers = [m for m in layer_meta if m["online"]]
+        if restricted_layers:
+            trusted_ok = bool(
+                allow_restricted_sampling
+                and (
+                    _trusted_sampling_approved
+                    or (
+                        callable(sampling_approval_callback)
+                        and sampling_approval_callback({
+                            "kind": "restricted",
+                            "layers": restricted_layers,
+                            "sample_size": clamped_sample_size,
+                        })
+                    )
+                )
             )
-        elif any(m["online"] for m in layer_meta) and not allow_online_sampling:
-            sampling_blocked_reason = "online_sampling_unapproved"
-            warnings.append(
-                "Tile sampling skipped because online/remote layers would be fetched; "
-                "pass allow_online_sampling=True after user authorization. "
-                "Falling back to uncalibrated rough estimation."
+            if not trusted_ok:
+                sampling_blocked_reason = "restricted_sampling_unapproved"
+                warnings.append(
+                    "Tile sampling skipped because restricted layers require explicit trusted user confirmation. "
+                    "Falling back to uncalibrated rough estimation."
+                )
+        elif online_layers:
+            trusted_ok = bool(
+                allow_online_sampling
+                and (
+                    _trusted_sampling_approved
+                    or (
+                        callable(sampling_approval_callback)
+                        and sampling_approval_callback({
+                            "kind": "online",
+                            "layers": online_layers,
+                            "sample_size": clamped_sample_size,
+                        })
+                    )
+                )
             )
-        else:
+            if not trusted_ok:
+                sampling_blocked_reason = "online_sampling_unapproved"
+                warnings.append(
+                    "Tile sampling skipped because online/remote layers require explicit trusted user confirmation. "
+                    "Falling back to uncalibrated rough estimation."
+                )
+
+        if sampling_blocked_reason is None:
             try:
                 sample_stats = _run_tile_sample(
                     gen, render_layers, export_plan["tiles_by_zoom"], fmt, quality, clamped_sample_size

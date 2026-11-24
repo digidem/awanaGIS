@@ -285,7 +285,7 @@ def visible_layers_in_render_order(project):
     return visible_layers
 
 
-def _hash_memory_or_edited_features(layer, max_features=2000):
+def _hash_memory_or_edited_features(layer, max_features=100_000):
     """Compute a deterministic digest of vector features (bounded by max_features).
 
     Returns ``(digest_str, complete_bool)``.
@@ -295,11 +295,17 @@ def _hash_memory_or_edited_features(layer, max_features=2000):
     except Exception:
         return "count=unknown", False
 
+    try:
+        ext = layer.extent()
+        ext_str = f"{ext.xMinimum():.8f},{ext.yMinimum():.8f},{ext.xMaximum():.8f},{ext.yMaximum():.8f}"
+    except Exception:
+        ext_str = "extent=unknown"
+
     if count > max_features:
-        return f"count={count}:unbounded", False
+        return f"count={count}:ext={ext_str}:unbounded", False
 
     h = hashlib.sha256()
-    h.update(f"count={count}\n".encode("utf-8"))
+    h.update(f"count={count}:ext={ext_str}\n".encode("utf-8"))
     try:
         for feat in layer.getFeatures():
             geom = feat.geometry()
@@ -309,7 +315,7 @@ def _hash_memory_or_edited_features(layer, max_features=2000):
             h.update(b"\n")
         return h.hexdigest(), True
     except Exception:
-        return f"count={count}:err", False
+        return f"count={count}:ext={ext_str}:err", False
 
 
 def compute_project_fingerprint(project, layers):

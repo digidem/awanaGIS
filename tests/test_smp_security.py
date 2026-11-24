@@ -554,6 +554,175 @@ class SmpSecurityTests(unittest.TestCase):
         self.assertTrue(any("exceeds" in iss.lower() for iss in val_bomb["issues"]), val_bomb["issues"])
         fake_zf.testzip.assert_not_called()
 
+    def test_online_sampling_requires_trusted_user_approval_and_inspector_redacts_blocked_coords(self):
+        # P2 #4: blocked_sensitive layer must never leak extent or selection coordinates in smp_inspect_map
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY
+
+        blocked = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string", "isolated_pt", "memory")
+        blocked.setCustomProperty("awanagis/export_policy", "blocked_sensitive")
+        feat = QgsFeature(blocked.fields())
+        feat.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(-62.1234, -4.5678)))
+        feat.setAttributes(["secret_camp"])
+        blocked.dataProvider().addFeatures([feat])
+        blocked.updateExtents()
+        blocked.selectAll()
+        self.project.addMapLayer(blocked)
+
+        info = smp_tools.smp_inspect_map(iface=None)
+        self.assertTrue(info["ok"])
+        vis = next(v for v in info["visible_layers"] if v["id"] == blocked.id())
+        self.assertTrue(vis["extent"].get("redacted"))
+        self.assertIsNone(vis["extent"]["bounds_wgs84"])
+        self.assertIsNone(vis["extent"]["bounds_layer_crs"])
+        self.assertEqual(vis["selected_count"], 0)
+        if info["selection_extent"] is not None:
+            self.assertNotIn(blocked.id(), info["selection_extent"]["layer_ids"])
+        self.project.removeMapLayer(blocked.id())
+
+        # P2 #3: caller-supplied allow_online_sampling=True + forged _trusted_sampling_approved
+        # cannot trigger online tile rendering without trusted _ask_user confirmation.
+        xyz_layer = QgsRasterLayer("type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png", "osm_online", "wms")
+        self.project.addMapLayer(xyz_layer)
+
+        tk_no_prompt = Mock(iface=None, spec=["iface"])
+        res_no_prompt = smp_tools.dispatch_smp_tool(
+            tk_no_prompt,
+            None,
+            "smp_estimate",
+            {
+                "local_bounds": [-60.1, -3.1, -60.0, -3.0],
+                "local_min_zoom": 10,
+                "local_max_zoom": 10,
+                "sample": True,
+                "allow_online_sampling": True,
+                "_trusted_sampling_approved": True,
+            },
+        )
+        self.assertTrue(res_no_prompt["ok"])
+        self.assertEqual(res_no_prompt["calibration"], "uncalibrated_rough")
+        self.assertEqual(res_no_prompt["sampling_blocked_reason"], "online_sampling_unapproved")
+
+        tk_denied = Mock(iface=None)
+        tk_denied._ask_user.return_value = {"choice": "deny_sampling", "cancelled": False}
+        res_denied = smp_tools.dispatch_smp_tool(
+            tk_denied,
+            None,
+            "smp_estimate",
+            {
+                "local_bounds": [-60.1, -3.1, -60.0, -3.0],
+                "local_min_zoom": 10,
+                "local_max_zoom": 10,
+                "sample_mode": "small",
+                "allow_online_sampling": True,
+            },
+        )
+        self.assertTrue(res_denied["ok"])
+        self.assertEqual(res_denied["sampling_blocked_reason"], "online_sampling_unapproved")
+        tk_denied._ask_user.assert_called_once()
+
+    def test_large_memory_layer_geometry_edit_invalidates_plan_and_manifest_rollback(self):
+        # P2 #5: editing geometry on >2000-feature memory layer changes project_fingerprint
+        from qgis.core import QgsFeature, QgsGeometry, QgsPointXY
+
+        big = QgsVectorLayer("Point?crs=EPSG:4326&field=id:integer", "big_mem", "memory")
+        feats = []
+        for i in range(2050):
+            f = QgsFeature(big.fields())
+            f.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(-60.05 + (i % 50) * 0.001, -3.05 + (i // 50) * 0.001)))
+            f.setAttributes([i])
+            feats.append(f)
+        big.dataProvider().addFeatures(feats)
+        big.updateExtents()
+        self.project.addMapLayer(big)
+
+        est = smp_tools.smp_estimate(
+            local_bounds=[-60.06, -3.06, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+        )
+        self.assertTrue(est["ok"])
+
+        # Move one feature without changing feature count
+        f0 = next(big.getFeatures())
+        big.dataProvider().changeGeometryValues({f0.id(): QgsGeometry.fromPointXY(QgsPointXY(-59.99, -2.99))})
+        big.updateExtents()
+
+        out_smp = os.path.join(self.tmp, "stale_big.smp")
+        res_stale = smp_tools.smp_start_export(
+            plan_id=est["plan_id"],
+            output_path=out_smp,
+            approved=True,
+            approval_callback=lambda _s: True,
+        )
+        self.assertFalse(res_stale["ok"])
+        self.assertEqual(res_stale["error_code"], "stale_plan")
+        self.project.removeMapLayer(big.id())
+
+        # P2 #6: if manifest appears mid-render when overwrite=False, .smp archive is NOT published
+        small_layer = QgsVectorLayer("Point?crs=EPSG:4326&field=name:string", "small_ok", "memory")
+        self.project.addMapLayer(small_layer)
+        est2 = smp_tools.smp_estimate(
+            local_bounds=[-60.1, -3.1, -60.0, -3.0],
+            local_min_zoom=10,
+            local_max_zoom=10,
+            output_dir=self.tmp,
+        )
+        out_coll = os.path.join(self.tmp, "manifest_collision.smp")
+        orig_validate = smp_exporter.validate_file
+
+        def _create_manifest_mid_render(path, run_external=False):
+            res = orig_validate(path, run_external=run_external)
+            Path(out_coll + ".manifest.json").write_text('{"existing": true}', encoding="utf-8")
+            return res
+
+        with patch.object(smp_exporter, "validate_file", side_effect=_create_manifest_mid_render):
+            started = smp_tools.smp_start_export(
+                plan_id=est2["plan_id"],
+                output_path=out_coll,
+                approved=True,
+                overwrite=False,
+                approval_callback=lambda _s: True,
+            )
+            self.assertTrue(started["ok"], started)
+            deadline = __import__("time").monotonic() + 10.0
+            while __import__("time").monotonic() < deadline:
+                st = smp_tools.smp_export_status(started["job_id"])
+                if st["state"] in ("completed", "failed", "cancelled"):
+                    break
+                app.processEvents()
+                __import__("time").sleep(0.02)
+        self.assertEqual(st["state"], "failed", st)
+        self.assertFalse(os.path.exists(out_coll), "Archive should not be published when manifest collision fails")
+
+    def test_validator_rejects_external_source_url_and_mismatched_tile_template(self):
+        # P2 #7: style.json external source URL and mismatched tile template must fail validation
+        fixture = ROOT / "tests" / "fixtures" / "smp" / "sample_local_only.smp"
+        with zipfile.ZipFile(fixture, "r") as zin:
+            entries = {n: zin.read(n) for n in zin.namelist()}
+
+        style = json.loads(entries["style.json"].decode("utf-8"))
+        bad_url_style = json.loads(json.dumps(style))
+        first_sid = next(iter(bad_url_style["sources"]))
+        bad_url_style["sources"][first_sid]["url"] = "https://example.com/tiles.json"
+        bad_url_zip = os.path.join(self.tmp, "bad_src_url.smp")
+        with zipfile.ZipFile(bad_url_zip, "w") as zout:
+            for k, data in entries.items():
+                zout.writestr(k, json.dumps(bad_url_style).encode("utf-8") if k == "style.json" else data)
+        v1 = smp_tools.smp_validate_file(bad_url_zip, run_external=False)
+        self.assertFalse(v1["valid"])
+        self.assertTrue(any("external url" in i.lower() for i in v1["issues"]), v1["issues"])
+
+        bad_tpl_style = json.loads(json.dumps(style))
+        bad_tpl_style["sources"][first_sid]["tiles"] = ["smp://maps.v1/s/99/{z}/{x}/{y}.png"]
+        bad_tpl_zip = os.path.join(self.tmp, "bad_tpl.smp")
+        with zipfile.ZipFile(bad_tpl_zip, "w") as zout:
+            for k, data in entries.items():
+                zout.writestr(k, json.dumps(bad_tpl_style).encode("utf-8") if k == "style.json" else data)
+        v2 = smp_tools.smp_validate_file(bad_tpl_zip, run_external=False)
+        self.assertFalse(v2["valid"])
+        self.assertTrue(any("does not match smp:sourcefolders" in i.lower() for i in v2["issues"]), v2["issues"])
+
 
 if __name__ == "__main__":
     unittest.main()

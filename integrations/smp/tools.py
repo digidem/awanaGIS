@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from qgis.PyQt.QtCore import QCoreApplication
 
-from .estimator import estimate_plan
+from .estimator import estimate_plan, inspect_sampling_layers
 from .exporter import get_export_manager
 from .inspector import inspect_map
 from .planner import suggest_regions
@@ -57,6 +57,8 @@ def smp_estimate(
     target_size_mb=None,
     allow_online_sampling=False,
     allow_restricted_sampling=False,
+    _trusted_sampling_approved=False,
+    sampling_approval_callback=None,
 ):
     return estimate_plan(
         local_bounds=local_bounds,
@@ -78,6 +80,8 @@ def smp_estimate(
         target_size_mb=target_size_mb,
         allow_online_sampling=bool(allow_online_sampling),
         allow_restricted_sampling=bool(allow_restricted_sampling),
+        _trusted_sampling_approved=bool(_trusted_sampling_approved),
+        sampling_approval_callback=sampling_approval_callback,
     )
 
 
@@ -227,6 +231,43 @@ _THREADSAFE_TOOLS = {
 }
 
 
+def _request_trusted_sampling_approval(toolkit, req_info):
+    """Prompt the user via ``toolkit._ask_user`` before sampling online or restricted tiles."""
+    ask_fn = getattr(toolkit, "_ask_user", None) if toolkit is not None else None
+    if not callable(ask_fn):
+        return False
+
+    restricted_names = [r["name"] for r in (req_info.get("restricted_layers") or [])]
+    online_names = [o["name"] for o in (req_info.get("online_layers") or [])]
+    parts = []
+    if restricted_names:
+        parts.append(f"Restricted layers: {', '.join(restricted_names)}")
+    if online_names:
+        parts.append(f"Online/remote layers: {', '.join(online_names)}")
+    question = (
+        "Allow SMP tile sampling across protected or online layers?\n"
+        + "\n".join(parts)
+    )
+    options = [
+        {
+            "label": "approve_sampling",
+            "display_label": QCoreApplication.translate("SmpExport", "Approve sampling"),
+            "description": QCoreApplication.translate(
+                "SmpExport", "Render a small representative tile sample for size estimation."
+            ),
+        },
+        {
+            "label": "deny_sampling",
+            "display_label": QCoreApplication.translate("SmpExport", "Skip sampling"),
+            "description": QCoreApplication.translate(
+                "SmpExport", "Keep estimation render-free and use rough tile counts only."
+            ),
+        },
+    ]
+    answer = ask_fn(question, options, False, display_question=question)
+    return isinstance(answer, dict) and not answer.get("cancelled") and answer.get("choice") == "approve_sampling"
+
+
 def dispatch_smp_tool(toolkit, executor, name, args):
     """Dispatch an ``smp_*`` tool safely across main thread or background callers."""
     iface = getattr(toolkit, "iface", None)
@@ -234,8 +275,20 @@ def dispatch_smp_tool(toolkit, executor, name, args):
     # Never accept internal trust/callback overrides from serialized tool callers
     clean_args.pop("approval_callback", None)
     clean_args.pop("_trusted_approval_token", None)
+    clean_args.pop("sampling_approval_callback", None)
+    clean_args.pop("_trusted_sampling_approved", None)
 
     try:
+        if name == "smp_estimate":
+            wants_sample = bool(clean_args.get("sample")) or str(clean_args.get("sample_mode") or "").strip().lower() == "small"
+            if wants_sample and (clean_args.get("allow_online_sampling") or clean_args.get("allow_restricted_sampling")):
+                probe_fn = lambda: inspect_sampling_layers(clean_args.get("layer_ids"))
+                req_info = executor.run_sync(probe_fn) if executor is not None else probe_fn()
+                if req_info.get("restricted_layers") or req_info.get("online_layers"):
+                    if _request_trusted_sampling_approval(toolkit, req_info):
+                        clean_args["_trusted_sampling_approved"] = True
+            est_call = lambda: smp_estimate(**clean_args)
+            return executor.run_sync(est_call) if executor is not None else est_call()
         if name == "smp_start_export":
             mgr = get_export_manager()
             preflight_call = lambda: mgr.preflight_export(**clean_args)

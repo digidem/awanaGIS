@@ -17,6 +17,8 @@ from awanagis import classFactory
 from awanagis.core import tools
 from awanagis.core.executor import MainThreadExecutor
 from awanagis.core.toolkit import QgisToolkit
+from awanagis.integrations.brazil import loader as br_loader
+from awanagis.integrations.brazil import tools as br_tools
 from awanagis.integrations.brazil.policy import tag_layer_provenance
 from awanagis.integrations.smp import tools as smp_tools
 from awanagis.integrations.smp.exporter import ExportManager
@@ -222,6 +224,37 @@ class CrossFeatureIntegrationTests(unittest.TestCase):
             plugin.unload()
             self.assertIsNone(reg.providerById("awanagis_brazil"))
             self.assertIsNone(plugin._translator)
+
+    def test_brazil_no_clobber_publish_and_honest_year_provenance(self):
+        # P2 #1: atomic no-clobber refuses overwrite when destination appears
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            src = tmp_path / "staged.gpkg"
+            dst = tmp_path / "existing.gpkg"
+            src.write_bytes(b"NEW_DATA")
+            dst.write_bytes(b"EXISTING_DATA")
+            with self.assertRaises(FileExistsError):
+                br_loader._atomic_publish_no_clobber(src, dst, replace_existing=False)
+            self.assertEqual(dst.read_bytes(), b"EXISTING_DATA")
+
+            # P2 #2: unapplied requested year does not falsify loaded provenance
+            plan_bad_year = br_tools.br_plan_load(
+                ["icmbio_uc"],
+                {"type": "municipality", "id": "1507300", "name": "São Félix do Xingu", "ufs": ["PA"]},
+                output_gpkg=str(tmp_path / "uc.gpkg"),
+                years={"icmbio_uc": 1999},
+            )
+            self.assertFalse(plan_bad_year["can_execute"])
+            self.assertEqual(plan_bad_year["items"][0]["reason_code"], "invalid_year")
+
+            eff = br_loader._effective_data_reference_year(
+                {"source_id": "ibge_sidra_sample", "source_year": None},
+                None,
+                requested_year=1999,
+                loader_year="2022",
+                year_applied=False,
+            )
+            self.assertEqual(eff, "2022")
 
 
 if __name__ == "__main__":

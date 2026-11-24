@@ -1,6 +1,12 @@
 """Cancellable, atomic, worker-safe source loader and QGIS layer registration."""
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import errno
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None
 import os
 from pathlib import Path
 import re
@@ -229,6 +235,59 @@ def _gpkg_has_layer(gpkg_path: Path, layer_name: str) -> bool:
     return False
 
 
+@contextmanager
+def _exclusive_file_lock(target_path: Path):
+    """Advisory exclusive lock on a sibling ``.lock`` file when fcntl is available."""
+    if fcntl is None:
+        yield
+        return
+    lock_path = target_path.with_name(f".{target_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _atomic_publish_no_clobber(src: Path, dst: Path, *, replace_existing: bool) -> None:
+    """Publish ``src`` to ``dst`` atomically, refusing to overwrite when ``replace_existing=False``."""
+    if replace_existing:
+        os.replace(str(src), str(dst))
+        return
+    try:
+        os.link(str(src), str(dst))
+    except OSError as exc:
+        if exc.errno in (errno.EEXIST,):
+            raise FileExistsError(dst) from exc
+        if exc.errno in (errno.EXDEV, errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            fd = os.open(str(dst), flags, 0o644)
+            try:
+                with os.fdopen(fd, "wb") as out_f, open(src, "rb") as in_f:
+                    shutil.copyfileobj(in_f, out_f)
+                    out_f.flush()
+                    os.fsync(out_f.fileno())
+            except Exception:
+                try:
+                    dst.unlink()
+                except OSError:
+                    pass
+                raise
+        else:
+            raise
+    finally:
+        if src.exists():
+            try:
+                src.unlink()
+            except OSError:
+                pass
+
+
 def _write_vector_atomically(
     layer,
     gpkg_path: Path,
@@ -238,7 +297,7 @@ def _write_vector_atomically(
     transform_context=None,
     should_stop: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str, Path]:
-    """Write ``layer`` to ``gpkg_path`` safely via staging and strict overwrite checks."""
+    """Write ``layer`` to ``gpkg_path`` safely via staging and strict atomic no-clobber checks."""
     from qgis.core import QgsCoordinateTransformContext, QgsVectorFileWriter, QgsVectorLayer
 
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,35 +325,40 @@ def _write_vector_atomically(
         if _is_cancelled(should_stop):
             return False, "Cancelled before committing GeoPackage.", gpkg_path
 
-        if not gpkg_path.exists():
-            os.replace(str(tmp_path), str(gpkg_path))
-            return True, "", gpkg_path
+        with _exclusive_file_lock(gpkg_path):
+            if not gpkg_path.exists():
+                try:
+                    _atomic_publish_no_clobber(tmp_path, gpkg_path, replace_existing=replace_existing)
+                    return True, "", gpkg_path
+                except FileExistsError:
+                    pass
 
-        if not replace_existing and _gpkg_has_layer(gpkg_path, layer_name):
-            return (
-                False,
-                f"Refusing to overwrite existing layer '{layer_name}' in {gpkg_path.name} (replace_existing=false).",
-                gpkg_path,
-            )
+            if not replace_existing and _gpkg_has_layer(gpkg_path, layer_name):
+                return (
+                    False,
+                    f"Refusing to overwrite existing layer '{layer_name}' in {gpkg_path.name} (replace_existing=false).",
+                    gpkg_path,
+                )
 
-        opts2 = QgsVectorFileWriter.SaveVectorOptions()
-        opts2.driverName = "GPKG"
-        opts2.layerName = layer_name
-        opts2.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
-        err2, msg2 = QgsVectorFileWriter.writeAsVectorFormatV3(layer, str(gpkg_path), ctx, opts2)[:2]
-        if err2 == QgsVectorFileWriter.WriterError.NoError:
-            return True, "", gpkg_path
+            opts2 = QgsVectorFileWriter.SaveVectorOptions()
+            opts2.driverName = "GPKG"
+            opts2.layerName = layer_name
+            opts2.actionOnExistingFile = QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer
+            err2, msg2 = QgsVectorFileWriter.writeAsVectorFormatV3(layer, str(gpkg_path), ctx, opts2)[:2]
+            if err2 == QgsVectorFileWriter.WriterError.NoError:
+                return True, "", gpkg_path
 
-        # Fallback side-by-side file instead of corrupting an open/locked GeoPackage
-        sidecar = gpkg_path.with_name(f"{gpkg_path.stem}_{layer_name}.gpkg")
-        if sidecar.exists() and not replace_existing:
-            return (
-                False,
-                f"Target GeoPackage busy ({msg2}) and sidecar '{sidecar.name}' already exists (replace_existing=false).",
-                gpkg_path,
-            )
-        os.replace(str(tmp_path), str(sidecar))
-        return True, f"Target GeoPackage busy ({msg2}); saved safely to sidecar {sidecar.name}.", sidecar
+            # Fallback side-by-side file instead of corrupting an open/locked GeoPackage
+            sidecar = gpkg_path.with_name(f"{gpkg_path.stem}_{layer_name}.gpkg")
+            try:
+                _atomic_publish_no_clobber(tmp_path, sidecar, replace_existing=replace_existing)
+            except FileExistsError:
+                return (
+                    False,
+                    f"Target GeoPackage busy ({msg2}) and sidecar '{sidecar.name}' already exists (replace_existing=false).",
+                    gpkg_path,
+                )
+            return True, f"Target GeoPackage busy ({msg2}); saved safely to sidecar {sidecar.name}.", sidecar
     finally:
         if tmp_path.exists():
             try:
@@ -314,7 +378,7 @@ def _stage_raster_atomically(
     should_stop: Optional[Callable[[], bool]] = None,
     fixture_override: Optional[str] = None,
 ) -> Tuple[Optional[Path], str, List[str]]:
-    """Fetch/clip raster to a staging GeoTIFF, validate, check cancel/overwrite, then promote."""
+    """Fetch/clip raster to a staging GeoTIFF, validate, check cancel/overwrite, then promote atomically."""
     from qgis.core import QgsRasterLayer
 
     warnings: List[str] = []
@@ -352,14 +416,14 @@ def _stage_raster_atomically(
             return None, "failed", ["Staged GeoTIFF raster failed validation."]
         del check
 
-        if tif_path.exists() and not replace_existing:
+        try:
+            _atomic_publish_no_clobber(tmp_tif, tif_path, replace_existing=replace_existing)
+        except FileExistsError:
             return (
                 None,
                 "failed",
                 [f"Refusing to overwrite existing raster '{tif_path.name}' (replace_existing=false)."],
             )
-
-        os.replace(str(tmp_tif), str(tif_path))
         return tif_path, fetch_kind, warnings
     finally:
         for candidate in tif_path.parent.glob(f"{tmp_tif.name}*"):
@@ -468,13 +532,14 @@ def _effective_data_reference_year(
     requested_year: Optional[int],
     *,
     is_raster: bool = False,
-    raster_year: Optional[int] = None,
+    loader_year: Any = None,
+    year_applied: bool = False,
 ) -> Any:
     """Determine the honest reference year actually represented by the loaded output."""
     if is_raster:
-        return int(raster_year) if raster_year is not None else "unknown"
-    if requested_year is not None:
-        return int(requested_year)
+        return int(loader_year) if loader_year is not None else "unknown"
+    if loader_year is not None:
+        return loader_year
 
     # Inspect feature year/ano attribute when available (bounded scan)
     if layer is not None and hasattr(layer, "fields"):
@@ -501,6 +566,8 @@ def _effective_data_reference_year(
         except Exception:
             pass
 
+    if year_applied and requested_year is not None:
+        return int(requested_year)
     if source.get("source_id") == "inpe_prodes":
         return "unknown"
     src_year = source.get("source_year")
@@ -848,7 +915,7 @@ def run_load_worker(
                     "feature_count": None,
                     "truncated": False,
                     "data_reference_year": _effective_data_reference_year(
-                        source, None, req_year, is_raster=True, raster_year=raster_year
+                        source, None, req_year, is_raster=True, loader_year=raster_year, year_applied=True
                     ),
                     "warnings": fetch_warnings,
                 })
@@ -914,7 +981,31 @@ def run_load_worker(
                 immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled before persistence."]})
                 continue
 
-            effective_year = _effective_data_reference_year(source, working_layer, req_year)
+            proto_used = str(source.get("protocol") or "")
+            if proto_used == "ibge_tabular":
+                raw_cfg = source.get("_raw_gisbr") or {}
+                period_used = raw_cfg.get("periodo_default")
+                effective_year = _effective_data_reference_year(
+                    source,
+                    working_layer,
+                    req_year,
+                    loader_year=period_used if period_used not in (None, "", "-1") else "latest_period",
+                    year_applied=False,
+                )
+            else:
+                year_was_applied = bool(
+                    req_year is not None
+                    and (
+                        proto_used == "geobr"
+                        or (
+                            source.get("source_id") == "inpe_prodes"
+                            and any(f.name().lower() == "year" for f in working_layer.fields())
+                        )
+                    )
+                )
+                effective_year = _effective_data_reference_year(
+                    source, working_layer, req_year, year_applied=year_was_applied
+                )
 
             ok_write, write_msg, actual_gpkg = _write_vector_atomically(
                 working_layer,

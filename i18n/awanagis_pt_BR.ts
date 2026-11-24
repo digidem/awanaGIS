@@ -1939,5 +1939,25 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <source>Do not create or overwrite any SMP file.</source>
             <translation>Não criar nem sobrescrever nenhum arquivo SMP.</translation>
         </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="246" />
+            <source>Approve sampling</source>
+            <translation>Aprovar amostragem</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="247" />
+            <source>Render a small representative tile sample for size estimation.</source>
+            <translation>Renderizar uma pequena amostra representativa de tiles para estimativa de tamanho.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="253" />
+            <source>Skip sampling</source>
+            <translation>Pular amostragem</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="254" />
+            <source>Keep estimation render-free and use rough tile counts only.</source>
+            <translation>Manter a estimativa sem renderização e usar apenas contagens aproximadas de tiles.</translation>
+        </message>
     </context>
 </TS>

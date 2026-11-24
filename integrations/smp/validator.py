@@ -14,6 +14,22 @@ import zipfile
 from PIL import Image
 
 _TILE_PATH_RE = re.compile(r"^s/(\d+)/(\d+)/(\d+)/(\d+)\.(png|jpg|jpeg|webp)$")
+_SMP_TILE_TEMPLATE_RE = re.compile(r"^smp://maps\.v1/(s/\d+)/\{z\}/\{x\}/\{y\}\.(png|jpg|jpeg|webp)$")
+
+
+def _find_external_http_urls(obj, path: str = "style") -> list[str]:
+    """Recursively find disallowed http(s) resource URLs in style definitions."""
+    hits = []
+    if isinstance(obj, str):
+        if obj.strip().lower().startswith(("http://", "https://")):
+            hits.append(f"{path}={obj}")
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            hits.extend(_find_external_http_urls(v, f"{path}.{k}"))
+    elif isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            hits.extend(_find_external_http_urls(item, f"{path}[{idx}]"))
+    return hits
 _MAX_PIL_IMAGE_SAMPLES = 50
 MAX_ARCHIVE_ENTRIES = 300_000
 MAX_VERSION_ENTRY_BYTES = 64
@@ -307,10 +323,10 @@ def validate_file(file_path, run_external=True):
                 if style.get("version") != 8:
                     issues.append(f"style.json version must be 8, got {style.get('version')!r}.")
 
-                for ext_field in ("glyphs", "sprite"):
-                    val = style.get(ext_field)
-                    if isinstance(val, str) and val.lower().startswith(("http://", "https://")):
-                        issues.append(f"External URL disallowed in style.{ext_field}: {val}")
+                for ext_field in ("glyphs", "sprite", "sources", "layers"):
+                    if ext_field in style:
+                        for hit in _find_external_http_urls(style[ext_field], f"style.{ext_field}"):
+                            issues.append(f"External URL disallowed in {hit}")
 
                 metadata = style.get("metadata")
                 if not isinstance(metadata, dict):
@@ -359,18 +375,36 @@ def validate_file(file_path, run_external=True):
                         else:
                             zoom_ranges[sid] = [zmin, zmax]
 
-                        tiles_urls = src.get("tiles")
-                        if not isinstance(tiles_urls, list) or not tiles_urls:
-                            issues.append(f"Source '{sid}' missing 'tiles' URL template.")
-                        else:
-                            for turl in tiles_urls:
-                                if not isinstance(turl, str) or not turl.startswith("smp://maps.v1/"):
-                                    issues.append(f"Source '{sid}' tile URL must use 'smp://maps.v1/': {turl!r}")
                         folder = source_folders.get(sid)
                         if not folder:
                             issues.append(f"Source '{sid}' missing from metadata['smp:sourceFolders'].")
                         else:
                             expected_folders[folder] = (sid, src)
+
+                        decl_fmt = str(src.get("format") or "").lower()
+                        tiles_urls = src.get("tiles")
+                        if not isinstance(tiles_urls, list) or not tiles_urls:
+                            issues.append(f"Source '{sid}' missing 'tiles' URL template.")
+                        else:
+                            for turl in tiles_urls:
+                                if not isinstance(turl, str):
+                                    issues.append(f"Source '{sid}' tile URL must be a string: {turl!r}")
+                                    continue
+                                m_tpl = _SMP_TILE_TEMPLATE_RE.match(turl)
+                                if not m_tpl:
+                                    issues.append(
+                                        f"Source '{sid}' tile URL must match 'smp://maps.v1/<folder>/{{z}}/{{x}}/{{y}}.<ext>': {turl!r}"
+                                    )
+                                    continue
+                                tpl_folder, tpl_ext = m_tpl.groups()
+                                if folder and tpl_folder != folder:
+                                    issues.append(
+                                        f"Source '{sid}' tile URL folder '{tpl_folder}' does not match smp:sourceFolders '{folder}'."
+                                    )
+                                if decl_fmt and tpl_ext != decl_fmt and not (decl_fmt == "jpg" and tpl_ext == "jpeg"):
+                                    issues.append(
+                                        f"Source '{sid}' tile URL extension '.{tpl_ext}' mismatches declared format {decl_fmt!r}."
+                                    )
                         sources_summary[sid] = {
                             "folder": folder,
                             "minzoom": zmin,

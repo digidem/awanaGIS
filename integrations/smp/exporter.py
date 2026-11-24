@@ -441,11 +441,14 @@ class _SmpExportTask(QgsTask):
                     return False
                 job.state = "publishing"
 
-            _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
+            # Publish manifest first so a no-clobber manifest collision never leaves an orphan .smp;
+            # if publishing the .smp fails afterwards when overwrite=False, roll back the new manifest.
+            _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
             try:
-                _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
+                _atomic_publish_file(job.tmp_output_path, job.output_path, overwrite=job.overwrite)
             except Exception:
-                # Never leave an inconsistent manifest failure unobserved; tmp_manifest cleaned in finally
+                if not job.overwrite:
+                    _safe_unlink(job.manifest_path)
                 raise
 
             with job.lock:
