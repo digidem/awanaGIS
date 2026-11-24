@@ -53,6 +53,7 @@ from .theme import (
     fs,
     ui_font,
     sans_family,
+    curved_scrollbar_qss,
     DOCK_CANVAS as _CANVAS,
     DOCK_BLUE as _BLUE,
     DOCK_SURFACE as _SURFACE,
@@ -66,9 +67,13 @@ from .theme import (
     DOCK_ACCENT as _ACCENT,
     DOCK_ACCENT_DIM as _ACCENT_DIM,
     DOCK_ACCENT_HOV as _ACCENT_HOV,
+    DOCK_ACCENT_TEXT as _ACCENT_TEXT,
     DOCK_WARN as _WARN,
     DOCK_SUCCESS as _SUCCESS,
     DOCK_DANGER as _DANGER,
+    DOCK_DANGER_BG as _DANGER_BG,
+    DOCK_DANGER_BORDER as _DANGER_BORDER,
+    DOCK_DANGER_TEXT as _DANGER_TEXT,
 )
 _STREAM_COALESCE_INTERVAL_S = 0.008   # ~120fps — tight enough to feel instant
 _STREAM_COALESCE_MAX_CHARS = 4096     # smaller burst ceiling for finer granularity
@@ -241,8 +246,8 @@ class ChatDock(QgsDockWidget):
         session_store=None,
         show_startup_picker=True,
     ):
-        super().__init__("AgenticGIS", parent)
-        self.setObjectName("AgenticGisDock")
+        super().__init__("AwanaGIS", parent)
+        self.setObjectName("AwanaGisDock")
         self._get_backend = get_backend
         self._open_settings = open_settings
         self._request_cancel = request_cancel
@@ -390,28 +395,10 @@ class ChatDock(QgsDockWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setStyleSheet(f"""
-            QScrollArea {{
-                border: none;
-                background-color: {_CANVAS};
-            }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 6px;
-                margin: 4px 2px 4px 0;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {_BORDER};
-                border-radius: 3px;
-                min-height: 30px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: {_TEXT_3};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
-            }}
-        """)
+        self.scroll.setStyleSheet(
+            f"QScrollArea {{ border: none; background-color: {_CANVAS}; }}\n"
+            + curved_scrollbar_qss(thickness=10, handle_radius=4)
+        )
 
         self.transcript_widget = QWidget()
         self.transcript_widget.setStyleSheet(f"background-color: {_CANVAS};")
@@ -464,7 +451,7 @@ class ChatDock(QgsDockWidget):
         field_row.setSpacing(0)
 
         self.input = QTextEdit()
-        self.input.setPlaceholderText(QCoreApplication.translate("ChatDock", "Ask AgenticGIS…  (↑ for history)"))
+        self.input.setPlaceholderText(QCoreApplication.translate("ChatDock", "Ask AwanaGIS…  (↑ for history)"))
         self.input.setAcceptRichText(False)
         self.input.setTabChangesFocus(True)
         self.input.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
@@ -475,7 +462,8 @@ class ChatDock(QgsDockWidget):
         input_font = QFont()
         input_font.setPixelSize(fs(13))
         self.input.setFont(input_font)
-        self.input.setStyleSheet(f"""
+        self.input.setStyleSheet(
+            f"""
             QTextEdit {{
                 font-family: {sans_family()};
                 font-size: {fs(13)}px;
@@ -485,17 +473,9 @@ class ChatDock(QgsDockWidget):
                 padding: 0px;
                 selection-background-color: {_BORDER};
             }}
-            QTextEdit QScrollBar:vertical {{
-                background: transparent;
-                width: 4px;
-                margin: 2px 0 2px 0;
-            }}
-            QTextEdit QScrollBar::handle:vertical {{
-                background: {_BORDER};
-                border-radius: 2px;
-                min-height: 18px;
-            }}
-        """)
+            """
+            + curved_scrollbar_qss(thickness=8, handle_radius=3, selector_prefix="QTextEdit")
+        )
         self.input.textChanged.connect(self._resize_input)
         self._resize_input()
         field_row.addWidget(self.input, 1, Qt.AlignmentFlag.AlignVCenter)
@@ -520,7 +500,7 @@ class ChatDock(QgsDockWidget):
             QPushButton {{
                 font-size: {fs(15)}px; font-weight: 700;
                 border: none; border-radius: 14px;
-                background: {_ACCENT}; color: {_CANVAS};
+                background: {_ACCENT}; color: {_ACCENT_TEXT};
             }}
             QPushButton:hover {{ background-color: {_ACCENT_HOV}; }}
             QPushButton:pressed {{ background-color: {_ACCENT_DIM}; }}
@@ -631,7 +611,7 @@ class ChatDock(QgsDockWidget):
 
         try:
             threading.Thread(
-                target=_prewarm, name="agenticgis-prewarm", daemon=True
+                target=_prewarm, name="awanagis-prewarm", daemon=True
             ).start()
         except Exception:  # nosec B110
             pass
@@ -1189,7 +1169,10 @@ class ChatDock(QgsDockWidget):
             scroll.setFrameShape(QFrame.Shape.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            scroll.setStyleSheet("background: transparent; border: none;")
+            scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }\n"
+                + curved_scrollbar_qss(thickness=8, handle_radius=3)
+            )
             scroll.viewport().setStyleSheet("background: transparent;")
             card_layout.addWidget(scroll)
             self._ask_scroll = scroll
@@ -1543,14 +1526,14 @@ class ChatDock(QgsDockWidget):
 
     def _session_dialog_button_style(self, role="secondary"):
         if role == "danger":
-            bg = "#3a1f24"
-            hover = "#4a252c"
-            color = "#ffb3bc"
-            border = "#4a2a30"
+            bg = _DANGER_BG
+            hover = _DANGER_BORDER
+            color = _DANGER_TEXT
+            border = _DANGER_BORDER
         elif role == "wide":
             bg = _ACCENT
             hover = _ACCENT_HOV
-            color = _CANVAS
+            color = _ACCENT_TEXT
             border = _ACCENT
         else:
             bg = "transparent"
@@ -2470,7 +2453,7 @@ class ChatDock(QgsDockWidget):
 
         try:
             threading.Thread(
-                target=_run, name="agenticgis-precompact", daemon=True
+                target=_run, name="awanagis-precompact", daemon=True
             ).start()
         except Exception:  # nosec B110
             pass

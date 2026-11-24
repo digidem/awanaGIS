@@ -1,26 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="128" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#2563eb"/>
-      <stop offset="100%" stop-color="#14b8a6"/>
+    <linearGradient id="awana-bg" x1="12" y1="8" x2="116" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6B0030"/>
+      <stop offset="100%" stop-color="#8D003E"/>
     </linearGradient>
   </defs>
 
-  <!-- Rounded square background -->
-  <rect x="0" y="0" width="128" height="128" rx="24" fill="url(#bg)"/>
+  <!-- Rounded square badge in Awana Digital Dark Burgundy -> Burgundy -->
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#awana-bg)"/>
 
-  <!-- Map pin -->
-  <g transform="translate(64, 56)">
-    <!-- Pin head -->
-    <circle cx="0" cy="0" r="22" fill="white"/>
-    <!-- Pin body -->
-    <path d="M0 46 L-12 18 L12 18 Z" fill="white"/>
-    <!-- Inner circle (hole) -->
-    <circle cx="0" cy="0" r="10" fill="#2563eb"/>
-  </g>
+  <!-- Upper geospatial map plane in AD Cream -->
+  <path d="M 64 22 L 104 45 L 64 68 L 24 45 Z" fill="#FDF7EF"/>
 
-  <!-- AI sparkle -->
-  <g transform="translate(88, 36)">
-    <path d="M0 -6 L1.5 -1.5 L6 0 L1.5 1.5 L0 6 L-1.5 1.5 L-6 0 L-1.5 -1.5 Z" fill="#ffdf64"/>
-  </g>
+  <!-- Waypoint ring + focal node in AD Burgundy & AD Pollen -->
+  <circle cx="64" cy="45" r="12" fill="#8D003E"/>
+  <circle cx="64" cy="45" r="5.5" fill="#FFE460"/>
+
+  <!-- Stacked map/contour layers in AD Cream & AD Pollen -->
+  <path d="M 26 67 L 64 88 L 102 67" fill="none" stroke="#FDF7EF" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 26 87 L 64 108 L 102 87" fill="none" stroke="#FFE460" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

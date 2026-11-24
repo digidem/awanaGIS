@@ -106,7 +106,7 @@ _TOOL_LABELS = {
 def humanize_tool_name(name):
     """``"list_layers"`` → ``"List layers"``; MCP prefixes are dropped."""
     raw_name = str(name or "")
-    if raw_name.startswith("mcp__agenticgis__"):
+    if raw_name.startswith(("mcp__awanagis__", "mcp__agenticgis__")):
         raw_name = raw_name.split("__", 2)[-1]
     if raw_name in _TOOL_LABELS:
         return QCoreApplication.translate("ToolNames", _TOOL_LABELS[raw_name])
