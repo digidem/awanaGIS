@@ -776,27 +776,28 @@ class PackagingAndSmokeTests(unittest.TestCase):
 
 
 class AgyMcpRegistrationTests(unittest.TestCase):
-    def test_registration_rechecks_global_config(self):
-        first = "http://127.0.0.1:1234/mcp"
-        second = "http://127.0.0.1:5678/mcp"
+    def setUp(self):
+        adapters._AGY_MCP_REGISTERED.clear()
+        self.addCleanup(adapters._AGY_MCP_REGISTERED.clear)
+
+    def test_registers_once_per_url_and_ignores_disabled_entries(self):
+        url = "http://127.0.0.1:7318/mcp"
         name = adapters.MCP_SERVER_NAME
         with patch.object(adapters.subprocess, "run") as run:
-            run.side_effect = [
-                Mock(stdout=f"{name} {second} enabled"), Mock(),
-                Mock(stdout=f"{name} {first} enabled"), Mock(),
-                Mock(stdout=f"{name} {first} enabled"),
-                Mock(stdout=f"{name} {second} enabled"), Mock(),
-            ]
-            adapters._ensure_agy_mcp("agy", first)
-            adapters._ensure_agy_mcp("agy", second)
-            adapters._ensure_agy_mcp("agy", first)
-            adapters._ensure_agy_mcp("agy", first)
+            run.side_effect = [Mock(stdout=f"{name} {url} disabled"), Mock()]
+            adapters._ensure_agy_mcp("agy", url)
+            adapters._ensure_agy_mcp("agy", url)
         self.assertEqual([call.args[0] for call in run.call_args_list], [
-            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, first],
-            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, second],
-            ["agy", "mcp", "list"],
-            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, first],
+            ["agy", "mcp", "list"], ["agy", "mcp", "add", name, url],
         ])
+
+    def test_already_enabled_entry_is_not_re_added(self):
+        url = "http://127.0.0.1:7318/mcp"
+        name = adapters.MCP_SERVER_NAME
+        with patch.object(adapters.subprocess, "run") as run:
+            run.side_effect = [Mock(stdout=f"{name} {url} enabled")]
+            adapters._ensure_agy_mcp("agy", url)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [["agy", "mcp", "list"]])
 
 
 if __name__ == "__main__":
