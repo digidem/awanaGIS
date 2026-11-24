@@ -144,7 +144,7 @@ def _run_smoke() -> None:
         if "awanagis" not in all_plugins:
             raise AssertionError("awanagis missing from Plugin Manager metadata registry")
         meta = all_plugins["awanagis"]
-        if "Assistente de conversa com agente" not in meta.get("description", ""):
+        if "Assistente geoespacial conversacional no QGIS" not in meta.get("description", ""):
             raise AssertionError(
                 f"Localized description missing in Plugin Manager: {meta.get('description')!r}"
             )

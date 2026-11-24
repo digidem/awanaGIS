@@ -293,6 +293,18 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertTrue(res["error"])
 
+    def test_corrupt_target_session_fails_safely(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "bad.ini"), QSettings.Format.IniFormat)
+            settings.setValue("AgenticGIS/sessions_json", json.dumps({"sessions": [{"id": "s1"}]}))
+            for raw in ("{not valid json", json.dumps({"unknown": []})):
+                with self.subTest(raw=raw):
+                    settings.setValue(session_store.SETTINGS_KEY, raw)
+                    res = migration.import_sessions_from_agenticgis(settings)
+                    self.assertFalse(res["ok"])
+                    self.assertTrue(res["error"])
+                    self.assertEqual(settings.value(session_store.SETTINGS_KEY), raw)
+
     def test_import_sessions_preserves_existing_awanagis_chats_at_capacity(self):
         with TemporaryDirectory() as tmp:
             settings = QSettings(str(Path(tmp) / "cap.ini"), QSettings.Format.IniFormat)

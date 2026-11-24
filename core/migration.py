@@ -11,7 +11,7 @@ import uuid
 
 from qgis.PyQt.QtCore import QSettings
 
-from .session_store import DEFAULT_SESSION_NAME, SCHEMA_VERSION, SETTINGS_KEY, _now
+from .session_store import SCHEMA_VERSION, SETTINGS_KEY, _now
 
 LEGACY_GROUP = "AgenticGIS"
 TARGET_GROUP = "AwanaGIS"
@@ -101,7 +101,7 @@ def _parse_sessions_payload(raw):
         if not isinstance(entry, dict):
             continue
         sid = str(entry.get("id") or "").strip() or uuid.uuid4().hex
-        name = str(entry.get("name") or DEFAULT_SESSION_NAME).strip() or DEFAULT_SESSION_NAME
+        name = str(entry.get("name") or "").strip()
         created = str(entry.get("created_at") or _now())
         updated = str(entry.get("updated_at") or created)
         history = entry.get("backend_history")
@@ -196,7 +196,9 @@ def import_sessions_from_agenticgis(settings=None, *, limit=20):
         return {"ok": False, "imported_count": 0, "skipped_count": 0, "error": err}
 
     raw_target = s.value(SETTINGS_KEY, "")
-    _t_valid, target_sessions, _t_err = _parse_sessions_payload(raw_target)
+    target_valid, target_sessions, target_err = _parse_sessions_payload(raw_target)
+    if not target_valid:
+        return {"ok": False, "imported_count": 0, "skipped_count": 0, "error": target_err}
     target_data = {}
     if raw_target:
         try:

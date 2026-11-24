@@ -165,6 +165,25 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(portuguese.create_session()["name"], "Nova sessão")
             self.assertEqual(portuguese.get_session(original["id"])["name"], "My project")
 
+    def test_imported_nameless_session_uses_localized_default(self):
+        from awanagis.core.migration import import_sessions_from_agenticgis
+
+        translator = load_plugin_translator("pt_BR")
+        self.assertIsNotNone(translator)
+        self.assertTrue(QCoreApplication.installTranslator(translator))
+        self.addCleanup(QCoreApplication.removeTranslator, translator)
+        with tempfile.TemporaryDirectory() as temp:
+            settings = QSettings(str(Path(temp) / "sessions.ini"), QSettings.Format.IniFormat)
+            settings.setValue("AgenticGIS/sessions_json", json.dumps({
+                "sessions": [{"id": "s1"}, {"id": "s2", "name": "  "}],
+            }))
+            self.assertTrue(import_sessions_from_agenticgis(settings)["ok"])
+            default = QCoreApplication.translate("ChatDock", "New session")
+            self.assertEqual(default, "Nova sessão")
+            store = SessionStore(settings, default_name=default)
+            self.assertEqual(store.get_session("s1")["name"], default)
+            self.assertEqual(store.get_session("s2")["name"], default)
+
     def test_empty_session_name_fallbacks_localize_in_portuguese(self):
         from qgis.PyQt.QtWidgets import QLabel
 

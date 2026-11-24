@@ -10,6 +10,7 @@ SOURCES = ../plugin.py \
     ../core/toolkit.py \
     ../gui/agent_turn_bubble.py \
     ../gui/ask_user_card.py \
+    ../gui/backend_feedback.py \
     ../gui/chart_widget.py \
     ../gui/chat_dock.py \
     ../gui/download_card.py \
