@@ -18,6 +18,7 @@ htmlcov/
 .vscode/
 .idea/
 .poolside/
+.pairfob/
 
 # OS
 .DS_Store
@@ -35,15 +36,11 @@ Thumbs.db
 .env
 *.log
 
-# Internal development — not for public release
+# Internal scratch / vendored staging
 dev/
-docs/
-tests/
+/graft/
 
-# Markdown files (except README)
-*.md
-!README.md
-# Local tooling & scripts
+# Local tooling & build artifacts
 setup.cfg
 build_release.sh
 *.zip
