@@ -451,17 +451,27 @@ class _SmpExportTask(QgsTask):
             try:
                 if job.overwrite:
                     if os.path.exists(job.manifest_path):
-                        fd_m, bak_manifest = tempfile.mkstemp(
+                        fd_m, cand_m = tempfile.mkstemp(
                             prefix=".bak_", suffix=".manifest.json", dir=manifest_dir
                         )
                         os.close(fd_m)
-                        os.replace(job.manifest_path, bak_manifest)
+                        try:
+                            os.replace(job.manifest_path, cand_m)
+                        except Exception:
+                            _safe_unlink(cand_m)
+                            raise
+                        bak_manifest = cand_m
                     if os.path.exists(job.output_path):
-                        fd_o, bak_output = tempfile.mkstemp(
+                        fd_o, cand_o = tempfile.mkstemp(
                             prefix=".bak_", suffix=".smp", dir=os.path.dirname(job.output_path)
                         )
                         os.close(fd_o)
-                        os.replace(job.output_path, bak_output)
+                        try:
+                            os.replace(job.output_path, cand_o)
+                        except Exception:
+                            _safe_unlink(cand_o)
+                            raise
+                        bak_output = cand_o
 
                 _atomic_publish_file(tmp_manifest, job.manifest_path, overwrite=job.overwrite)
                 published_manifest_new = True
