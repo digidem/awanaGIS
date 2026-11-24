@@ -26,8 +26,6 @@ SAFE_PREFERENCE_KEYS = (
     "cli_model",
     "provider",
     "model",
-    "api_base_url",
-    "custom_base_url",
     "custom_format",
     "custom_model",
     "system_prompt",
@@ -82,13 +80,13 @@ def _legacy_keys_present(settings):
         settings.endGroup()
 
 
-def _parse_sessions_payload(raw):
+def _parse_sessions_payload(raw, *, strict_entries=False):
     """Parse and validate a legacy sessions JSON string without mutating state."""
-    if not raw:
+    if raw is None or raw == "":
         return True, [], None
     try:
         data = json.loads(raw)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         return False, [], f"Invalid legacy session JSON: {exc}"
     if not isinstance(data, dict):
         return False, [], "Legacy session payload is not a JSON object."
@@ -99,6 +97,8 @@ def _parse_sessions_payload(raw):
     sanitized = []
     for entry in sessions:
         if not isinstance(entry, dict):
+            if strict_entries:
+                return False, [], "Session entry is not a JSON object."
             continue
         sid = str(entry.get("id") or "").strip() or uuid.uuid4().hex
         name = str(entry.get("name") or "").strip()
@@ -196,9 +196,10 @@ def import_sessions_from_agenticgis(settings=None, *, limit=20):
         return {"ok": False, "imported_count": 0, "skipped_count": 0, "error": err}
 
     raw_target = s.value(SETTINGS_KEY, "")
-    target_valid, target_sessions, target_err = _parse_sessions_payload(raw_target)
+    target_valid, target_sessions, _ = _parse_sessions_payload(raw_target, strict_entries=True)
     if not target_valid:
-        return {"ok": False, "imported_count": 0, "skipped_count": 0, "error": target_err}
+        return {"ok": False, "imported_count": 0, "skipped_count": 0,
+                "error": "Existing AwanaGIS session data is unreadable; import skipped to avoid overwriting it."}
     target_data = {}
     if raw_target:
         try:
@@ -231,7 +232,7 @@ def import_sessions_from_agenticgis(settings=None, *, limit=20):
         merged.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         active_id = target_data.get("active_session_id")
         valid_ids = {item["id"] for item in merged}
-        if active_id not in valid_ids:
+        if not isinstance(active_id, str) or active_id not in valid_ids:
             active_id = merged[0]["id"] if merged else None
         payload = {
             "schema_version": SCHEMA_VERSION,

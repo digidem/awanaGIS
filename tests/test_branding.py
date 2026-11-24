@@ -218,6 +218,8 @@ class MigrationTests(unittest.TestCase):
             settings.setValue("AgenticGIS/provider", "openai")
             settings.setValue("AgenticGIS/model", "gpt-4o")
             settings.setValue("AgenticGIS/font_scale", 1.25)
+            settings.setValue("AgenticGIS/api_base_url", "https://legacy.example/v1")
+            settings.setValue("AgenticGIS/custom_base_url", "https://custom.example/v1")
             settings.setValue("AgenticGIS/api_key", "sk-secret-legacy")
             settings.setValue("AgenticGIS/custom_api_key", "sk-custom-secret")
             settings.setValue("AgenticGIS/external_access_always_allowed", True)
@@ -267,6 +269,9 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(cfg.get("provider"), "openai")
             self.assertEqual(cfg.get("model"), "gpt-4o")
             self.assertEqual(cfg.get("font_scale"), 1.25)
+            for key in ("api_base_url", "custom_base_url"):
+                self.assertIn(key, result["preferences"]["excluded_keys"])
+                self.assertFalse(settings.contains("AwanaGIS/" + key))
 
             # Secrets and security approvals are NEVER copied.
             self.assertEqual(cfg.get("api_key"), "")
@@ -297,13 +302,31 @@ class MigrationTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             settings = QSettings(str(Path(tmp) / "bad.ini"), QSettings.Format.IniFormat)
             settings.setValue("AgenticGIS/sessions_json", json.dumps({"sessions": [{"id": "s1"}]}))
-            for raw in ("{not valid json", json.dumps({"unknown": []})):
+            for raw in ("{not valid json", json.dumps({"unknown": []}),
+                        json.dumps({"sessions": [{"id": "existing"}, None]}),
+                        json.dumps({"sessions": ["invalid"]})):
                 with self.subTest(raw=raw):
                     settings.setValue(session_store.SETTINGS_KEY, raw)
                     res = migration.import_sessions_from_agenticgis(settings)
                     self.assertFalse(res["ok"])
                     self.assertTrue(res["error"])
+                    self.assertIn("AwanaGIS", res["error"])
                     self.assertEqual(settings.value(session_store.SETTINGS_KEY), raw)
+
+    def test_import_sessions_normalizes_invalid_target_active_id(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "active.ini"), QSettings.Format.IniFormat)
+            settings.setValue(migration.LEGACY_SESSIONS_KEY, json.dumps({"sessions": [{"id": "legacy"}]}))
+            for active_id in ([], {}):
+                with self.subTest(active_id=active_id):
+                    settings.setValue(session_store.SETTINGS_KEY, json.dumps({
+                        "active_session_id": active_id, "sessions": [{"id": "existing"}],
+                    }))
+                    result = migration.import_sessions_from_agenticgis(settings)
+                    self.assertTrue(result["ok"])
+                    payload = json.loads(settings.value(session_store.SETTINGS_KEY))
+                    self.assertIn(payload["active_session_id"], {"existing", "legacy"})
+                    self.assertEqual({item["id"] for item in payload["sessions"]}, {"existing", "legacy"})
 
     def test_import_sessions_preserves_existing_awanagis_chats_at_capacity(self):
         with TemporaryDirectory() as tmp:
