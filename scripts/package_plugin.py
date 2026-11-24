@@ -4,29 +4,31 @@
 import argparse
 import hashlib
 from pathlib import Path
+import subprocess
 import zipfile
 
 PLUGIN_ROOT_NAME = "awanagis"
 FIXED_ZIP_TIME = (2026, 11, 23, 0, 0, 0)
 
-EXCLUDED_TOP_DIRS = frozenset({
-    ".git",
-    ".github",
-    ".opencode",
-    ".claude",
-    ".vscode",
-    ".idea",
-    ".poolside",
-    ".pairfob",
-    ".pytest_cache",
-    "dist",
-    "build",
-    "dev",
-    "docs",
-    "graft",
-    "htmlcov",
-    "scripts",
-    "tests",
+APPROVED_ROOT_FILES = frozenset({
+    "__init__.py",
+    "plugin.py",
+    "config.py",
+    "metadata.txt",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md",
+})
+
+APPROVED_RUNTIME_DIRS = frozenset({
+    "core",
+    "backends",
+    "gui",
+    "server",
+    "resources",
+    "i18n",
+    "integrations",
 })
 
 EXCLUDED_DIR_NAMES = frozenset({
@@ -38,15 +40,6 @@ EXCLUDED_DIR_NAMES = frozenset({
 EXCLUDED_FILES = frozenset({
     ".DS_Store",
     "Thumbs.db",
-    ".coverage",
-    ".env",
-    ".flake8",
-    ".gitattributes",
-    ".gitignore",
-    "QGIS_COMPATIBILITY_RULES.md",
-    "REBRAND_AUDIT.md",
-    "setup.cfg",
-    "build_release.sh",
 })
 
 EXCLUDED_SUFFIXES = (
@@ -72,11 +65,13 @@ def read_plugin_version(repo_root: Path) -> str:
 
 
 def should_include(rel_path: Path) -> bool:
-    """Return True if *rel_path* (relative to repo root) belongs in the runtime ZIP."""
+    """Return True if *rel_path* is in the approved AwanaGIS runtime manifest."""
     parts = rel_path.parts
     if not parts:
         return False
-    if parts[0] in EXCLUDED_TOP_DIRS:
+    if len(parts) == 1:
+        return parts[0] in APPROVED_ROOT_FILES
+    if parts[0] not in APPROVED_RUNTIME_DIRS:
         return False
     if any(part in EXCLUDED_DIR_NAMES or part.endswith(".egg-info") for part in parts[:-1]):
         return False
@@ -86,15 +81,59 @@ def should_include(rel_path: Path) -> bool:
     return True
 
 
-def iter_package_files(repo_root: Path):
-    """Yield sorted ``(abs_path, rel_path)`` pairs to pack into the ZIP."""
-    entries = []
-    for path in repo_root.rglob("*"):
-        if not path.is_file():
+def _iter_git_tracked_paths(repo_root: Path):
+    """Return relative Paths for tracked files in *repo_root* via ``git ls-files``."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-files", "-z"],
+        capture_output=True,
+        check=True,
+    )
+    raw = proc.stdout.split(b"\x00")
+    return [Path(item.decode("utf-8")) for item in raw if item]
+
+
+def _iter_manifest_paths(repo_root: Path):
+    """Fallback manifest walk when packaging an exported tree without Git metadata."""
+    paths = []
+    for name in sorted(APPROVED_ROOT_FILES):
+        candidate = repo_root / name
+        if candidate.exists():
+            paths.append(Path(name))
+    for dirname in sorted(APPROVED_RUNTIME_DIRS):
+        root_dir = repo_root / dirname
+        if not root_dir.is_dir() or root_dir.is_symlink():
             continue
-        rel = path.relative_to(repo_root)
-        if should_include(rel):
-            entries.append((path, rel))
+        for path in root_dir.rglob("*"):
+            paths.append(path.relative_to(repo_root))
+    return paths
+
+
+def iter_package_files(repo_root: Path):
+    """Yield sorted ``(abs_path, rel_path)`` pairs from the approved runtime manifest.
+
+    In a Git checkout/worktree, only tracked files (``git ls-files``) are
+    considered so untracked local files never enter the ZIP. Symlinks are
+    always rejected.
+    """
+    repo_root = Path(repo_root).resolve()
+    is_git_repo = (repo_root / ".git").exists()
+    candidates = _iter_git_tracked_paths(repo_root) if is_git_repo else _iter_manifest_paths(repo_root)
+
+    entries = []
+    for rel in candidates:
+        if not should_include(rel):
+            continue
+        # Reject symlinks anywhere along the relative path inside the repo.
+        cur = repo_root
+        has_symlink = False
+        for part in rel.parts:
+            cur = cur / part
+            if cur.is_symlink():
+                has_symlink = True
+                break
+        if has_symlink or not cur.is_file():
+            continue
+        entries.append((cur, rel))
     entries.sort(key=lambda item: item[1].as_posix())
     return entries
 

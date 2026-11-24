@@ -246,13 +246,20 @@ class AwanaGisPlugin:
     def _open_settings(self):
         from .gui.settings_dialog import SettingsDialog
 
-        dialog = SettingsDialog(self.config, self.iface.mainWindow())
+        session_store = self._dock._session_store if self._dock is not None else None
+        dialog = SettingsDialog(
+            self.config,
+            self.iface.mainWindow(),
+            session_store=session_store,
+        )
         dialog.exec()
         # Backend is rebuilt lazily on the next send via _get_backend().
         # Eagerly warm the new connection now so the first post-settings
         # message is fast.
         if self._dock is not None:
             try:
+                if dialog.sessions_imported:
+                    self._dock.refresh_sessions()
                 self._dock.refresh_composer()
                 self._dock._maybe_prewarm()
             except Exception:  # nosec B110

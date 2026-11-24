@@ -672,9 +672,11 @@ def _group_header(title, description=""):
 
 # ── Main dialog ───────────────────────────────────────────────────────────────
 class SettingsDialog(QDialog):
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, *, session_store=None):
         super().__init__(parent)
         self.config = config
+        self._session_store = session_store
+        self.sessions_imported = False
         self.setWindowTitle(QCoreApplication.translate("SettingsDialog", "AwanaGIS — Settings"))
         self.setMinimumSize(720, 560)
         self.resize(820, 680)
@@ -940,11 +942,17 @@ class SettingsDialog(QDialog):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
+        if self._session_store is not None:
+            self._session_store.flush_save()
         result = import_from_agenticgis(settings=settings)
         if result.get("ok"):
-            self._load()
+            if self._session_store is not None:
+                self._session_store.reload()
             imported_prefs = len(result["preferences"].get("imported_keys") or [])
             imported_sessions = int(result["sessions"].get("imported_count") or 0)
+            if imported_sessions > 0:
+                self.sessions_imported = True
+            self._load()
             QMessageBox.information(
                 self,
                 QCoreApplication.translate("SettingsDialog", "Import complete"),
@@ -1843,6 +1851,24 @@ class SettingsDialog(QDialog):
                 self.cli_auth_status, QCoreApplication.translate("SettingsDialog", "Set up previously — check again to refresh the model list."), _TEXT_3,
             )
         self._refresh_cli_steps()
+
+        if hasattr(self, "mcp_enabled_check"):
+            self.mcp_enabled_check.setChecked(bool(self.config.get("mcp_enabled")))
+        if hasattr(self, "font_scale_combo"):
+            saved_scale = clamp_font_scale(self.config.get("font_scale"))
+            scale_idx = self.font_scale_combo.findData(saved_scale)
+            if scale_idx < 0:
+                scales = sorted({
+                    self.font_scale_combo.itemData(i)
+                    for i in range(self.font_scale_combo.count())
+                    if self.font_scale_combo.itemData(i) is not None
+                } | {saved_scale})
+                self.font_scale_combo.clear()
+                for scale in scales:
+                    self.font_scale_combo.addItem(f"{round(scale * 100)}%", scale)
+                scale_idx = self.font_scale_combo.findData(saved_scale)
+            if scale_idx >= 0:
+                self.font_scale_combo.setCurrentIndex(scale_idx)
 
         self._update_connection_tab_labels()
         self._loaded = True

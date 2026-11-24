@@ -111,6 +111,17 @@ class SessionStore:
         self._save_timer.stop()
         self._flush_scheduled_save()
 
+    def reload(self):
+        """Reload persisted sessions from ``QSettings`` into this store."""
+        self._save_timer.stop()
+        self._pending_save = None
+        self._settings.sync()
+        self._data = self._load()
+        if not self._data.get("sessions"):
+            self.create_session()
+        else:
+            self._normalize()
+
     def _flush_scheduled_save(self):
         if self._pending_save is None:
             return

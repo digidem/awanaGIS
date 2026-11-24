@@ -206,21 +206,27 @@ def import_sessions_from_agenticgis(settings=None, *, limit=20):
         except (TypeError, ValueError):
             target_data = {}
 
+    capacity = max(0, int(limit or 20))
     existing_ids = {item["id"] for item in target_sessions}
-    imported_count = 0
+    candidates = []
     skipped_count = 0
-    merged = list(target_sessions)
     for session in legacy_sessions:
         if session["id"] in existing_ids:
             skipped_count += 1
             continue
-        merged.append(session)
         existing_ids.add(session["id"])
-        imported_count += 1
+        candidates.append(session)
+
+    # Preserve all existing AwanaGIS sessions first; fill only remaining capacity.
+    candidates.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+    remaining = max(0, capacity - len(target_sessions))
+    retained_legacy = candidates[:remaining]
+    dropped_count = max(0, len(candidates) - len(retained_legacy))
+    imported_count = len(retained_legacy)
 
     if imported_count > 0:
+        merged = list(target_sessions) + retained_legacy
         merged.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
-        merged = merged[:int(limit or 20)]
         active_id = target_data.get("active_session_id")
         valid_ids = {item["id"] for item in merged}
         if active_id not in valid_ids:
@@ -237,6 +243,7 @@ def import_sessions_from_agenticgis(settings=None, *, limit=20):
         "ok": True,
         "imported_count": imported_count,
         "skipped_count": skipped_count,
+        "dropped_count": dropped_count,
         "error": None,
     }
 
