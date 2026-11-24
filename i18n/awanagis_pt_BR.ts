@@ -1842,34 +1842,102 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Exportar layout</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="103" />
+            <location filename="../gui/formatting.py" line="105" />
             <source>Search Brazilian sources</source>
             <translation>Buscar fontes brasileiras</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="104" />
+            <location filename="../gui/formatting.py" line="106" />
             <source>Inspect Brazilian sources</source>
             <translation>Inspecionar fontes brasileiras</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="105" />
+            <location filename="../gui/formatting.py" line="107" />
             <source>Resolve Brazilian area</source>
             <translation>Resolver área brasileira</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="106" />
+            <location filename="../gui/formatting.py" line="108" />
             <source>Plan Brazilian data load</source>
             <translation>Planejar carga de dados brasileiros</translation>
         </message>
         <message>
-            <location filename="../gui/formatting.py" line="107" />
+            <location filename="../gui/formatting.py" line="109" />
             <source>Load Brazilian data</source>
             <translation>Carregar dados brasileiros</translation>
         </message>
         <message>
+            <location filename="../gui/formatting.py" line="110" />
+            <source>Inspect SMP map</source>
+            <translation>Inspecionar mapa SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="111" />
+            <source>Suggest SMP regions</source>
+            <translation>Sugerir regiões SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="112" />
+            <source>Estimate SMP export</source>
+            <translation>Estimar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="113" />
+            <source>Start SMP export</source>
+            <translation>Iniciar exportação SMP</translation>
+        </message>
+        <message>
             <location filename="../gui/formatting.py" line="114" />
+            <source>SMP export status</source>
+            <translation>Status da exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="115" />
+            <source>Cancel SMP export</source>
+            <translation>Cancelar exportação SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="116" />
+            <source>Validate SMP file</source>
+            <translation>Validar arquivo SMP</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="136" />
             <source>Tool</source>
             <translation>Ferramenta</translation>
+        </message>
+    </context>
+    <context>
+        <name>SmpExport</name>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="169" />
+            <source>Approve export (including restricted layers)</source>
+            <translation>Aprovar exportação (incluindo camadas restritas)</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="172" />
+            <source>Export this exact SMP plan, including restricted layers, to the path above.</source>
+            <translation>Exportar este plano SMP exato, incluindo camadas restritas, para o caminho acima.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="180" />
+            <source>Approve export</source>
+            <translation>Aprovar exportação</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="181" />
+            <source>Export this exact SMP plan to the destination file above.</source>
+            <translation>Exportar este plano SMP exato para o arquivo de destino acima.</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="190" />
+            <source>Cancel</source>
+            <translation>Cancelar</translation>
+        </message>
+        <message>
+            <location filename="../integrations/smp/tools.py" line="191" />
+            <source>Do not create or overwrite any SMP file.</source>
+            <translation>Não criar nem sobrescrever nenhum arquivo SMP.</translation>
         </message>
     </context>
 </TS>

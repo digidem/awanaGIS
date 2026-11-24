@@ -106,6 +106,13 @@ _TOOL_LABELS = {
     "br_resolve_area": QT_TRANSLATE_NOOP("ToolNames", "Resolve Brazilian area"),
     "br_plan_load": QT_TRANSLATE_NOOP("ToolNames", "Plan Brazilian data load"),
     "br_execute_load": QT_TRANSLATE_NOOP("ToolNames", "Load Brazilian data"),
+    "smp_inspect_map": QT_TRANSLATE_NOOP("ToolNames", "Inspect SMP map"),
+    "smp_suggest_regions": QT_TRANSLATE_NOOP("ToolNames", "Suggest SMP regions"),
+    "smp_estimate": QT_TRANSLATE_NOOP("ToolNames", "Estimate SMP export"),
+    "smp_start_export": QT_TRANSLATE_NOOP("ToolNames", "Start SMP export"),
+    "smp_export_status": QT_TRANSLATE_NOOP("ToolNames", "SMP export status"),
+    "smp_cancel_export": QT_TRANSLATE_NOOP("ToolNames", "Cancel SMP export"),
+    "smp_validate_file": QT_TRANSLATE_NOOP("ToolNames", "Validate SMP file"),
 }
 
 

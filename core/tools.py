@@ -1101,6 +1101,152 @@ TOOL_SPECS = [
         },
     },
     *BRAZIL_TOOL_SPECS,
+    {
+        "name": "smp_inspect_map",
+        "method": None,
+        "description": (
+            "Inspect the active QGIS project, canvas extent, visible layers "
+            "(in render order with redacted URIs, online status, attribution, "
+            "and export_policy), selected features, and SMP encoder capabilities."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "include_hidden": {
+                    "type": "boolean",
+                    "description": "Also include hidden layers in hidden_layers (default false).",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "smp_suggest_regions",
+        "method": None,
+        "description": (
+            "Derive 2-3 practical World/Region/Local CoMapeo SMP candidates "
+            "(Compact, Balanced, Detailed) in EPSG:4326 and EPSG:3857 from "
+            "project geometry, selection, canvas, or bounds, honoring storage budgets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "area_reference": {
+                    "type": "object",
+                    "description": "Optional broader Region/Area reference: {type:'canvas|layer|selection|bounds|br_resolved_area', id?, layer_id?, bounds?, crs?}.",
+                },
+                "local_reference": {
+                    "type": "object",
+                    "description": "Optional high-detail Local focus reference: {type:'canvas|layer|selection|bounds', id?, layer_id?, bounds?, crs?}.",
+                },
+                "region_buffer_km": {"type": "number", "minimum": 0, "default": 2.0},
+                "local_buffer_km": {"type": "number", "minimum": 0, "default": 0.5},
+                "include_world": {"type": "boolean", "default": False},
+                "world_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24, "default": 3},
+                "constraints": {
+                    "type": "object",
+                    "description": "Optional constraints: {target_size_mb?, max_time_minutes?, preferred_format?, include_region?}.",
+                },
+            },
+        },
+    },
+    {
+        "name": "smp_estimate",
+        "method": None,
+        "description": (
+            "Compute exact XYZ tile counts, disk checks, policy/remote warnings, "
+            "optional stratified sample-calibrated size/duration intervals, and "
+            "register an immutable plan_id required by smp_start_export."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "local_bounds": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": "Local extent [west, south, east, north] in EPSG:4326.",
+                },
+                "local_min_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "local_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "include_world": {"type": "boolean", "default": False},
+                "world_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24, "default": 3},
+                "include_region": {"type": "boolean", "default": False},
+                "region_bounds": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 4,
+                    "maxItems": 4,
+                },
+                "region_min_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "region_max_zoom": {"type": "integer", "minimum": 0, "maximum": 24},
+                "tile_format": {"type": "string", "enum": ["PNG", "JPG", "WEBP"], "default": "PNG"},
+                "quality": {"type": "integer", "minimum": 1, "maximum": 100, "default": 85},
+                "output_dir": {"type": "string"},
+                "layer_ids": {"type": "array", "items": {"type": "string"}},
+                "sample": {"type": "boolean", "default": False},
+                "sample_mode": {"type": "string", "enum": ["none", "small"]},
+                "sample_size": {"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
+                "target_size_mb": {"type": "number", "minimum": 0.1},
+                "allow_online_sampling": {"type": "boolean", "default": False},
+                "allow_restricted_sampling": {"type": "boolean", "default": False},
+            },
+            "required": ["local_bounds", "local_min_zoom", "local_max_zoom"],
+        },
+    },
+    {
+        "name": "smp_start_export",
+        "method": None,
+        "description": (
+            "Start a background CoMapeo .smp export from an immutable plan_id. "
+            "Requires explicit user confirmation (approved=True) for the exact plan and output_path."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string"},
+                "output_path": {"type": "string", "description": "Destination .smp file path."},
+                "approved": {"type": "boolean", "default": False},
+                "overwrite": {"type": "boolean", "default": False},
+                "approved_restricted_layers": {"type": "boolean", "default": False},
+            },
+            "required": ["plan_id", "output_path", "approved"],
+        },
+    },
+    {
+        "name": "smp_export_status",
+        "method": None,
+        "description": "Poll progress, tile counts, elapsed/ETA, and result of an SMP export job.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}},
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "smp_cancel_export",
+        "method": None,
+        "description": "Cooperatively cancel a running SMP export job and clean staging files.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"job_id": {"type": "string"}},
+            "required": ["job_id"],
+        },
+    },
+    {
+        "name": "smp_validate_file",
+        "method": None,
+        "description": "Validate an .smp ZIP archive structure, style.json, tiles, and PIL readability.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "run_external": {"type": "boolean", "default": True},
+            },
+            "required": ["file_path"],
+        },
+    },
 ]
 
 TOOL_BY_NAME = {spec["name"]: spec for spec in TOOL_SPECS}
@@ -1473,7 +1619,10 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
         }
         log_event("tool.dispatch.error", tool=name, error_type="UnknownTool", error=result["error"])
         return result
-    if name in BRAZIL_TOOL_NAMES:
+    is_smp = name.startswith("smp_")
+    if is_smp:
+        method = None
+    elif name in BRAZIL_TOOL_NAMES:
         method = BRAZIL_DISPATCH_TABLE[name]
     else:
         method = getattr(toolkit, spec["method"])
@@ -1518,6 +1667,12 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
             if denied is not None:
                 _log_dispatch_end(name, "denied", start, denied)
                 return denied
+
+        if is_smp:
+            from ..integrations.smp.tools import dispatch_smp_tool
+            result = dispatch_smp_tool(toolkit, executor, name, args)
+            _log_dispatch_end(name, "smp", start, result)
+            return result
 
         if name == "run_pyqgis" and hasattr(toolkit, "run_pyqgis_background"):
             wants_bg = bool(args.get("background"))
