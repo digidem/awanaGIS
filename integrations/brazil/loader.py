@@ -1,9 +1,12 @@
-"""Cancellable, atomic source loader and QGIS layer registration for AwanaGIS Brazil."""
+"""Cancellable, atomic, worker-safe source loader and QGIS layer registration."""
 
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
+import shutil
 import tempfile
+import unicodedata
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .catalog import get_allowed_hosts, get_source
@@ -30,6 +33,13 @@ from .vendor.gisbr.core.recorte import Recorte
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _fold(text: Any) -> str:
+    raw = str(text or "").lower()
+    decomposed = unicodedata.normalize("NFKD", raw)
+    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", stripped).strip()
 
 
 def _is_cancelled(should_stop: Optional[Callable[[], bool]]) -> bool:
@@ -59,6 +69,17 @@ def _make_feedback(should_stop: Optional[Callable[[], bool]] = None):
     return _CancelFeedback()
 
 
+def _build_processing_context(transform_context=None):
+    from qgis.core import QgsCoordinateTransformContext, QgsProcessingContext
+
+    ctx = QgsProcessingContext()
+    if transform_context is not None:
+        ctx.setTransformContext(transform_context)
+    else:
+        ctx.setTransformContext(QgsCoordinateTransformContext())
+    return ctx
+
+
 def _build_recorte(area: Dict[str, Any]) -> Optional[Recorte]:
     atype = str(area.get("type") or "").lower()
     codes = [str(c) for c in (area.get("codes") or [])]
@@ -81,7 +102,7 @@ def _build_recorte(area: Dict[str, Any]) -> Optional[Recorte]:
 
 
 def _mask_layer_from_area(area: Dict[str, Any], feedback=None):
-    """Build or fetch a valid EPSG:4674 polygon mask ``QgsVectorLayer`` for clipping."""
+    """Build or fetch a valid EPSG:4674 polygon mask ``QgsVectorLayer`` off the main thread."""
     from qgis.core import QgsFeature, QgsGeometry, QgsVectorLayer
 
     wkt = area.get("geometry_wkt")
@@ -104,6 +125,7 @@ def _mask_layer_from_area(area: Dict[str, Any], feedback=None):
             if layer is not None and layer.isValid():
                 return layer
         from .vendor.gisbr.core.recorte import camada_do_recorte
+
         layer = camada_do_recorte(recorte, feedback=feedback)
         if layer is not None and layer.isValid():
             return layer
@@ -121,25 +143,33 @@ def _bbox_for_area(area: Dict[str, Any], mask_layer) -> Optional[Tuple[float, fl
     return None
 
 
-def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None):
+def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None, transform_context=None):
+    """Clip ``layer`` to ``mask_layer`` without touching ``QgsProject.instance()``.
+
+    Returns ``(clipped_layer, "exact_polygon_clip")`` on success,
+    ``(layer, "bbox_filter_only")`` only when no mask exists, or
+    ``(None, "clip_failed")`` when clipping fails (never returning uncut data as clipped).
+    """
     import processing
-    from qgis.core import QgsCoordinateReferenceSystem, QgsProject, QgsVectorLayer
+    from qgis.core import QgsCoordinateReferenceSystem, QgsVectorLayer
 
     if layer is None or not layer.isValid():
-        return layer, "invalid_layer"
+        return None, "invalid_layer"
     if not layer.crs().isValid():
         layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4674"))
 
     if mask_layer is None or not mask_layer.isValid():
         return layer, "bbox_filter_only"
 
-    # Reproject mask to layer CRS if needed so native:clip stays accurate
+    proc_ctx = _build_processing_context(transform_context)
+
     mask_to_use = mask_layer
     if layer.crs() != mask_layer.crs():
         try:
             reproj = processing.run(
                 "native:reprojectlayer",
                 {"INPUT": mask_layer, "TARGET_CRS": layer.crs(), "OUTPUT": "memory:"},
+                context=proc_ctx,
                 feedback=feedback,
             )
             cand = reproj.get("OUTPUT")
@@ -152,6 +182,7 @@ def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None):
         return processing.run(
             "native:clip",
             {"INPUT": src_layer, "OVERLAY": mask_to_use, "OUTPUT": "memory:"},
+            context=proc_ctx,
             feedback=feedback,
         ).get("OUTPUT")
 
@@ -165,6 +196,7 @@ def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None):
             fixed = processing.run(
                 "native:fixgeometries",
                 {"INPUT": layer, "OUTPUT": "memory:"},
+                context=proc_ctx,
                 feedback=feedback,
             ).get("OUTPUT")
             if fixed is not None and fixed.isValid():
@@ -173,25 +205,44 @@ def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None):
             out = None
 
     if isinstance(out, str):
-        out = QgsProject.instance().mapLayer(out) or QgsVectorLayer(out, target_name, "ogr")
+        out = QgsVectorLayer(out, target_name, "ogr")
     if out is None or not out.isValid():
-        return layer, "clip_failed"
+        return None, "clip_failed"
     return out, "exact_polygon_clip"
 
 
-def _write_vector_atomically(layer, gpkg_path: Path, layer_name: str, *, replace_existing: bool) -> Tuple[bool, str, Path]:
-    """Write ``layer`` to ``gpkg_path`` safely using a temp staging GeoPackage first.
+def _gpkg_has_layer(gpkg_path: Path, layer_name: str) -> bool:
+    if not gpkg_path.exists():
+        return False
+    try:
+        from qgis.core import QgsVectorLayer
 
-    If ``gpkg_path`` does not exist yet, writes to a temporary GeoPackage in the
-    same directory, validates it, and atomically moves it with ``os.replace``.
-    If ``gpkg_path`` already exists, first validates writing to a staging file,
-    then writes the layer table into ``gpkg_path`` (falling back to a sidecar
-    GeoPackage if ``gpkg_path`` cannot be modified safely).
-    """
-    from qgis.core import QgsProject, QgsVectorFileWriter, QgsVectorLayer
+        vl = QgsVectorLayer(str(gpkg_path), "probe_existing", "ogr")
+        if not vl.isValid():
+            return False
+        for sub in vl.dataProvider().subLayers():
+            parts = sub.split("!!::!!")
+            if len(parts) > 1 and parts[1] == layer_name:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _write_vector_atomically(
+    layer,
+    gpkg_path: Path,
+    layer_name: str,
+    *,
+    replace_existing: bool,
+    transform_context=None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> Tuple[bool, str, Path]:
+    """Write ``layer`` to ``gpkg_path`` safely via staging and strict overwrite checks."""
+    from qgis.core import QgsCoordinateTransformContext, QgsVectorFileWriter, QgsVectorLayer
 
     gpkg_path.parent.mkdir(parents=True, exist_ok=True)
-    ctx = QgsProject.instance().transformContext()
+    ctx = transform_context if transform_context is not None else QgsCoordinateTransformContext()
 
     fd, tmp_name = tempfile.mkstemp(prefix=".tmp_awanagis_", suffix=".gpkg", dir=str(gpkg_path.parent))
     os.close(fd)
@@ -212,11 +263,20 @@ def _write_vector_atomically(layer, gpkg_path: Path, layer_name: str, *, replace
             return False, "Staged GeoPackage failed validation.", gpkg_path
         del check
 
+        if _is_cancelled(should_stop):
+            return False, "Cancelled before committing GeoPackage.", gpkg_path
+
         if not gpkg_path.exists():
             os.replace(str(tmp_path), str(gpkg_path))
             return True, "", gpkg_path
 
-        # Existing GeoPackage: add or overwrite this table cleanly
+        if not replace_existing and _gpkg_has_layer(gpkg_path, layer_name):
+            return (
+                False,
+                f"Refusing to overwrite existing layer '{layer_name}' in {gpkg_path.name} (replace_existing=false).",
+                gpkg_path,
+            )
+
         opts2 = QgsVectorFileWriter.SaveVectorOptions()
         opts2.driverName = "GPKG"
         opts2.layerName = layer_name
@@ -227,6 +287,12 @@ def _write_vector_atomically(layer, gpkg_path: Path, layer_name: str, *, replace
 
         # Fallback side-by-side file instead of corrupting an open/locked GeoPackage
         sidecar = gpkg_path.with_name(f"{gpkg_path.stem}_{layer_name}.gpkg")
+        if sidecar.exists() and not replace_existing:
+            return (
+                False,
+                f"Target GeoPackage busy ({msg2}) and sidecar '{sidecar.name}' already exists (replace_existing=false).",
+                gpkg_path,
+            )
         os.replace(str(tmp_path), str(sidecar))
         return True, f"Target GeoPackage busy ({msg2}); saved safely to sidecar {sidecar.name}.", sidecar
     finally:
@@ -237,8 +303,74 @@ def _write_vector_atomically(layer, gpkg_path: Path, layer_name: str, *, replace
                 pass
 
 
+def _stage_raster_atomically(
+    url: str,
+    mask_layer,
+    tif_path: Path,
+    layer_name: str,
+    *,
+    replace_existing: bool,
+    feedback=None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    fixture_override: Optional[str] = None,
+) -> Tuple[Optional[Path], str, List[str]]:
+    """Fetch/clip raster to a staging GeoTIFF, validate, check cancel/overwrite, then promote."""
+    from qgis.core import QgsRasterLayer
+
+    warnings: List[str] = []
+    if tif_path.exists() and not replace_existing:
+        return (
+            None,
+            "failed",
+            [f"Refusing to overwrite existing raster '{tif_path.name}' (replace_existing=false)."],
+        )
+
+    tif_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".tmp_awanagis_", suffix=".tif", dir=str(tif_path.parent))
+    os.close(fd)
+    tmp_tif = Path(tmp_name)
+    try:
+        if tmp_tif.exists():
+            tmp_tif.unlink()
+
+        if fixture_override:
+            shutil.copy2(str(fixture_override), str(tmp_tif))
+            fetch_kind = "fixture_raster"
+        else:
+            rl = cog_raster.fetch_raster(url, mask_layer, str(tmp_tif), layer_name=layer_name, feedback=feedback)
+            if rl is None or not rl.isValid():
+                err_msg = getattr(rl, "error_msg", "Failed reading COG raster.")
+                return None, "failed", [redact_sensitive_text(err_msg)]
+            del rl
+            fetch_kind = "live_raster"
+
+        if _is_cancelled(should_stop):
+            return None, "cancelled", ["Cancelled before committing staged raster."]
+
+        check = QgsRasterLayer(str(tmp_tif), layer_name, "gdal")
+        if not check.isValid() or check.width() <= 0 or check.height() <= 0:
+            return None, "failed", ["Staged GeoTIFF raster failed validation."]
+        del check
+
+        if tif_path.exists() and not replace_existing:
+            return (
+                None,
+                "failed",
+                [f"Refusing to overwrite existing raster '{tif_path.name}' (replace_existing=false)."],
+            )
+
+        os.replace(str(tmp_tif), str(tif_path))
+        return tif_path, fetch_kind, warnings
+    finally:
+        for candidate in tif_path.parent.glob(f"{tmp_tif.name}*"):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+
+
 def _register_project_layer(project, layer, uri_key: str, *, replace_existing: bool):
-    """Register ``layer`` in ``project`` without leaving duplicate layers."""
+    """Register ``layer`` in ``project`` on the main thread without leaving duplicates."""
     if replace_existing:
         for existing in list(project.mapLayers().values()):
             try:
@@ -266,6 +398,115 @@ def _load_fixture_vector(fixture_path: str, layer_name: str):
     return vl
 
 
+def _codes_equal(a: Any, b: Any) -> bool:
+    sa = str(a if a is not None else "").strip()
+    sb = str(b if b is not None else "").strip()
+    if not sa or not sb:
+        return False
+    if sa == sb:
+        return True
+    try:
+        return int(float(sa)) == int(float(sb))
+    except (ValueError, TypeError):
+        return False
+
+
+def _filter_ti_layer(layer, area: Dict[str, Any], layer_name: str):
+    """Filter a national/multi-TI layer to the specifically requested TI by ID or name."""
+    from qgis.core import QgsFeature, QgsVectorLayer, QgsWkbTypes
+
+    target_code = str(area.get("terrai_cod") or area.get("territory_id") or "").strip()
+    target_name = _fold(area.get("name") or "")
+    target_ufs = {str(u).strip().upper() for u in (area.get("ufs") or []) if str(u).strip()}
+
+    field_names = {f.name().lower(): f.name() for f in layer.fields()}
+    code_field = next((field_names[k] for k in ("code_terrai", "terrai_cod", "terrai_codigo") if k in field_names), None)
+    name_field = next((field_names[k] for k in ("name_indigenous_land", "terrai_nom", "nome_ti") if k in field_names), None)
+    uf_field = next((field_names[k] for k in ("abbrev_state", "uf_sigla", "uf") if k in field_names), None)
+
+    matched_features = []
+    for feat in layer.getFeatures():
+        matched = False
+        if target_code and code_field and _codes_equal(feat[code_field], target_code):
+            matched = True
+        elif target_name and name_field:
+            fn = _fold(feat[name_field])
+            if fn == target_name:
+                if target_ufs and uf_field:
+                    raw_uf = str(feat[uf_field] or "").upper()
+                    feat_ufs = {tok.strip() for tok in re.split(r"[,;/\s]+", raw_uf) if tok.strip()}
+                    if not feat_ufs or (feat_ufs & target_ufs):
+                        matched = True
+                else:
+                    matched = True
+        if matched:
+            matched_features.append(feat)
+
+    if not matched_features:
+        return None
+
+    geom_str = QgsWkbTypes.displayString(layer.wkbType()) or "MultiPolygon"
+    crs_auth = layer.crs().authid() or "EPSG:4674"
+    filtered = QgsVectorLayer(f"{geom_str}?crs={crs_auth}", layer_name, "memory")
+    prov = filtered.dataProvider()
+    prov.addAttributes(list(layer.fields()))
+    filtered.updateFields()
+    out_feats = []
+    for src_f in matched_features:
+        nf = QgsFeature(filtered.fields())
+        nf.setGeometry(src_f.geometry())
+        nf.setAttributes(src_f.attributes())
+        out_feats.append(nf)
+    prov.addFeatures(out_feats)
+    filtered.updateExtents()
+    return filtered if filtered.isValid() and filtered.featureCount() > 0 else None
+
+
+def _effective_data_reference_year(
+    source: Dict[str, Any],
+    layer: Any,
+    requested_year: Optional[int],
+    *,
+    is_raster: bool = False,
+    raster_year: Optional[int] = None,
+) -> Any:
+    """Determine the honest reference year actually represented by the loaded output."""
+    if is_raster:
+        return int(raster_year) if raster_year is not None else "unknown"
+    if requested_year is not None:
+        return int(requested_year)
+
+    # Inspect feature year/ano attribute when available (bounded scan)
+    if layer is not None and hasattr(layer, "fields"):
+        try:
+            field_names = {f.name().lower(): f.name() for f in layer.fields()}
+            yfield = next((field_names[k] for k in ("year", "ano", "ano_referencia") if k in field_names), None)
+            if yfield:
+                years_seen = set()
+                for idx, feat in enumerate(layer.getFeatures()):
+                    if idx >= 5000:
+                        break
+                    val = feat[yfield]
+                    if val is not None:
+                        try:
+                            yint = int(str(val).strip()[:4])
+                            if 1800 <= yint <= 2100:
+                                years_seen.add(yint)
+                        except (ValueError, TypeError):
+                            pass
+                if len(years_seen) == 1:
+                    return next(iter(years_seen))
+                if len(years_seen) > 1:
+                    return f"{min(years_seen)}-{max(years_seen)}"
+        except Exception:
+            pass
+
+    if source.get("source_id") == "inpe_prodes":
+        return "unknown"
+    src_year = source.get("source_year")
+    return src_year if src_year is not None else "unknown"
+
+
 def _fetch_source_layer(
     source: Dict[str, Any],
     area: Dict[str, Any],
@@ -278,11 +519,12 @@ def _fetch_source_layer(
     requested_year: Optional[int],
     replace_existing: bool,
     feedback,
+    should_stop: Optional[Callable[[], bool]] = None,
     fixture_override: Optional[str] = None,
 ):
     """Fetch a raw source layer via GISBR or audited Indigenous/INPE adapters.
 
-    Returns ``(layer_or_none, status_hint, extra_warnings)``.
+    Returns ``(layer_or_path_or_none, status_hint, extra_warnings, raster_year)``.
     """
     from qgis.core import QgsCoordinateReferenceSystem
 
@@ -291,11 +533,42 @@ def _fetch_source_layer(
     srs = source.get("srs", "EPSG:4674")
     warnings: List[str] = []
 
+    if proto == "raster_cog":
+        ano = int(requested_year or (source.get("_raw_gisbr") or {}).get("ano_default") or source.get("source_year") or 2023)
+        if not fixture_override and mask_layer is None:
+            return None, "failed", ["Raster COG clip requires a valid polygon mask."], ano
+        allowed_hosts = get_allowed_hosts()
+        svc_url = source.get("service_url") or ""
+        url = svc_url.format(ano=ano) if "{ano}" in svc_url else svc_url
+        if not fixture_override and url:
+            ok_url, url_err = validate_allowlisted_url(url, allowed_hosts)
+            if not ok_url:
+                return None, "failed", [url_err], ano
+        tif_path = gpkg_path.parent / f"{sid}_{ano}_{_area_suffix(area)}.tif"
+        staged_path, fetch_kind, r_warnings = _stage_raster_atomically(
+            url,
+            mask_layer,
+            tif_path,
+            layer_name,
+            replace_existing=replace_existing,
+            feedback=feedback,
+            should_stop=should_stop,
+            fixture_override=fixture_override,
+        )
+        return staged_path, fetch_kind, warnings + r_warnings, ano
+
     if fixture_override:
         vl = _load_fixture_vector(fixture_override, layer_name)
         if not vl.isValid():
-            return None, "failed", [f"Fixture failed to load for {sid}."]
-        return vl, "fixture", warnings
+            return None, "failed", [f"Fixture failed to load for {sid}."], None
+        if sid in ("geobr_terras_indigenas", "funai_ti_boundaries") and area.get("type") == "indigenous_territory" and not area.get("geometry_wkt"):
+            filtered = _filter_ti_layer(vl, area, layer_name)
+            if filtered is None:
+                return None, "failed", [
+                    f"Territory '{area.get('name') or area.get('terrai_cod')}' was not matched in {sid}; refusing to save unrelated national TIs under that territory name."
+                ], None
+            vl = filtered
+        return vl, "fixture", warnings, None
 
     allowed_hosts = get_allowed_hosts()
     svc_url = source.get("service_url") or ""
@@ -303,22 +576,21 @@ def _fetch_source_layer(
         raw_url = svc_url.format(ano=requested_year or source.get("source_year") or 2023) if "{ano}" in svc_url else svc_url
         ok_url, url_err = validate_allowlisted_url(raw_url, allowed_hosts)
         if not ok_url:
-            return None, "failed", [url_err]
+            return None, "failed", [url_err], None
 
     # Curated Indigenous / INPE WFS adapters
     if source.get("catalog_origin") == "curated_indigenous":
         if proto != "wfs":
-            return None, "failed", [f"Unsupported curated protocol '{proto}' for {sid}."]
+            return None, "failed", [f"Unsupported curated protocol '{proto}' for {sid}."], None
         typename = source.get("typename") or ""
         if not typename:
             return None, "unavailable", [
                 f"Source '{sid}' has no verified WFS typename yet (service endpoint requires live GetCapabilities)."
-            ]
+            ], None
         cql_filter = None
         client_year_filter = None
         if sid == "inpe_prodes" and requested_year is not None:
             if bbox is not None:
-                # Keep server-side bbox bound so we never scan the entire Amazon WFS
                 client_year_filter = int(requested_year)
             else:
                 field = validate_cql_identifier("year")
@@ -336,11 +608,6 @@ def _fetch_source_layer(
             bbox=(bbox if not cql_filter else None),
             feedback=feedback,
         )
-        if layer is not None and layer.isValid() and client_year_filter is not None:
-            field_names = {f.name().lower(): f.name() for f in layer.fields()}
-            if "year" in field_names:
-                yfield = validate_cql_identifier(field_names["year"])
-                layer.setSubsetString(f"{yfield} = {client_year_filter}")
         if layer is None or not layer.isValid():
             err_msg = getattr(layer, "error_msg", "WFS endpoint unreachable or returned invalid response")
             if sid in ("funai_ti_boundaries", "funai_dsei_areas"):
@@ -348,32 +615,33 @@ def _fetch_source_layer(
                     "Official FUNAI GeoServer was unreachable or failed TLS verification; "
                     "for TI boundaries you may explicitly select 'geobr_terras_indigenas' (dated mirror)."
                 )
-            return None, "unavailable", [redact_sensitive_text(err_msg)] + warnings
-        return layer, "live", warnings
+            return None, "unavailable", [redact_sensitive_text(err_msg)] + warnings, None
+        if client_year_filter is not None:
+            field_names = {f.name().lower(): f.name() for f in layer.fields()}
+            if "year" in field_names:
+                yfield = validate_cql_identifier(field_names["year"])
+                layer.setSubsetString(f"{yfield} = {client_year_filter}")
+        return layer, "live", warnings, None
 
     # GISBR-backed sources
     raw = source.get("_raw_gisbr") or {}
-    if proto == "raster_cog":
-        ano = requested_year or raw.get("ano_default") or source.get("source_year") or 2023
-        if mask_layer is None:
-            return None, "failed", ["Raster COG clip requires a valid polygon mask."]
-        tif_path = gpkg_path.parent / f"{sid}_{ano}_{_area_suffix(area)}.tif"
-        url = svc_url.format(ano=ano) if "{ano}" in svc_url else svc_url
-        rl = cog_raster.fetch_raster(url, mask_layer, str(tif_path), layer_name=layer_name, feedback=feedback)
-        if rl is None or not rl.isValid():
-            return None, "failed", [redact_sensitive_text(getattr(rl, "error_msg", "Failed reading COG raster."))]
-        return rl, "live_raster", warnings
-
     if proto == "geobr":
         if source.get("requires_parquet") and capabilities.parquet_backend() is None:
-            return None, "failed", ["Requires GDAL Parquet driver or optional pyarrow."]
+            return None, "failed", ["Requires GDAL Parquet driver or optional pyarrow."], None
         code_input = recorte if recorte is not None else "all"
         layer = gisbr_diag._carrega_geobr(raw, code_input, layer_name, ano=requested_year, feedback=feedback)
         if layer is None or not layer.isValid():
-            return None, "failed", [redact_sensitive_text(getattr(layer, "error_msg", f"geobr failed for {sid}."))]
+            return None, "failed", [redact_sensitive_text(getattr(layer, "error_msg", f"geobr failed for {sid}."))], None
         if not layer.crs().isValid():
             layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4674"))
-        return layer, "live", warnings
+        if sid == "geobr_terras_indigenas" and area.get("type") == "indigenous_territory" and not area.get("geometry_wkt"):
+            filtered = _filter_ti_layer(layer, area, layer_name)
+            if filtered is None:
+                return None, "failed", [
+                    f"Territory '{area.get('name') or area.get('terrai_cod')}' was not matched in geobr_terras_indigenas; refusing to save all Brazilian TIs under a single TI name."
+                ], None
+            layer = filtered
+        return layer, "live", warnings, None
 
     if proto == "wfs":
         ufs = area.get("ufs") or []
@@ -390,8 +658,8 @@ def _fetch_source_layer(
             feedback=feedback,
         )
         if layer is None or not layer.isValid():
-            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"WFS failed for {sid}."))]
-        return layer, "live", warnings
+            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"WFS failed for {sid}."))], None
+        return layer, "live", warnings, None
 
     if proto == "arcgis":
         cql, usa_bbox = gisbr_diag._filtro_para(raw, recorte) if recorte is not None else (None, True)
@@ -405,8 +673,8 @@ def _fetch_source_layer(
             feedback=feedback,
         )
         if layer is None or not layer.isValid():
-            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"ArcGIS failed for {sid}."))]
-        return layer, "live", warnings
+            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"ArcGIS failed for {sid}."))], None
+        return layer, "live", warnings, None
 
     if proto == "zip_remoto":
         url = raw.get("url") or raw.get("endpoint") or raw.get("origem_url")
@@ -420,12 +688,12 @@ def _fetch_source_layer(
             refresh=replace_existing,
         )
         if layer is None or not layer.isValid():
-            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"zip_remoto failed for {sid}."))]
-        return layer, "live", warnings
+            return None, "unavailable", [redact_sensitive_text(getattr(layer, "error_msg", f"zip_remoto failed for {sid}."))], None
+        return layer, "live", warnings, None
 
     if proto == "ibge_tabular":
         if recorte is None:
-            return None, "failed", ["IBGE tabular sources require a municipality or regional Recorte."]
+            return None, "failed", ["IBGE tabular sources require a municipality or regional Recorte."], None
         codes_param = list(recorte.codes)
         tbl = ibge_agregados.fetch_layer(
             raw["agregado"],
@@ -437,17 +705,21 @@ def _fetch_source_layer(
             feedback=feedback,
         )
         if tbl is None or not tbl.isValid():
-            return None, "unavailable", [redact_sensitive_text(getattr(tbl, "error_msg", f"IBGE tabular failed for {sid}."))]
+            return None, "unavailable", [redact_sensitive_text(getattr(tbl, "error_msg", f"IBGE tabular failed for {sid}."))], None
         from .vendor.gisbr.core import agro_pipeline
+
         poly_layer, _rel = agro_pipeline.tabela_para_camada(
-            tbl, codes_param, nome_muni=list(recorte.nomes) if recorte.nomes else recorte.rotulo,
-            layer_name=layer_name, feedback=feedback,
+            tbl,
+            codes_param,
+            nome_muni=list(recorte.nomes) if recorte.nomes else recorte.rotulo,
+            layer_name=layer_name,
+            feedback=feedback,
         )
         if poly_layer is None or not poly_layer.isValid():
-            return None, "failed", [f"Failed joining IBGE tabular data to municipality polygons for {sid}."]
-        return poly_layer, "live", warnings
+            return None, "failed", [f"Failed joining IBGE tabular data to municipality polygons for {sid}."], None
+        return poly_layer, "live", warnings, None
 
-    return None, "failed", [f"Protocol '{proto}' is not supported by br_execute_load."]
+    return None, "failed", [f"Protocol '{proto}' is not supported by br_execute_load."], None
 
 
 def _area_suffix(area: Dict[str, Any]) -> str:
@@ -457,24 +729,29 @@ def _area_suffix(area: Dict[str, Any]) -> str:
     return safe if atype in ("municipality", "municipio") else f"{atype}_{safe}"
 
 
-def execute_load(
-    plan_id: str,
-    *,
-    should_stop: Optional[Callable[[], bool]] = None,
-    project=None,
-    local_fixtures: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
-    """Execute a frozen ``plan_id`` with hard policy checks, cancellation, and atomic output."""
-    from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
-
-    if _is_cancelled(should_stop):
-        return {"ok": False, "status": "cancelled", "cancelled": True, "results": [], "error": "Cancelled before execution."}
-
-    plan, plan_err = get_frozen_plan(plan_id)
-    if plan is None:
-        return {"ok": False, "status": "invalid_plan", "cancelled": False, "results": [], "error": plan_err}
+def prepare_load_context(project=None) -> Dict[str, Any]:
+    """Snapshot main-thread QGIS project transformContext prior to worker execution."""
+    from qgis.core import QgsCoordinateTransformContext, QgsProject
 
     proj = project or QgsProject.instance()
+    try:
+        tctx = proj.transformContext()
+    except Exception:
+        tctx = QgsCoordinateTransformContext()
+    return {"transform_context": tctx}
+
+
+def run_load_worker(
+    plan: Dict[str, Any],
+    *,
+    transform_context=None,
+    should_stop: Optional[Callable[[], bool]] = None,
+    local_fixtures: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Perform all network retrieval, clipping, and staged disk writes off the GUI thread."""
+    if _is_cancelled(should_stop):
+        return {"cancelled": True, "staged": [], "immediate_results": []}
+
     area = plan["area"]
     gpkg_path = Path(plan["output_gpkg"])
     replace_existing = bool(plan.get("replace_existing", False))
@@ -488,215 +765,288 @@ def execute_load(
     mask_attempted = False
     suffix = _area_suffix(area)
 
-    results: List[Dict[str, Any]] = []
-    loaded_count = 0
-    reused_count = 0
-    failed_count = 0
-    empty_count = 0
-    cancelled = False
-
-    # Include any non-ready items from the plan honestly in the summary
     planned_by_id = {item["source_id"]: item for item in plan.get("items") or []}
+    staged: List[Dict[str, Any]] = []
+    immediate_results: List[Dict[str, Any]] = []
+    cancelled = False
 
     for sid in plan["executable_ids"]:
         if _is_cancelled(should_stop):
             cancelled = True
-            results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled by user."]})
+            immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled by user."]})
             continue
 
         source = get_source(sid)
         if source is None:
-            failed_count += 1
-            results.append({"source_id": sid, "status": "failed", "layer_ids": [], "error": f"Unknown source '{sid}'."})
+            immediate_results.append({"source_id": sid, "status": "failed", "layer_ids": [], "error": f"Unknown source '{sid}'."})
             continue
 
-        # Re-check policy at execution time (defense in depth)
         allowed, reason_code, reason_msg = check_source_loadable(source, include_non_government=include_non_gov)
         if not allowed:
-            failed_count += 1
-            results.append({
-                "source_id": sid,
-                "status": reason_code,
-                "layer_ids": [],
-                "error": reason_msg,
-            })
+            immediate_results.append({"source_id": sid, "status": reason_code, "layer_ids": [], "error": reason_msg})
             continue
 
-        if not mask_attempted:
-            mask_attempted = True
-            mask_layer = _mask_layer_from_area(area, feedback=feedback)
+        try:
+            if not mask_attempted:
+                mask_attempted = True
+                mask_layer = _mask_layer_from_area(area, feedback=feedback)
 
-        bbox = _bbox_for_area(area, mask_layer)
-        layer_name = f"{sid}_{suffix}"
-        req_year = years_map.get(sid)
-        planned_item = planned_by_id.get(sid, {})
-        desired_clip = planned_item.get("clip_mode", "exact_polygon_clip")
+            bbox = _bbox_for_area(area, mask_layer)
+            layer_name = f"{sid}_{suffix}"
+            req_year = years_map.get(sid)
+            planned_item = planned_by_id.get(sid, {})
+            desired_clip = planned_item.get("clip_mode", "exact_polygon_clip")
 
-        raw_layer, fetch_kind, fetch_warnings = _fetch_source_layer(
-            source,
-            area,
-            recorte,
-            mask_layer,
-            bbox,
-            layer_name,
-            gpkg_path,
-            requested_year=req_year,
-            replace_existing=replace_existing,
-            feedback=feedback,
-            fixture_override=fixtures.get(sid),
-        )
+            if _is_cancelled(should_stop):
+                cancelled = True
+                immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled before fetch."]})
+                continue
 
-        if _is_cancelled(should_stop):
-            cancelled = True
-            results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled during fetch."]})
-            continue
-
-        if raw_layer is None:
-            failed_count += 1
-            results.append({
-                "source_id": sid,
-                "status": fetch_kind if fetch_kind in ("unavailable", "failed") else "failed",
-                "layer_ids": [],
-                "warnings": fetch_warnings,
-                "error": "; ".join(fetch_warnings) or f"Failed loading {sid}.",
-            })
-            continue
-
-        extracted_at = _utc_now_iso()
-
-        # Raster branch
-        if isinstance(raw_layer, QgsRasterLayer):
-            reg_layer = _register_project_layer(proj, raw_layer, raw_layer.source(), replace_existing=replace_existing)
-            prov = tag_layer_provenance(
-                reg_layer,
+            raw_res, fetch_kind, fetch_warnings, raster_year = _fetch_source_layer(
                 source,
                 area,
-                clip_mode="exact_polygon_clip" if mask_layer is not None else "bbox_filter_only",
-                extracted_at=extracted_at,
-                output_path=raw_layer.source(),
-                feature_count=None,
-                truncated=False,
-                catalog_version=CATALOG_VERSION,
+                recorte,
+                mask_layer,
+                bbox,
+                layer_name,
+                gpkg_path,
+                requested_year=req_year,
+                replace_existing=replace_existing,
+                feedback=feedback,
+                should_stop=should_stop,
+                fixture_override=fixtures.get(sid),
             )
-            loaded_count += 1
-            results.append({
-                "source_id": sid,
-                "status": "loaded",
-                "layer_ids": [reg_layer.id()],
-                "layer_names": [reg_layer.name()],
-                "feature_count": None,
-                "output": raw_layer.source(),
-                "clip_mode": prov["clip_mode"],
-                "truncated": False,
-                "provenance": prov,
-                "warnings": fetch_warnings,
-            })
-            continue
 
-        # Vector branch
-        if raw_layer.featureCount() == 0:
-            empty_count += 1
-            results.append({
-                "source_id": sid,
-                "status": "empty",
-                "layer_ids": [],
-                "feature_count": 0,
-                "warnings": fetch_warnings + ["Service returned 0 features for the requested area."],
-            })
-            continue
+            if fetch_kind == "cancelled" or _is_cancelled(should_stop):
+                cancelled = True
+                immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled during fetch."]})
+                continue
 
-        truncated = bool(raw_layer.customProperty("truncado"))
-        trunc_val = raw_layer.customProperty("truncado")
-        if truncated:
-            fetch_warnings.append(f"Service response truncated ({trunc_val}).")
-
-        working_layer = raw_layer
-        actual_clip_mode = desired_clip
-        if desired_clip == "exact_polygon_clip":
-            working_layer, actual_clip_mode = _clip_to_mask(raw_layer, mask_layer, layer_name, feedback=feedback)
-            if working_layer is None or not working_layer.isValid():
-                failed_count += 1
-                results.append({
+            if raw_res is None:
+                immediate_results.append({
                     "source_id": sid,
-                    "status": "failed",
+                    "status": fetch_kind if fetch_kind in ("unavailable", "failed") else "failed",
                     "layer_ids": [],
                     "warnings": fetch_warnings,
-                    "error": f"Polygon clip failed for {sid}.",
+                    "error": "; ".join(fetch_warnings) or f"Failed loading {sid}.",
                 })
                 continue
-            if working_layer.featureCount() == 0:
-                empty_count += 1
-                results.append({
+
+            extracted_at = _utc_now_iso()
+
+            # Raster branch (already staged, validated, and promoted to Path)
+            if isinstance(raw_res, Path):
+                staged.append({
+                    "kind": "raster",
+                    "source": source,
+                    "uri": str(raw_res),
+                    "display_name": f"{source['name_pt']} — {area.get('name') or area.get('id')}",
+                    "output_path": str(raw_res),
+                    "table_name": raw_res.stem,
+                    "clip_mode": "exact_polygon_clip" if mask_layer is not None else "bbox_filter_only",
+                    "extracted_at": extracted_at,
+                    "feature_count": None,
+                    "truncated": False,
+                    "data_reference_year": _effective_data_reference_year(
+                        source, None, req_year, is_raster=True, raster_year=raster_year
+                    ),
+                    "warnings": fetch_warnings,
+                })
+                continue
+
+            # Vector branch
+            if raw_res.featureCount() == 0:
+                immediate_results.append({
                     "source_id": sid,
                     "status": "empty",
                     "layer_ids": [],
                     "feature_count": 0,
-                    "clip_mode": actual_clip_mode,
-                    "warnings": fetch_warnings + ["0 features remained inside the exact polygon mask after clipping."],
+                    "warnings": fetch_warnings + ["Service returned 0 features for the requested area."],
                 })
                 continue
 
+            truncated = bool(raw_res.customProperty("truncado"))
+            trunc_val = raw_res.customProperty("truncado")
+            if truncated:
+                fetch_warnings.append(f"Service response truncated ({trunc_val}).")
+
+            working_layer = raw_res
+            actual_clip_mode = desired_clip
+            if desired_clip == "exact_polygon_clip":
+                if area.get("geometry_wkt") and (mask_layer is None or not mask_layer.isValid()):
+                    immediate_results.append({
+                        "source_id": sid,
+                        "status": "failed",
+                        "layer_ids": [],
+                        "warnings": fetch_warnings,
+                        "error": f"Polygon mask unavailable for exact clipping of {sid}; refusing to save uncut data.",
+                    })
+                    continue
+                working_layer, actual_clip_mode = _clip_to_mask(
+                    raw_res,
+                    mask_layer,
+                    layer_name,
+                    feedback=feedback,
+                    transform_context=transform_context,
+                )
+                if actual_clip_mode == "clip_failed" or working_layer is None or not working_layer.isValid():
+                    immediate_results.append({
+                        "source_id": sid,
+                        "status": "failed",
+                        "layer_ids": [],
+                        "warnings": fetch_warnings,
+                        "error": f"Polygon clip failed for {sid}; uncut data was not saved.",
+                    })
+                    continue
+                if working_layer.featureCount() == 0:
+                    immediate_results.append({
+                        "source_id": sid,
+                        "status": "empty",
+                        "layer_ids": [],
+                        "feature_count": 0,
+                        "clip_mode": actual_clip_mode,
+                        "warnings": fetch_warnings + ["0 features remained inside the exact polygon mask after clipping."],
+                    })
+                    continue
+
+            if _is_cancelled(should_stop):
+                cancelled = True
+                immediate_results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled before persistence."]})
+                continue
+
+            effective_year = _effective_data_reference_year(source, working_layer, req_year)
+
+            ok_write, write_msg, actual_gpkg = _write_vector_atomically(
+                working_layer,
+                gpkg_path,
+                layer_name,
+                replace_existing=replace_existing,
+                transform_context=transform_context,
+                should_stop=should_stop,
+            )
+            if write_msg:
+                fetch_warnings.append(write_msg)
+            if not ok_write:
+                is_cancel_err = _is_cancelled(should_stop) or "Cancelled" in write_msg
+                if is_cancel_err:
+                    cancelled = True
+                immediate_results.append({
+                    "source_id": sid,
+                    "status": "cancelled" if is_cancel_err else "failed",
+                    "layer_ids": [],
+                    "warnings": fetch_warnings,
+                    "error": write_msg,
+                })
+                continue
+
+            gpkg_uri = f"{actual_gpkg}|layername={layer_name}"
+            staged.append({
+                "kind": "vector",
+                "source": source,
+                "uri": gpkg_uri,
+                "display_name": f"{source['name_pt']} — {area.get('name') or area.get('id')}",
+                "output_path": str(actual_gpkg),
+                "table_name": layer_name,
+                "clip_mode": actual_clip_mode,
+                "extracted_at": extracted_at,
+                "feature_count": working_layer.featureCount(),
+                "truncated": truncated,
+                "data_reference_year": effective_year,
+                "warnings": fetch_warnings,
+            })
+        except Exception as exc:
+            immediate_results.append({
+                "source_id": sid,
+                "status": "failed",
+                "layer_ids": [],
+                "warnings": [],
+                "error": redact_sensitive_text(f"Source load failed ({type(exc).__name__}): {exc}", redact_coordinates=True),
+            })
+
+    return {
+        "cancelled": cancelled,
+        "staged": staged,
+        "immediate_results": immediate_results,
+    }
+
+
+def commit_load_results(
+    plan_id: str,
+    plan: Dict[str, Any],
+    worker_output: Dict[str, Any],
+    *,
+    project=None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """Register validated persisted layers in ``QgsProject`` on the main thread."""
+    from qgis.core import QgsProject, QgsRasterLayer, QgsVectorLayer
+
+    proj = project or QgsProject.instance()
+    area = plan["area"]
+    replace_existing = bool(plan.get("replace_existing", False))
+
+    results: List[Dict[str, Any]] = list(worker_output.get("immediate_results") or [])
+    cancelled = bool(worker_output.get("cancelled"))
+    loaded_count = 0
+    reused_count = 0
+    failed_count = sum(1 for r in results if r.get("status") in ("failed", "unavailable"))
+    empty_count = sum(1 for r in results if r.get("status") == "empty")
+
+    for item in worker_output.get("staged") or []:
+        sid = item["source"]["source_id"]
         if _is_cancelled(should_stop):
             cancelled = True
-            results.append({"source_id": sid, "status": "cancelled", "layer_ids": [], "warnings": ["Cancelled before persistence."]})
+            results.append({
+                "source_id": sid,
+                "status": "cancelled",
+                "layer_ids": [],
+                "warnings": ["Cancelled before project registration; layer not added to project."],
+            })
             continue
 
-        ok_write, write_msg, actual_gpkg = _write_vector_atomically(
-            working_layer, gpkg_path, layer_name, replace_existing=replace_existing
-        )
-        if write_msg:
-            fetch_warnings.append(write_msg)
-        if not ok_write:
+        if item["kind"] == "raster":
+            layer = QgsRasterLayer(item["uri"], item["display_name"], "gdal")
+        else:
+            layer = QgsVectorLayer(item["uri"], item["display_name"], "ogr")
+
+        if not layer.isValid():
             failed_count += 1
             results.append({
                 "source_id": sid,
                 "status": "failed",
                 "layer_ids": [],
-                "warnings": fetch_warnings,
-                "error": write_msg,
+                "warnings": item.get("warnings", []),
+                "error": f"Persisted layer '{item['uri']}' failed to open.",
             })
             continue
 
-        gpkg_uri = f"{actual_gpkg}|layername={layer_name}"
-        display_name = f"{source['name_pt']} — {area.get('name') or area.get('id')}"
-        persisted = QgsVectorLayer(gpkg_uri, display_name, "ogr")
-        if not persisted.isValid():
-            failed_count += 1
-            results.append({
-                "source_id": sid,
-                "status": "failed",
-                "layer_ids": [],
-                "warnings": fetch_warnings,
-                "error": f"Persisted GeoPackage layer '{gpkg_uri}' failed to open.",
-            })
-            continue
-
-        reg_layer = _register_project_layer(proj, persisted, gpkg_uri, replace_existing=replace_existing)
-        fcount = reg_layer.featureCount()
+        reg_layer = _register_project_layer(proj, layer, item["uri"], replace_existing=replace_existing)
+        fcount = reg_layer.featureCount() if item["kind"] == "vector" else None
         prov = tag_layer_provenance(
             reg_layer,
-            source,
+            item["source"],
             area,
-            clip_mode=actual_clip_mode,
-            extracted_at=extracted_at,
-            output_path=str(actual_gpkg),
+            clip_mode=item["clip_mode"],
+            extracted_at=item["extracted_at"],
+            output_path=item["output_path"],
             feature_count=fcount,
-            truncated=truncated,
+            truncated=item["truncated"],
             catalog_version=CATALOG_VERSION,
+            data_reference_year=item.get("data_reference_year"),
         )
         loaded_count += 1
         results.append({
             "source_id": sid,
-            "status": "truncated" if truncated else "loaded",
+            "status": "truncated" if item["truncated"] else "loaded",
             "layer_ids": [reg_layer.id()],
             "layer_names": [reg_layer.name()],
             "feature_count": fcount,
-            "output": str(actual_gpkg),
-            "table_name": layer_name,
-            "clip_mode": actual_clip_mode,
-            "truncated": truncated,
+            "output": item["output_path"],
+            "table_name": item["table_name"],
+            "clip_mode": item["clip_mode"],
+            "truncated": item["truncated"],
             "provenance": prov,
-            "warnings": fetch_warnings,
+            "warnings": item.get("warnings", []),
         })
 
     # Include skipped/manual items from plan for complete accounting
@@ -746,3 +1096,38 @@ def execute_load(
         "results": results,
         "cancelled": cancelled,
     }
+
+
+def execute_load(
+    plan_id: str,
+    *,
+    should_stop: Optional[Callable[[], bool]] = None,
+    project=None,
+    local_fixtures: Optional[Dict[str, str]] = None,
+    executor=None,
+) -> Dict[str, Any]:
+    """Execute a frozen ``plan_id`` with main-thread project isolation, cancellation, and atomic output."""
+    if _is_cancelled(should_stop):
+        return {"ok": False, "status": "cancelled", "cancelled": True, "results": [], "error": "Cancelled before execution."}
+
+    plan, plan_err = get_frozen_plan(plan_id)
+    if plan is None:
+        return {"ok": False, "status": "invalid_plan", "cancelled": False, "results": [], "error": plan_err}
+
+    if executor is not None:
+        ctx = executor.run_sync(lambda: prepare_load_context(project))
+    else:
+        ctx = prepare_load_context(project)
+
+    worker_out = run_load_worker(
+        plan,
+        transform_context=ctx.get("transform_context"),
+        should_stop=should_stop,
+        local_fixtures=local_fixtures,
+    )
+
+    if executor is not None:
+        return executor.run_sync(
+            lambda: commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop)
+        )
+    return commit_load_results(plan_id, plan, worker_out, project=project, should_stop=should_stop)

@@ -12,8 +12,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .catalog import search_sources, source_details
-from .loader import execute_load
-from .planner import clear_plans, plan_load
+from .loader import (
+    commit_load_results,
+    execute_load,
+    prepare_load_context,
+    run_load_worker,
+)
+from .planner import clear_plans, get_frozen_plan, plan_load
 from .policy import redact_sensitive_text
 from .resolver import resolve_area
 
@@ -346,6 +351,7 @@ def br_execute_load(
     should_stop: Optional[Callable[[], bool]] = None,
     project=None,
     local_fixtures: Optional[Dict[str, str]] = None,
+    executor=None,
 ) -> Dict[str, Any]:
     """Execute a frozen ``plan_id`` with strict policy checks and atomic layer registration."""
     if not plan_id or not isinstance(plan_id, str):
@@ -362,6 +368,7 @@ def br_execute_load(
             should_stop=should_stop,
             project=project,
             local_fixtures=local_fixtures,
+            executor=executor,
         )
     except Exception as exc:
         return {
@@ -431,12 +438,14 @@ class BrazilDataService:
         should_stop: Optional[Callable[[], bool]] = None,
         project=None,
         local_fixtures: Optional[Dict[str, str]] = None,
+        executor=None,
     ) -> Dict[str, Any]:
         return br_execute_load(
             plan_id,
             should_stop=should_stop,
             project=project,
             local_fixtures=local_fixtures,
+            executor=executor,
         )
 
     def shutdown(self) -> None:

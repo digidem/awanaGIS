@@ -329,8 +329,14 @@ def build_provenance_record(
     feature_count: Optional[int] = None,
     truncated: bool = False,
     catalog_version: str = "",
+    data_reference_year: Any = None,
 ) -> Dict[str, Any]:
     """Build a JSON-serializable provenance dictionary for layer metadata."""
+    ref_year = (
+        data_reference_year
+        if data_reference_year is not None
+        else (source.get("source_year") if source.get("source_year") is not None else "unknown")
+    )
     return {
         "source_id": source.get("source_id"),
         "title": source.get("name"),
@@ -342,7 +348,7 @@ def build_provenance_record(
         "portal_url": source.get("portal_url") or "",
         "catalog_origin": source.get("catalog_origin"),
         "catalog_version": catalog_version,
-        "data_reference_year": source.get("source_year") if source.get("source_year") is not None else "unknown",
+        "data_reference_year": ref_year,
         "extracted_at": extracted_at,
         "area_scope": {
             "type": area.get("type"),
@@ -374,6 +380,7 @@ def tag_layer_provenance(
     feature_count: Optional[int] = None,
     truncated: bool = False,
     catalog_version: str = "",
+    data_reference_year: Any = None,
 ) -> Dict[str, Any]:
     """Attach AwanaGIS sensitivity, export policy, and provenance custom properties to ``layer``."""
     source_crs = source.get("srs") or "unknown"
@@ -395,6 +402,7 @@ def tag_layer_provenance(
         feature_count=feature_count,
         truncated=truncated,
         catalog_version=catalog_version,
+        data_reference_year=data_reference_year,
     )
     if layer is not None and hasattr(layer, "setCustomProperty"):
         layer.setCustomProperty(PROP_SENSITIVITY, provenance["sensitivity"])
