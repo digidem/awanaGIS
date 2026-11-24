@@ -344,6 +344,13 @@ class BrazilCatalogTests(unittest.TestCase):
                 self.assertEqual(det_html["sources"][0]["service_status"], "offline_http_error")
                 self.assertFalse(det_html["sources"][0]["machine_access_verified"])
 
+        catalog._PROBE_CACHE.clear()
+        empty_ft = b"<WFS_Capabilities><FeatureTypeList><FeatureType/></FeatureTypeList></WFS_Capabilities>"
+        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(empty_ft)):
+            det_empty_ft = br_tools.br_source_details(["funai_dsei_areas"], probe=True)
+            self.assertEqual(det_empty_ft["sources"][0]["status"], "unavailable")
+            self.assertFalse(det_empty_ft["sources"][0]["machine_access_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

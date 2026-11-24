@@ -456,15 +456,13 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
                 if root_local == "WFS_Capabilities" and ft_lists:
                     typename = (entry.get("typename") or "").strip()
                     ft_names = set()
-                    has_feature_type = False
                     for ft_list in ft_lists:
                         for ft_node in list(ft_list):
                             if ft_node.tag.rsplit("}", 1)[-1] == "FeatureType":
-                                has_feature_type = True
                                 for child in list(ft_node):
                                     if child.tag.rsplit("}", 1)[-1] == "Name" and (child.text or "").strip():
                                         ft_names.add(child.text.strip())
-                    layer_found = has_feature_type and ((not typename) or (typename in ft_names))
+                    layer_found = bool(ft_names) and ((not typename) or (typename in ft_names))
                     svc_status = "reachable" if layer_found else "offline_http_error"
                     reason_txt = (
                         "WFS GetCapabilities reachable and typename present."
