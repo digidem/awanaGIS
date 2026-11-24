@@ -58,8 +58,9 @@ APPROVED_RUNTIME_SUFFIXES = frozenset({
     ".txt",
     ".json",
     ".csv",
-    ".pem",
 })
+
+APPROVED_CERT_PREFIX = ("integrations", "brazil", "vendor", "gisbr", "core", "certs")
 
 EXCLUDED_SUFFIXES = (
     ".pyc",
@@ -100,7 +101,10 @@ def should_include(rel_path: Path) -> bool:
         return False
     if name in APPROVED_EXTENSIONLESS_FILES:
         return True
-    return Path(name).suffix.lower() in APPROVED_RUNTIME_SUFFIXES
+    suffix = Path(name).suffix.lower()
+    if suffix == ".pem":
+        return parts[: len(APPROVED_CERT_PREFIX)] == APPROVED_CERT_PREFIX
+    return suffix in APPROVED_RUNTIME_SUFFIXES
 
 
 def _iter_git_tracked_paths(repo_root: Path):

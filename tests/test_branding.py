@@ -624,16 +624,22 @@ class PackagingAndSmokeTests(unittest.TestCase):
             (exported / "integrations" / "__init__.py").write_text("", encoding="utf-8")
             (exported / "integrations" / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
             (exported / "resources" / "private.gpkg").write_bytes(b"SQLite format 3\x00")
+            (exported / "resources" / "server-key.pem").write_text("PRIVATE KEY\n", encoding="utf-8")
+            cert_dir = exported / "integrations" / "brazil" / "vendor" / "gisbr" / "core" / "certs"
+            cert_dir.mkdir(parents=True)
+            (cert_dir / "ca_roots.pem").write_text("CERT\n", encoding="utf-8")
             (exported / "i18n" / "awanagis_pt_BR.ts").write_text("<TS/>", encoding="utf-8")
             (exported / "i18n" / "awanagis.pro").write_text("TRANSLATIONS = awanagis_pt_BR.ts\n", encoding="utf-8")
 
             out_zip = Path(tmp) / "export_out.zip"
             _, _, _, names = package_plugin.build_plugin_zip(exported, out_zip)
             self.assertIn("awanagis/integrations/__init__.py", names)
+            self.assertIn("awanagis/integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem", names)
             self.assertIn("awanagis/i18n/awanagis_pt_BR.ts", names)
             self.assertIn("awanagis/i18n/awanagis.pro", names)
             self.assertNotIn("awanagis/integrations/.env", names)
             self.assertNotIn("awanagis/resources/private.gpkg", names)
+            self.assertNotIn("awanagis/resources/server-key.pem", names)
 
 
 
