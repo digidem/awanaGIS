@@ -1,0 +1,894 @@
+# -*- coding: utf-8 -*-
+"""Motor do diagnostico. Protocolos: wfs, arcgis, geobr (code|bbox), osm, arquivo.
+
+Fontes filtradas por bbox sao recortadas pelo POLIGONO do municipio (native:clip)
+para nao trazer feicoes de municipios vizinhos. Camadas sem feicoes sao puladas
+com aviso no Log.
+"""
+import os
+
+from qgis.PyQt.QtCore import QCoreApplication, QSettings, QStandardPaths
+from qgis.core import QgsProject, QgsVectorLayer, QgsVectorFileWriter
+
+from .connectors import wfs, basemap, arcgis_rest, osm, local_file, ibge_agregados, zip_remoto, cog_raster
+from .sources import SOURCES
+from . import (catalog, catalog_censo, censo_join, osm_pipeline, poi_pipeline,
+               agro_pipeline, constants)
+
+_UF_POR_CODIGO = {
+    "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP",
+    "17": "TO", "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB",
+    "26": "PE", "27": "AL", "28": "SE", "29": "BA", "31": "MG", "32": "ES",
+    "33": "RJ", "35": "SP", "41": "PR", "42": "SC", "43": "RS", "50": "MS",
+    "51": "MT", "52": "GO", "53": "DF",
+}
+
+_PROTOCOLOS = ("wfs", "arcgis", "geobr", "osm", "arquivo", "ibge_tabular", "zip_remoto")
+
+_QSETTINGS_PASTA_MANUAL = "gisbr/pasta_downloads_manuais"
+
+
+def _pasta_downloads_manuais():
+    """Pasta de downloads manuais: QSettings com fallback para a pasta de
+    Downloads do sistema (o painel persiste a escolha do usuario)."""
+    pasta = QSettings().value(_QSETTINGS_PASTA_MANUAL, "")
+    if pasta and str(pasta).strip():
+        return str(pasta).strip()
+    return QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DownloadLocation)
+
+
+def _por_id(ids):
+    return [s for s in SOURCES if s["id"] in ids]
+
+
+def _filtro_para(s, code_muni, nome_muni=None):
+    f = s.get("filtro") or {"tipo": "bbox"}
+    t = f.get("tipo")
+    if t not in ("cql_codigo", "cql_nome"):
+        return None, True
+
+    tipo_recorte = getattr(code_muni, "tipo", None)
+    if tipo_recorte in ("uf", "macro") and "uf" in f:
+        cfg_uf = f["uf"]
+        campo = cfg_uf.get("campo")
+        modo = cfg_uf.get("modo")
+        siglas = getattr(code_muni, "siglas_uf", []) or []
+        if campo and siglas:
+            if modo == "sigla":
+                siglas_ord = sorted(siglas)
+                if len(siglas_ord) == 1:
+                    return "{} = '{}'".format(campo, siglas_ord[0]), False
+                siglas_fmt = ["'{}'".format(s) for s in siglas_ord]
+                return "{} IN ({})".format(campo, ",".join(siglas_fmt)), False
+            elif modo == "prefixo":
+                codes = sorted(constants.UF_ABBREV_TO_CODE[s] for s in siglas if s in constants.UF_ABBREV_TO_CODE)
+                if codes:
+                    if len(codes) == 1:
+                        return "{} LIKE '{}%'".format(campo, codes[0]), False
+                    terms = ["{} LIKE '{}%'".format(campo, c) for c in codes]
+                    return " OR ".join(terms), False
+        return None, True
+
+    codes = []
+    nomes = []
+
+    if hasattr(code_muni, "codes"):
+        codes = [str(c) for c in code_muni.codes]
+        if getattr(code_muni, "nomes", None):
+            nomes = list(code_muni.nomes)
+    elif isinstance(code_muni, (list, tuple)):
+        codes = [str(c) for c in code_muni]
+    elif code_muni is not None:
+        codes = [str(code_muni)]
+
+    if nome_muni is not None:
+        if isinstance(nome_muni, (list, tuple)):
+            nomes = list(nome_muni)
+        else:
+            nomes = [str(nome_muni)]
+
+    if t == "cql_codigo":
+        if not codes:
+            return None, True
+        if len(codes) == 1:
+            return "{} = {}".format(f["campo"], int(codes[0])), False
+        return "{} IN ({})".format(f["campo"], ",".join(str(int(c)) for c in codes)), False
+
+    if t == "cql_nome":
+        if not nomes:
+            return None, True
+        if len(nomes) == 1:
+            nome = (nomes[0] or "").replace("'", "''")
+            return "{} = '{}'".format(f["campo"], nome), False
+        nomes_fmt = ["'{}'".format((n or "").replace("'", "''")) for n in nomes]
+        return "{} IN ({})".format(f["campo"], ",".join(nomes_fmt)), False
+
+    return None, True
+
+
+
+def _usou_bbox(s, usa_bbox):
+    if s.get("protocolo") == "ibge_tabular":
+        return False
+    if s.get("protocolo") == "geobr":
+        return s.get("recorte", "code") == "bbox"
+    return usa_bbox
+
+
+def _layers_existentes(gpkg_path):
+    if not os.path.exists(gpkg_path):
+        return set()
+    vl = QgsVectorLayer(gpkg_path, "probe", "ogr")
+    if not vl.isValid():
+        return set()
+    nomes = set()
+    for sub in vl.dataProvider().subLayers():
+        parts = sub.split("!!::!!")
+        if len(parts) > 1:
+            nomes.add(parts[1])
+    return nomes
+
+
+def _grava_gpkg(layer, gpkg_path, layer_name):
+    opts = QgsVectorFileWriter.SaveVectorOptions()
+    opts.driverName = "GPKG"
+    opts.layerName = layer_name
+    opts.actionOnExistingFile = (
+        QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteLayer if os.path.exists(gpkg_path)
+        else QgsVectorFileWriter.ActionOnExistingFile.CreateOrOverwriteFile
+    )
+    ctx = QgsProject.instance().transformContext()
+    res = QgsVectorFileWriter.writeAsVectorFormatV3(layer, gpkg_path, ctx, opts)
+    return res[0] == QgsVectorFileWriter.WriterError.NoError, res[1]
+
+
+def _resolve_out(out, layer_name):
+    if isinstance(out, str):
+        return QgsProject.instance().mapLayer(out) or QgsVectorLayer(out, layer_name, "ogr")
+    return out
+
+
+def _invalida(layer_name, msg):
+    inv = QgsVectorLayer("", layer_name, "ogr")
+    inv.error_msg = msg
+    return inv
+
+
+def _municipio_poligono(code_muni):
+    """Poligono do municipio (read_municipality) p/ recorte. None se falhar."""
+    import processing
+    try:
+        out = processing.run("awanagis_brazil:read_municipality", {
+            "CODE": str(code_muni), "SIMPLIFIED": True, "OUTPUT": "TEMPORARY_OUTPUT",
+        })["OUTPUT"]
+    except Exception:
+        return None
+    out = _resolve_out(out, "municipio")
+    return out if (out is not None and out.isValid()) else None
+
+
+def _recorta_poligono(layer, poligono, layer_name):
+    import processing
+    try:
+        out = processing.run("native:clip", {
+            "INPUT": layer, "OVERLAY": poligono, "OUTPUT": "TEMPORARY_OUTPUT",
+        })["OUTPUT"]
+        return _resolve_out(out, layer_name)
+    except Exception as exc:
+        return _invalida(layer_name, "recorte por poligono: {}".format(exc))
+
+
+def _carrega_geobr(s, code_muni, layer_name, ano=None, feedback=None):
+    """recorte 'code' filtra por code_muni; 'bbox' baixa nacional (sera recortado
+    pelo poligono no carregar_fontes)."""
+    if s.get("requer_parquet"):
+        from . import capabilities
+        if capabilities.parquet_backend() is None:
+            return _invalida(layer_name, "requer driver Parquet ou pyarrow (fonte v2)")
+    import processing
+    from .recorte import Recorte, camada_do_recorte
+    algo = s["algo"]
+    recorte_obj = None
+    codes = []
+    if isinstance(code_muni, Recorte):
+        recorte_obj = code_muni
+        codes = recorte_obj.codes
+    elif hasattr(code_muni, "codes"):
+        recorte_obj = code_muni
+        codes = recorte_obj.codes
+    elif isinstance(code_muni, (list, tuple)):
+        codes = [str(c) for c in code_muni]
+    elif code_muni is not None:
+        codes = [str(code_muni)]
+
+    params = {
+        "SIMPLIFIED": True, "OUTPUT": "TEMPORARY_OUTPUT",
+    }
+    ano_invalido_msg = None
+    if ano is not None:
+        try:
+            years = catalog.available_years("census_tract")
+            idx = years.index(int(ano))
+            params["YEAR"] = idx
+        except Exception as exc:
+            ano_invalido_msg = "ano {} indisponivel para setores censitarios ({})".format(ano, exc)
+
+    if s.get("recorte", "code") == "code" and len(codes) > 1:
+        if recorte_obj is None:
+            recorte_obj = Recorte.de_rm("temp", "RM", codes)
+        res_layer = camada_do_recorte(recorte_obj, feedback=feedback, algo=algo, extra_params=params)
+        if res_layer is None or (hasattr(res_layer, "isValid") and not res_layer.isValid()):
+            return _invalida(layer_name, "geobr {}: falha no recorte RM".format(algo))
+        res_layer = _resolve_out(res_layer, layer_name)
+        if res_layer is not None and ano_invalido_msg:
+            res_layer.ano_invalido_msg = ano_invalido_msg
+        return res_layer
+
+    code_param = codes[0] if (s.get("recorte", "code") == "code" and codes) else "all"
+    params["CODE"] = code_param
+    try:
+        out = processing.run("awanagis_brazil:{}".format(algo), params)["OUTPUT"]
+    except Exception as exc:
+        return _invalida(layer_name, "geobr {}: {}".format(algo, exc))
+    res_layer = _resolve_out(out, layer_name)
+    if res_layer is not None and ano_invalido_msg:
+        res_layer.ano_invalido_msg = ano_invalido_msg
+    return res_layer
+
+
+def _msg_arquivo_ausente(s, pasta):
+    """Aviso de 'pulou' quando o arquivo de download manual nao esta na pasta.
+
+    Idioma-base do plugin: ingles (traduzido pelo .ts no contexto 'GisBR').
+    Diz onde foi procurado e como obter a base, para o usuario nao achar que
+    e falha do plugin.
+    """
+    url = s.get("origem_url")
+    if url:
+        return QCoreApplication.translate(
+            "GisBR",
+            "file not found in the manual downloads folder ({folder}); this "
+            "dataset requires a gov.br login, so download it from {url} and "
+            "save it in that folder"
+        ).format(folder=pasta, url=url)
+    return QCoreApplication.translate(
+        "GisBR",
+        "file not found in the manual downloads folder ({folder}); download "
+        "the dataset from its official portal and save it in that folder"
+    ).format(folder=pasta)
+
+
+def _msg_fonte_indisponivel(s):
+    """Aviso de 'pulou' quando a fonte possui a chave 'indisponivel'.
+
+    Formata motivo e origem_url para orientar o usuario (D8).
+    """
+    motivo = s.get("indisponivel")
+    url = s.get("origem_url")
+    if url:
+        return QCoreApplication.translate(
+            "GisBR",
+            "source unavailable ({reason}); see official portal at {url}"
+        ).format(reason=motivo, url=url)
+    return QCoreApplication.translate(
+        "GisBR",
+        "source unavailable ({reason})"
+    ).format(reason=motivo)
+
+
+def _busca_camada(s, layer_name, uf, cql, usa_bbox, bbox, code_muni, gpkg_path,
+                  feedback=None, caminho_manual=None, censo_ano=None, nome_muni=None,
+                  recorte=None, force=False):
+    proto = s.get("protocolo")
+    srs = s.get("srs", "EPSG:4674")
+    if proto == "wfs":
+        type_name = s["type_name"].replace("{uf}", uf)
+        return wfs.fetch_layer(s["endpoint"], type_name, layer_name, srs=srs,
+                               cql_filter=cql, bbox=(bbox if usa_bbox else None),
+                               feedback=feedback)
+    if proto == "arcgis":
+        return arcgis_rest.fetch_layer(s["endpoint"], s["layer_id"], layer_name,
+                                       srs=srs, where=cql,
+                                       bbox=(bbox if usa_bbox else None),
+                                       feedback=feedback)
+    if proto == "geobr":
+        ano = censo_ano if s.get("id") == "geobr_setores" else None
+        return _carrega_geobr(s, recorte or code_muni, layer_name, ano=ano, feedback=feedback)
+    if proto == "arquivo":
+        return local_file.fetch_layer(caminho_manual, layer_name, srs=srs,
+                                      feedback=feedback)
+    if proto == "zip_remoto":
+        url = s.get("url") or s.get("endpoint") or s.get("origem_url")
+        subset = s.get("subset")
+        return zip_remoto.fetch_layer(url, layer_name, srs=srs, subset=subset,
+                                      feedback=feedback, cache_id=s.get("cache_id"),
+                                      refresh=force)
+    if proto == "ibge_tabular":
+        agregado = s["agregado"]
+        variaveis = s.get("variaveis", "all")
+        classificacao = s.get("classificacao")
+        periodo = s.get("periodo_default", "-1")
+        # modo RM: lista de códigos -> localidades=N6[a,b,c] (D9); modo
+        # município: a lista de 1 elemento produz a MESMA URL de antes
+        if recorte is not None:
+            codes_param = list(recorte.codes)
+            nomes_param = list(recorte.nomes) if recorte.nomes else None
+            if nomes_param is None and isinstance(nome_muni, str):
+                nomes_param = nome_muni
+        else:
+            codes_param = code_muni
+            nomes_param = nome_muni
+        tbl = ibge_agregados.fetch_layer(
+            agregado, codes_param, layer_name,
+            variaveis=variaveis, periodo=periodo,
+            classificacao=classificacao, feedback=feedback
+        )
+        if tbl is None or not tbl.isValid():
+            return tbl
+        poly_layer, rel = agro_pipeline.tabela_para_camada(
+            tbl, codes_param, nome_muni=nomes_param,
+            layer_name=layer_name, feedback=feedback
+        )
+        if poly_layer is not None:
+            poly_layer.relatorio = rel
+            for prop in ("data_extracao", "fonte"):
+                val = tbl.customProperty(prop)
+                if val is not None:
+                    poly_layer.setCustomProperty(prop, val)
+        return poly_layer
+    return None
+
+
+# Ranking da chave declarativa `escala_max` das fontes (D4): municipio=0,
+# regional=2 (cobre micro, RM e meso), estado=3, macrorregiao=4. Fonte fica
+# disponível quando recorte.escala <= rank(escala_max).
+_ESCALA_MAX_RANK = {"municipio": 0, "regional": 2, "estado": 3, "macrorregiao": 4}
+
+# Nome da escala do recorte para a mensagem do D8 (em inglês; PT-BR vem do .ts).
+_ESCALA_NOME = {0: "municipality", 1: "regional", 2: "regional", 3: "state", 4: "macro-region"}
+
+
+def _fora_do_recorte(s, recorte) -> str | None:
+    proto = s.get("protocolo")
+    if proto == "osm" and recorte.e_agregado:
+        if recorte.tipo == "rm":
+            # D5 da rodada 22: no modo RM, osm_vias sai da base pré-processada
+            # do gisbr_base (github_release); osm_pois continua município-only.
+            if s.get("base_rm"):
+                return None
+            tag = next((src.get("base_rm", {}).get("tag") for src in SOURCES if src.get("base_rm")), "unknown")
+            return QCoreApplication.translate(
+                "GisBR",
+                "the pre-built OSM base for metropolitan regions ({tag}) has only "
+                "the road network, no POIs; choose the Municipality extent to load POIs"
+            ).format(tag=tag)
+        return QCoreApplication.translate("GisBR", "a rede viária e os POIs do OpenStreetMap rodam por município; escolha o recorte Município para carregá-los")
+    escala_max = _ESCALA_MAX_RANK.get(s.get("escala_max"))
+    if escala_max is not None and recorte.escala > escala_max:
+        return QCoreApplication.translate(
+            "GisBR", "unavailable at the {scale} scale (too heavy); choose a smaller area"
+        ).format(scale=_ESCALA_NOME.get(recorte.escala, "regional"))
+    ufs = s.get("ufs")
+    if ufs and recorte.siglas_uf and not set(recorte.siglas_uf) <= set(ufs):
+        return QCoreApplication.translate(
+            "GisBR", "state source ({ufs}); not available for this area"
+        ).format(ufs=", ".join(ufs))
+    return None
+
+
+def carregar_fontes(source_ids, code_muni, nome_muni, bbox, gpkg_path,
+                    add_basemap=False, force=False, feedback=None,
+                    *, recorte=None, censo_ano=None, censo_datasets=(), mapbiomas_ano=None):
+    if recorte is None:
+        from .recorte import Recorte
+        recorte = Recorte.de_municipio(code_muni, nome_muni, bbox)
+
+    def log(m):
+        if feedback is not None:
+            feedback.pushInfo(m)
+
+    if gpkg_path and not gpkg_path.lower().endswith(".gpkg"):
+        gpkg_path = gpkg_path + ".gpkg"
+
+    uf = _UF_POR_CODIGO.get(str(recorte.codes[0])[:2], "").lower() if recorte.codes else ""
+    res = {"ok": [], "falhou": [], "pulou": []}
+    existentes = _layers_existentes(gpkg_path)
+    poligono = None
+    poligono_tentado = False
+
+    valid_source_ids = []
+    for sid in source_ids:
+        s = next((x for x in SOURCES if x["id"] == sid), None)
+        if not s:
+            valid_source_ids.append(sid)
+            continue
+        motivo = _fora_do_recorte(s, recorte)
+        if motivo:
+            res["pulou"].append((sid, motivo))
+            log("Aviso: {} — {}".format(sid, motivo))
+        else:
+            valid_source_ids.append(sid)
+    source_ids = valid_source_ids
+
+    def _obter_poligono():
+        nonlocal poligono, poligono_tentado
+        if poligono_tentado:
+            return poligono
+        poligono_tentado = True
+
+        from . import recorte as recorte_mod
+
+        nome_limite = recorte.nome_camada_limite  # D7: rm_<id_rm>; None no modo município
+        if nome_limite and not force and nome_limite in existentes:
+            layer = QgsVectorLayer("{}|layername={}".format(gpkg_path, nome_limite), recorte.rotulo, "ogr")
+            if layer.isValid():
+                poligono = layer
+                if recorte.tipo in ("uf", "macro"):
+                    import processing
+                    try:
+                        res_diss = processing.run("native:dissolve", {
+                            "INPUT": poligono,
+                            "OUTPUT": "TEMPORARY_OUTPUT"
+                        })
+                        dissolved = res_diss.get("OUTPUT")
+                        if dissolved and dissolved.isValid():
+                            poligono = dissolved
+                        else:
+                            log("Aviso: falha no dissolve, usando malha original")
+                    except Exception as e:
+                        log("Aviso: falha no dissolve ({})".format(e))
+                return poligono
+
+        if recorte.tipo == "municipio":
+            poligono = _municipio_poligono(recorte.codes[0])
+            if poligono is not None:
+                return poligono
+
+        poligono = recorte_mod.camada_do_recorte(recorte, feedback=feedback)
+
+        if nome_limite and poligono is not None and poligono.isValid():
+            ok, msg = _grava_gpkg(poligono, gpkg_path, nome_limite)
+            if ok:
+                existentes.add(nome_limite)
+                gl = QgsVectorLayer("{}|layername={}".format(gpkg_path, nome_limite), recorte.rotulo, "ogr")
+                if gl.isValid():
+                    from qgis.core import QgsProject
+                    QgsProject.instance().addMapLayer(gl)
+                    log("OK: {}".format(nome_limite))
+            else:
+                log("Aviso: falha ao gravar limite da RM: {}".format(msg))
+
+        if recorte.tipo in ("uf", "macro") and poligono is not None and poligono.isValid():
+            import processing
+            try:
+                res_diss = processing.run("native:dissolve", {
+                    "INPUT": poligono,
+                    "OUTPUT": "TEMPORARY_OUTPUT"
+                })
+                dissolved = res_diss.get("OUTPUT")
+                if dissolved and dissolved.isValid():
+                    poligono = dissolved
+                else:
+                    log("Aviso: falha no dissolve, usando malha original")
+            except Exception as e:
+                log("Aviso: falha no dissolve ({})".format(e))
+
+        return poligono
+
+
+    raster_sources = [s for s in _por_id(source_ids) if s.get("protocolo") == "raster_cog"]
+    for s in raster_sources:
+        sid = s["id"]
+        if sid == "mapbiomas_cobertura" and mapbiomas_ano:
+            ano = mapbiomas_ano
+        else:
+            ano = s.get("ano_default") or s.get("ano", "")
+        gpkg_dir = os.path.dirname(gpkg_path) if gpkg_path else ""
+        tif_filename = "{}_{}_{}.tif".format(sid, ano, recorte.sufixo) if ano else "{}_{}.tif".format(sid, recorte.sufixo)
+        tif_path = os.path.join(gpkg_dir, tif_filename)
+
+        layer_name = "{}_{}".format(sid, recorte.sufixo)
+
+        if (not force) and os.path.exists(tif_path):
+            res["pulou"].append((sid, "ja existe ({}) (marque 'Atualizar bases já baixadas' para rebaixar)".format(tif_filename)))
+            continue
+
+        poligono = _obter_poligono()
+        if poligono is None:
+            res["falhou"].append((sid, "nao obtive o poligono do recorte ({}) p/ recorte".format(recorte.rotulo)))
+            continue
+
+        url_template = s.get("url_template")
+        if url_template and ano:
+            url = url_template.format(ano=ano)
+        else:
+            url = s.get("endpoint") or s.get("url") or s.get("origem_url")
+        rl = cog_raster.fetch_layer(
+            url,
+            poligono,
+            tif_path,
+            layer_name=layer_name,
+            feedback=feedback
+        )
+
+        if rl is None or not rl.isValid():
+            msg = getattr(rl, "error_msg", "camada raster invalida") if rl else "falha no conector cog_raster"
+            res["falhou"].append((sid, msg))
+            continue
+
+        proj = QgsProject.instance()
+        proj.addMapLayer(rl, False)
+        proj.layerTreeRoot().addLayer(rl)
+
+        res["ok"].append(sid)
+        log("OK: {}".format(layer_name))
+
+    raster_ids = set(s["id"] for s in raster_sources)
+    source_ids = [sid for sid in source_ids if sid not in raster_ids]
+
+    # ponytail: OSM é special-case — despacha pipelines especificos por fonte (osm_vias, osm_pois, etc)
+    osm_sources = [s for s in _por_id(source_ids) if s.get("protocolo") == "osm"]
+    for osm_source in osm_sources:
+        sid = osm_source["id"]
+        if sid == "osm_vias":
+            sufixo = recorte.sufixo
+            if (not force) and osm_pipeline.osm_vias_ja_existe(existentes, sufixo):
+                res["pulou"].append((sid, "ja existe no GeoPackage (osm_links_{}/osm_nodes_{}) (marque 'Atualizar bases já baixadas' para rebaixar)".format(sufixo, sufixo)))
+            else:
+                if recorte.tipo == "rm":
+                    result = osm_pipeline.importar_rede_rm(recorte, gpkg_path, force=force, feedback=feedback)
+                else:
+                    result = osm_pipeline.build_osm_municipal_network(sufixo, recorte.rotulo, gpkg_path, force=force, feedback=feedback)
+                meta = result.get("metadata", {})
+                if meta.get("cancelado"):
+                    # o botao "Cancelar" do painel chama feedback.cancel();
+                    # sem excecao, a fonte volta como pulada, nao como falha.
+                    res["pulou"].append((sid, "cancelado pelo usuário"))
+                    log("Aviso: {} — cancelado pelo usuário".format(sid))
+                elif meta.get("pulou"):
+                    res["pulou"].append((sid, meta["pulou"]))
+                    log("Aviso: {} — {}".format(sid, meta["pulou"]))
+                elif meta.get("sem_vias"):
+                    # regra da casa: 0 feições entra em pulou com aviso, nao em falhou
+                    res["pulou"].append((sid, meta.get("erro", "nenhuma via")))
+                    log("Aviso: {} — {}".format(sid, meta.get("erro", "nenhuma via")))
+                elif meta.get("gpkg_ok"):
+                    # Carregar DO GPKG, não da memory — persistence real
+                    osm_links = QgsVectorLayer("{}|layername=osm_links_{}".format(gpkg_path, sufixo), "osm_links - {}".format(recorte.rotulo), "ogr")
+                    osm_nodes = QgsVectorLayer("{}|layername=osm_nodes_{}".format(gpkg_path, sufixo), "osm_nodes - {}".format(recorte.rotulo), "ogr")
+                    # osm_problemas é aditivo: GPKGs antigos (pre-verificacao
+                    # topologica) nao tem essa camada, e isso nao falha a fonte.
+                    osm_problemas = QgsVectorLayer("{}|layername=osm_problemas_{}".format(gpkg_path, sufixo), "osm_problemas - {}".format(recorte.rotulo), "ogr")
+
+                    for layer in (osm_links, osm_nodes, osm_problemas):
+                        if layer and layer.isValid():
+                            if "data_extracao" in meta:
+                                layer.setCustomProperty("data_extracao", meta["data_extracao"])
+                            if "fonte" in meta:
+                                layer.setCustomProperty("fonte", meta["fonte"])
+
+                    if osm_links.isValid():
+                        QgsProject.instance().addMapLayer(osm_links)
+                        log("OK: osm_links (GPKG)")
+                    if osm_nodes.isValid():
+                        QgsProject.instance().addMapLayer(osm_nodes)
+                        log("OK: osm_nodes (GPKG)")
+                    if osm_problemas.isValid():
+                        QgsProject.instance().addMapLayer(osm_problemas)
+                        log("OK: osm_problemas (GPKG)")
+
+                    if "atribuicao" in meta:
+                        log(meta["atribuicao"])
+
+                    if osm_links.isValid() and osm_nodes.isValid():
+                        res["ok"].append(sid)
+                    else:
+                        res["falhou"].append((sid, "falha ao carregar OSM do GPKG"))
+                else:
+                    res["falhou"].append((sid, "OSM: pipeline falhou — {}".format(meta.get("erro") or "desconhecido")))
+        elif sid == "osm_pois":
+            poi_layer_name = "osm_pois_{}".format(code_muni)
+            area_layer_name = "osm_pois_area_{}".format(code_muni)
+            if (not force) and poi_layer_name in existentes and area_layer_name in existentes:
+                res["pulou"].append((sid, "ja existe no GeoPackage ({}/{}) (marque 'Atualizar bases já baixadas' para rebaixar)".format(poi_layer_name, area_layer_name)))
+            else:
+                result = poi_pipeline.build_osm_municipal_pois(recorte.sufixo, recorte.rotulo, gpkg_path, force=force, feedback=feedback)
+                meta = result.get("metadata", {})
+                if meta.get("sem_pois"):
+                    # regra da casa: 0 feições entra em pulou com aviso, nao em falhou
+                    res["pulou"].append((sid, meta.get("erro", "nenhum POI")))
+                    log("Aviso: {} — {}".format(sid, meta.get("erro", "nenhum POI")))
+                elif meta.get("gpkg_ok"):
+                    # Carregar DO GPKG, não da memory — persistence real
+                    osm_pois = QgsVectorLayer("{}|layername={}".format(gpkg_path, poi_layer_name), "osm_pois - {}".format(nome_muni or code_muni), "ogr")
+                    if osm_pois.isValid():
+                        QgsProject.instance().addMapLayer(osm_pois)
+                        log("OK: osm_pois (GPKG)")
+                    if meta.get("area_layer_criada"):
+                        osm_pois_area = QgsVectorLayer("{}|layername={}".format(gpkg_path, area_layer_name), "osm_pois_area - {}".format(nome_muni or code_muni), "ogr")
+                        if osm_pois_area.isValid():
+                            QgsProject.instance().addMapLayer(osm_pois_area)
+                            log("OK: osm_pois_area (GPKG)")
+                    if osm_pois.isValid():
+                        res["ok"].append(sid)
+                    else:
+                        res["falhou"].append((sid, "falha ao carregar OSM POI do GPKG"))
+                else:
+                    res["falhou"].append((sid, "OSM POI: pipeline falhou — {}".format(meta.get("erro", "desconhecido"))))
+        else:
+            res["falhou"].append((sid, "fonte OSM desconhecida: {}".format(sid)))
+
+    osm_ids = set(s["id"] for s in osm_sources)
+    source_ids = [s for s in source_ids if s not in osm_ids]
+
+    for s in _por_id(source_ids):
+        proto = s.get("protocolo")
+        if proto == "basemap":
+            continue
+        if proto not in _PROTOCOLOS:
+            res["pulou"].append((s["id"], "conector {} ainda nao implementado".format(proto)))
+            continue
+
+        layer_name = "{}_{}".format(s["id"], recorte.sufixo)
+        if (not force) and layer_name in existentes:
+            res["pulou"].append((s["id"], "ja existe no GeoPackage ({}) (marque 'Atualizar bases já baixadas' para rebaixar)".format(layer_name)))
+            continue
+
+        if s.get("indisponivel"):
+            res["pulou"].append((s["id"], _msg_fonte_indisponivel(s)))
+            continue
+
+        # arquivo de download manual ausente e 'pulou' (como requer_parquet):
+        # o aviso diz qual pasta foi olhada e de onde baixar
+        caminho_manual = None
+        if proto == "arquivo":
+            pasta = _pasta_downloads_manuais()
+            caminho_manual = local_file.resolve_arquivo(pasta, s.get("arquivo_glob") or [])
+            if caminho_manual is None:
+                res["pulou"].append((s["id"], _msg_arquivo_ausente(s, pasta)))
+                continue
+
+        cql, usa_bbox = _filtro_para(s, recorte)
+        if cql and (s.get("filtro") or {}).get("tipo") == "cql_nome" and recorte.e_agregado:
+            log("filtro por nome: {} nomes de municípios pedidos para {} (a base pode grafar diferente do IBGE)".format(len(recorte.nomes), s["id"]))
+
+        # em modo RM o bbox do pedido sai do retângulo envolvente do próprio
+        # recorte (mesmo papel do bbox do município; o clip pelo polígono da RM
+        # continua afunilando depois) — sem isto, fontes bbox pediram a base
+        # nacional inteira. Só para fonte que de fato pede bbox ao servidor.
+        bbox_req = bbox
+        if _usou_bbox(s, usa_bbox) and recorte.e_agregado and not bbox_req:
+            _poly = _obter_poligono()
+            if _poly is not None:
+                _ext = _poly.extent()
+                bbox_req = (_ext.xMinimum(), _ext.yMinimum(), _ext.xMaximum(), _ext.yMaximum())
+            else:
+                res["falhou"].append((s["id"], "nao obtive o poligono do recorte ({}) p/ recorte".format(recorte.rotulo)))
+                continue
+
+        layer = _busca_camada(s, layer_name, uf, cql, usa_bbox, bbox_req, recorte.sufixo,
+                              gpkg_path, feedback=feedback,
+                              caminho_manual=caminho_manual,
+                              censo_ano=censo_ano,
+                              nome_muni=recorte.rotulo,
+                              recorte=recorte,
+                              force=force)
+        if layer is None or not layer.isValid():
+            msg = getattr(layer, "error_msg", "camada invalida") if layer else "protocolo desconhecido"
+            res["falhou"].append((s["id"], msg))
+            continue
+
+        # base nao retornou nada (ex.: aterro sem feicao no municipio)
+        if layer.featureCount() == 0:
+            res["pulou"].append((s["id"], "sem feicoes para este municipio (base nao retornou nada)"))
+            continue
+
+        rel = getattr(layer, "relatorio", None)
+        if rel and rel.get("produtos_aproveitados") == 0:
+            msg = "sem produtos com valor para este municipio"
+            if rel.get("avisos"):
+                msg = rel["avisos"][0]
+            res["pulou"].append((s["id"], msg))
+            log("Aviso: {} — {}".format(s["id"], msg))
+            continue
+
+        if rel and rel.get("avisos"):
+            for aviso in rel["avisos"]:
+                log("Aviso: {}".format(aviso))
+
+        # fontes filtradas por bbox -> recorta pelo POLIGONO do municipio
+        if _usou_bbox(s, usa_bbox):
+            poligono = _obter_poligono()
+            if poligono is None:
+                res["falhou"].append((s["id"], "nao obtive o poligono do recorte ({}) p/ recorte".format(recorte.rotulo)))
+                continue
+            layer = _recorta_poligono(layer, poligono, layer_name)
+            if layer is None or not layer.isValid():
+                res["falhou"].append((s["id"], getattr(layer, "error_msg", "falha no recorte")))
+                continue
+            if layer.featureCount() == 0:
+                res["pulou"].append((s["id"], "sem feicoes dentro do municipio (apos recorte)"))
+                continue
+
+        if s.get("id") == "geobr_setores":
+            ano_invalido_msg = getattr(layer, "ano_invalido_msg", None)
+            if ano_invalido_msg:
+                log("Aviso: {}".format(ano_invalido_msg))
+            elif censo_ano and censo_datasets:
+                # D10: tamanho do download ANTES de baixar
+                try:
+                    for _ds in censo_datasets:
+                        _row = catalog_censo.select(censo_ano, _ds)
+                        _size = _row.get("size", 0)
+                        log("[censo] {}{}".format(
+                            _row.get("file_name", "?"),
+                            " — {:.1f} MB (baixa uma vez; fica em cache)".format(
+                                _size / (1024.0 * 1024.0)) if _size else ""))
+                except Exception as exc:
+                    log("Aviso: catalogo censobr indisponivel ({})".format(exc))
+                try:
+                    joined_layer, rel = censo_join.anexar_censo(
+                        layer, censo_ano, censo_datasets,
+                        code_muni=(None if recorte.e_agregado else recorte.sufixo),
+                        feedback=feedback
+                    )
+                    for _info in rel.get("infos", []):
+                        log(_info)
+                    for _aviso in rel.get("avisos", []):
+                        log("Aviso: {}".format(_aviso))
+                    if rel.get("datasets_ok"):
+                        log("censobr: setores casados: {} | sem correspondencia: {}".format(
+                            rel.get("casados", 0), rel.get("sem_par", 0)))
+                    if joined_layer is not None and getattr(joined_layer, "isValid", lambda: True)():
+                        layer = joined_layer
+                except Exception as exc:
+                    log("Aviso: {}".format(exc))
+
+        rede = s.get("rede")
+        if rede:
+            from . import rede_pipeline
+            layer_para_rede = layer
+            layer_rem_dup = None
+            layer_prob_dup = None
+            rel_dup = {}
+
+            dup_info = s.get("duplicidade") or (rede.get("duplicidade") if isinstance(rede, dict) else None)
+            if dup_info:
+                contra_id = dup_info["contra"]
+                contra_name = "{}_{}".format(contra_id, recorte.sufixo)
+                
+                if contra_name in existentes:
+                    layer_fed = QgsVectorLayer("{}|layername={}".format(gpkg_path, contra_name), "fed", "ogr")
+                    # D13/critério 10: os trechos planejados do DNIT estão na
+                    # camada removidos (saem da links) — são eles que fazem o
+                    # federal do DER ficar e ser apontado como federal_sem_par.
+                    layer_fed_pla = None
+                    rem_fed_name = rede_pipeline._nomes_camadas(contra_name)["removidos"]
+                    if rem_fed_name in existentes:
+                        _l_pla = QgsVectorLayer("{}|layername={}".format(gpkg_path, rem_fed_name), "fed_pla", "ogr")
+                        if _l_pla.isValid():
+                            layer_fed_pla = _l_pla
+                    if layer_fed.isValid():
+                        cfg_rede_fed = None
+                        for sfed in SOURCES:
+                            if sfed["id"] == contra_id:
+                                cfg_rede_fed = sfed.get("rede")
+                                break
+                        layer_est_limpa, layer_rem_dup, layer_prob_dup, rel_dup = rede_pipeline.remove_duplicidade_federal(
+                            layer_para_rede, layer_fed, cfg_dup=dup_info, cfg_rede_fed=cfg_rede_fed, feedback=feedback,
+                            layer_fed_pla=layer_fed_pla
+                        )
+                        layer_para_rede = layer_est_limpa
+                else:
+                    log("Aviso: {} — camada federal {} não encontrada no GeoPackage; duplicidade ignorada".format(s["id"], contra_name))
+
+            res_rede = rede_pipeline.montar_rede(layer_para_rede, rede, poligono, layer_name, feedback=feedback)
+            layer_links = res_rede.get("links")
+            layer_nos = res_rede.get("nos")
+            layer_probs = res_rede.get("problemas")
+            layer_rems = res_rede.get("removidos")
+            
+            if layer_links.featureCount() == 0:
+                res["pulou"].append((s["id"], "todos os trechos eram planejados/inexistentes"))
+                continue
+
+            nomes_cam = rede_pipeline._nomes_camadas(layer_name)
+
+            if layer_rem_dup and layer_rem_dup.isValid():
+                if layer_rems and layer_rems.isValid():
+                    layer_rems.startEditing()
+                    for f in layer_rem_dup.getFeatures():
+                        layer_rems.addFeature(f)
+                    layer_rems.commitChanges()
+                else:
+                    layer_rems = layer_rem_dup
+                    layer_rems.setName(nomes_cam["removidos"])
+
+            if layer_prob_dup and layer_prob_dup.isValid():
+                if layer_probs and layer_probs.isValid():
+                    layer_probs.startEditing()
+                    for f in layer_prob_dup.getFeatures():
+                        layer_probs.addFeature(f)
+                    layer_probs.commitChanges()
+                else:
+                    layer_probs = layer_prob_dup
+                    layer_probs.setName(nomes_cam["problemas"])
+
+            nome_proj_base = "{} - {}".format(s.get("nome", s["id"]), nome_muni or code_muni)
+            
+            # Gravar links
+            ok, msg = _grava_gpkg(layer_links, gpkg_path, layer_links.name())
+            if not ok:
+                res["falhou"].append((s["id"], "gravar GeoPackage (links): {}".format(msg)))
+                continue
+            existentes.add(layer_links.name())
+            
+            gl_links = QgsVectorLayer("{}|layername={}".format(gpkg_path, layer_links.name()), "{} (links)".format(nome_proj_base), "ogr")
+            if gl_links.isValid():
+                QgsProject.instance().addMapLayer(gl_links)
+                res["ok"].append(s["id"])
+                log("OK: {}".format(layer_links.name()))
+
+            # Gravar nos
+            ok, msg = _grava_gpkg(layer_nos, gpkg_path, layer_nos.name())
+            if ok:
+                existentes.add(layer_nos.name())
+                gl_nos = QgsVectorLayer("{}|layername={}".format(gpkg_path, layer_nos.name()), "{} (nos)".format(nome_proj_base), "ogr")
+                if gl_nos.isValid():
+                    QgsProject.instance().addMapLayer(gl_nos)
+                    log("OK: {}".format(layer_nos.name()))
+
+            # Gravar problemas
+            if layer_probs and layer_probs.isValid() and layer_probs.featureCount() > 0:
+                ok, msg = _grava_gpkg(layer_probs, gpkg_path, layer_probs.name())
+                if ok:
+                    existentes.add(layer_probs.name())
+                    gl_probs = QgsVectorLayer("{}|layername={}".format(gpkg_path, layer_probs.name()), "{} (problemas)".format(nome_proj_base), "ogr")
+                    if gl_probs.isValid():
+                        QgsProject.instance().addMapLayer(gl_probs)
+                        log("OK: {}".format(layer_probs.name()))
+
+            # Gravar removidos
+            if layer_rems and layer_rems.isValid() and layer_rems.featureCount() > 0:
+                ok, msg = _grava_gpkg(layer_rems, gpkg_path, layer_rems.name())
+                if ok:
+                    existentes.add(layer_rems.name())
+                    gl_rems = QgsVectorLayer("{}|layername={}".format(gpkg_path, layer_rems.name()), "{} (removidos)".format(nome_proj_base), "ogr")
+                    if gl_rems.isValid():
+                        QgsProject.instance().addMapLayer(gl_rems)
+                        log("OK: {}".format(layer_rems.name()))
+            
+            rel_rede = res_rede.get("relatorio", {})
+            if rel_dup:
+                rel_rede["removidos"] = rel_rede.get("removidos", 0) + rel_dup.get("removidos", 0)
+                rel_rede["problemas"] = rel_rede.get("problemas", 0) + rel_dup.get("problemas", 0)
+            
+            msg_rel = "Relatório de rede: " + ", ".join(["{}={}".format(k, v) for k, v in rel_rede.items()])
+            log(msg_rel)
+            
+        else:
+            ok, msg = _grava_gpkg(layer, gpkg_path, layer_name)
+            if not ok:
+                res["falhou"].append((s["id"], "gravar GeoPackage: {}".format(msg)))
+                continue
+            existentes.add(layer_name)
+    
+            nome_proj = "{} - {}".format(s.get("nome", s["id"]), nome_muni or code_muni)
+            gl = QgsVectorLayer("{}|layername={}".format(gpkg_path, layer_name), nome_proj, "ogr")
+            if gl.isValid():
+                QgsProject.instance().addMapLayer(gl)
+                res["ok"].append(s["id"])
+                log("OK: {}".format(layer_name))
+            else:
+                res["falhou"].append((s["id"], "camada do GeoPackage invalida"))
+
+    if add_basemap:
+        bl = basemap.satellite_layer()
+        if bl.isValid():
+            proj = QgsProject.instance()
+            proj.addMapLayer(bl, False)            # nao adiciona a arvore ainda
+            proj.layerTreeRoot().addLayer(bl)      # anexa como ULTIMO filho = fundo
+            log("basemap de satelite adicionado (ao fundo)")
+
+    return res
