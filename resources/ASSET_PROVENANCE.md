@@ -1,15 +1,12 @@
 # AwanaGIS Asset Provenance (`resources/ASSET_PROVENANCE.md`)
 
-## Draft Product Icon (`resources/icon.svg`, `resources/icon.png`)
+## Approved Product Icon (`resources/icon.svg`, `resources/icon.png`)
 
-- **Status:** **DRAFT PROPOSAL — awaiting Awana Digital design-team signoff.**
-- **Do not treat as an approved final Awana Digital or AwanaGIS logo.**
-- **Authoring & derivation:** Newly authored vector geometry (stacked geospatial map planes and waypoint mark) created specifically for the AwanaGIS plugin, using only the official Awana Digital palette extracted in [`docs/branding/brand-tokens.json`](../docs/branding/brand-tokens.json):
-  - AD Dark Burgundy (`#6B0030`)
-  - AD Burgundy (`#8D003E`)
-  - AD Cream (`#FDF7EF`)
-  - AD Pollen (`#FFE460`)
-- **Parent-brand separation:** Does **not** copy, stretch, recolor, or mutate Awana Digital's parent rectangle, circle, square, or wordmark logos referenced in [`docs/branding/brand-guide.md`](../docs/branding/brand-guide.md).
+- **Status:** **APPROVED — derived from the official Awana Digital mark supplied by the maintainer.**
+- **Authoring & derivation:**
+  - Source mark: `551x547` RGBA PNG official Awana Digital mark provided by the project maintainer.
+  - Raster asset (`resources/icon.png`): Aspect-preserved center fit (`124x123` with 2px transparent padding) on a `128x128` RGBA canvas using Lanczos resampling, palette-quantized via `pngquant` (`--quality=85-98`) and losslessly optimized via `oxipng -o 4 --strip safe` (`9,676` bytes).
+  - Vector-wrapper asset (`resources/icon.svg`): `128x128` SVG wrapping the compressed official `icon.png` so Qt SVG consumers (`QSvgRenderer`) and PNG consumers (`QIcon`) render the identical mark.
 - **Legibility targets:** Verified by offscreen raster rendering at `16x16`, `24x24`, `32x32`, `64x64`, and `128x128` px.
 - **License:** Distributed with AwanaGIS under `GPL-2.0-or-later`.
 

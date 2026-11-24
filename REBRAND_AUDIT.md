@@ -64,7 +64,7 @@
 - **Upstream AgenticGIS:** Licensed under **GPL-2.0-or-later** (`Copyright (C) 2026 Muhammad Alichamdan <malichamdan@gmail.com>`). Original `LICENSE` copyright and license text are preserved verbatim.
 - **AwanaGIS branding-only distribution:** Continues under **GPL-2.0-or-later**, with derivative notices in `NOTICE`, `THIRD_PARTY_LICENSES.md`, `metadata.txt`, and `README.md`.
 - **Future integrations (not in this branch):** GISBR is GPL-3.0 and CoMapeo SMP is MIT; when GISBR is integrated, the combined distributable must satisfy GPL-3.0 (compatible with AgenticGIS's "or later" grant) and retain all upstream notices.
-- **Fonts & Brand Assets:** No external font binaries are bundled (native OS/QGIS font fallbacks apply). The AwanaGIS icon (`resources/icon.svg`, `resources/icon.png`) is a draft proposal in Awana Digital's palette pending design-team approval (see `resources/ASSET_PROVENANCE.md`).
+- **Fonts & Brand Assets:** No external font binaries are bundled (native OS/QGIS font fallbacks apply). The AwanaGIS icon (`resources/icon.png`, `resources/icon.svg`) is derived from the official Awana Digital mark supplied by the maintainer, resized to `128x128` and compressed (see `resources/ASSET_PROVENANCE.md`).
 
 ---
 

@@ -213,4 +213,4 @@ This branding-only baseline preserves all core QGIS, Processing, PyQGIS, GEE, CL
 
 - **License:** GNU General Public License v2.0 or later (`GPL-2.0-or-later`), see [`LICENSE`](LICENSE).
 - **Upstream attribution:** Derived from [AgenticGIS](https://github.com/ultramenid/AgenticGIS) by Muhammad Alichamdan (`1e4f70b` / `v0.4.6` + PT-BR localization `51c8a79`). See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
-- **Brand & visual identity:** Uses Awana Digital's official color palette and typography roles (`gui/brand.py`, `gui/theme.py`). `resources/icon.svg` and `resources/icon.png` are draft proposals awaiting Awana Digital design-team signoff (`resources/ASSET_PROVENANCE.md`).
+- **Brand & visual identity:** Uses Awana Digital's official color palette, typography roles (`gui/brand.py`, `gui/theme.py`), and resized/compressed official AwanaGIS icon (`resources/icon.png`, `resources/icon.svg`; see [`resources/ASSET_PROVENANCE.md`](resources/ASSET_PROVENANCE.md)).
