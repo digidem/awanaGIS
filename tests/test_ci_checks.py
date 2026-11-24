@@ -165,6 +165,10 @@ class ArchiveCheckTests(unittest.TestCase):
             ("/etc/passwd", b"root:x:0:0\n", stat.S_IFREG | 0o644),
             ("OtherRoot/plugin.py", b"x = 1\n", stat.S_IFREG | 0o644),
             ("AgenticGIS/link.py", b"/etc/passwd", stat.S_IFLNK | 0o777),
+            ("AgenticGIS/resources/aux.txt", b"x\n", stat.S_IFREG | 0o644),
+            ("AgenticGIS/con.py", b"x = 1\n", stat.S_IFREG | 0o644),
+            ("AgenticGIS/bad:name.txt", b"x\n", stat.S_IFREG | 0o644),
+            ("AgenticGIS/trailing.", b"x\n", stat.S_IFREG | 0o644),
         ]
         for member_name, data, mode in unsafe_cases:
             with self.subTest(member=member_name):
@@ -1010,6 +1014,11 @@ class RealScannerIntegrationTests(unittest.TestCase):
                 VALID_METADATA + f'about=leaked "{secret_token}"\n',
                 encoding="utf-8",
             )
+            (synth / "resources").mkdir()
+            (synth / "resources" / ".secrets.baseline.bak").write_text(
+                f'backup_token = "{secret_token}"\n',
+                encoding="utf-8",
+            )
             (synth / "style.py").write_text(
                 "x=1+" + "2" * 130 + "\n",
                 encoding="utf-8",
@@ -1028,6 +1037,7 @@ class RealScannerIntegrationTests(unittest.TestCase):
             files_flagged = {f["file"] for f in secrets_rep["checks"][0]["blocking_findings"]}
             self.assertIn("leak.py", files_flagged)
             self.assertIn("metadata.txt", files_flagged)
+            self.assertIn("resources/.secrets.baseline.bak", files_flagged)
             secrets_text = json.dumps(secrets_rep) + "\n" + check_plugin._format_scan_summary(secrets_rep)
             self.assertNotIn(secret_token, secrets_text)
 
@@ -1039,9 +1049,9 @@ class RealScannerIntegrationTests(unittest.TestCase):
                     "scan",
                     "--all-files",
                     "--exclude-files",
-                    r"metadata\.txt",
+                    r"^(\./)?metadata\.txt$",
                     "--exclude-files",
-                    r"\.secrets\.baseline",
+                    r"^(\./)?\.secrets\.baseline$",
                     ".",
                 ],
                 cwd=str(synth),

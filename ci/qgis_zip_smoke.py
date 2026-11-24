@@ -206,19 +206,23 @@ def _run_smoke() -> None:
         QCoreApplication.quit()
         QTimer.singleShot(5000, lambda: os._exit(0))
     except BaseException as exc:
+        QTimer.singleShot(100, lambda: os._exit(1))
         tb = traceback.format_exc()
         sys.stderr.write(tb + "\nAGENTICGIS_SMOKE_FAIL\n")
         sys.stderr.flush()
-        _write_result(
-            result_path,
-            {
-                "ok": False,
-                "marker": "AGENTICGIS_SMOKE_FAIL",
-                "error": str(exc),
-                "log_errors": log_errors,
-            },
-        )
-        QTimer.singleShot(100, lambda: os._exit(1))
+        try:
+            _write_result(
+                result_path,
+                {
+                    "ok": False,
+                    "marker": "AGENTICGIS_SMOKE_FAIL",
+                    "error": str(exc),
+                    "log_errors": log_errors,
+                },
+            )
+        except Exception as write_exc:
+            sys.stderr.write(f"Failed to write smoke failure result: {write_exc}\n")
+            sys.stderr.flush()
     finally:
         try:
             message_log.messageReceived.disconnect(_on_message)

@@ -158,6 +158,18 @@ def _validate_member_path(raw_name: str, is_dir: bool) -> tuple[str | None, str 
     parts = trimmed.split("/")
     if any(part in ("", ".", "..") for part in parts):
         return None, f"Unsafe path segment in archive member: {raw_name!r}"
+    win_reserved = frozenset({
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    })
+    for part in parts:
+        if any(ch in '<>:"|?*' for ch in part):
+            return None, f"Windows-invalid character in archive member: {raw_name!r}"
+        if part.endswith((" ", ".")):
+            return None, f"Trailing space or dot in archive member: {raw_name!r}"
+        if part.split(".", 1)[0].upper() in win_reserved:
+            return None, f"Windows-reserved name in archive member: {raw_name!r}"
     if parts[0] != EXPECTED_ROOT:
         return None, (
             f"Archive member {raw_name!r} is outside required root '{EXPECTED_ROOT}/'"
@@ -705,10 +717,10 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
         "--all-files",
     ]
     if exclude_metadata:
-        cmd.extend(["--exclude-files", r"metadata\.txt"])
+        cmd.extend(["--exclude-files", r"^(\./)?metadata\.txt$"])
     cmd.extend([
         "--exclude-files",
-        r"\.secrets\.baseline",
+        r"^(\./)?\.secrets\.baseline$",
         ".",
     ])
 
