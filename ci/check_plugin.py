@@ -1140,6 +1140,7 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
         "missing_in_tracked": [],
         "extra_in_tracked": [],
         "qm_loaded": False,
+        "catalogs": [],
         "errors": [],
         "ok": False,
     }
@@ -1160,10 +1161,23 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
         report["errors"].append(f"Missing source files from .pro: {missing_sources}")
         return report
 
-    tracked_ts = (i18n_dir / rel_translations[0]).resolve()
-    tracked_qm = tracked_ts.with_suffix(".qm")
-    if not tracked_ts.is_file() or not tracked_qm.is_file():
-        report["errors"].append(f"Missing tracked TS/QM catalog: {tracked_ts} / {tracked_qm}")
+    catalog_paths: list[tuple[str, Path, Path]] = []
+    for rel_ts in rel_translations:
+        tracked_ts = (i18n_dir / rel_ts).resolve()
+        tracked_qm = tracked_ts.with_suffix(".qm")
+        catalog_paths.append((rel_ts, tracked_ts, tracked_qm))
+        if not tracked_ts.is_file() or not tracked_qm.is_file():
+            report["errors"].append(f"Missing tracked TS/QM catalog: {tracked_ts} / {tracked_qm}")
+    if report["errors"]:
+        return report
+
+    lrelease_bin = shutil.which("lrelease")
+    if lrelease_bin is None and qt_major == 6:
+        qt6_lrelease = Path("/usr/lib/qt6/bin/lrelease")
+        if qt6_lrelease.is_file() and os.access(qt6_lrelease, os.X_OK):
+            lrelease_bin = str(qt6_lrelease)
+    if lrelease_bin is None:
+        report["errors"].append("Qt lrelease tool not found")
         return report
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1196,79 +1210,92 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
             return report
 
         extracted = _ts_entries(tmp_ts)
-        tracked = _ts_entries(tracked_ts)
         report["extracted_count"] = len(extracted)
-        report["tracked_count"] = len(tracked)
-        report["missing_in_tracked"] = [
-            list(item) for item in sorted(extracted - tracked)
-        ]
-        report["extra_in_tracked"] = [
-            list(item) for item in sorted(tracked - extracted)
-        ]
-        if report["missing_in_tracked"] or report["extra_in_tracked"]:
-            report["errors"].append(
-                f"Qt {qt_major} extraction mismatch: "
-                f"{len(report['missing_in_tracked'])} missing, "
-                f"{len(report['extra_in_tracked'])} extra in {tracked_ts.name}"
-            )
-            return report
 
-        lrelease_bin = shutil.which("lrelease")
-        if lrelease_bin is None and qt_major == 6:
-            qt6_lrelease = Path("/usr/lib/qt6/bin/lrelease")
-            if qt6_lrelease.is_file() and os.access(qt6_lrelease, os.X_OK):
-                lrelease_bin = str(qt6_lrelease)
-        if lrelease_bin is None:
-            report["errors"].append("Qt lrelease tool not found")
-            return report
+        for idx, (rel_ts, tracked_ts, tracked_qm) in enumerate(catalog_paths):
+            tracked = _ts_entries(tracked_ts)
+            missing = sorted(extracted - tracked)
+            extra = sorted(tracked - extracted)
+            if idx == 0:
+                report["tracked_count"] = len(tracked)
+            if missing and not report["missing_in_tracked"]:
+                report["missing_in_tracked"] = [list(item) for item in missing]
+            if extra and not report["extra_in_tracked"]:
+                report["extra_in_tracked"] = [list(item) for item in extra]
+            if missing or extra:
+                report["errors"].append(
+                    f"Qt {qt_major} extraction mismatch: "
+                    f"{len(missing)} missing, {len(extra)} extra in {tracked_ts.name}"
+                )
 
-        tmp_qm = tmp_dir / "reference.qm"
-        try:
-            lrel_proc = subprocess.run(
-                [lrelease_bin, str(tracked_ts), "-qm", str(tmp_qm)],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except subprocess.TimeoutExpired:
-            report["errors"].append("lrelease timed out after 60s")
-            return report
+            tmp_qm = tmp_dir / f"reference_{idx}_{tracked_ts.stem}.qm"
+            qm_parity = False
+            try:
+                lrel_proc = subprocess.run(
+                    [lrelease_bin, str(tracked_ts), "-qm", str(tmp_qm)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                report["errors"].append(f"lrelease timed out after 60s for {tracked_ts.name}")
+            else:
+                if lrel_proc.returncode != 0 or not tmp_qm.is_file():
+                    report["errors"].append(
+                        f"lrelease failed for {tracked_ts.name} (exit {lrel_proc.returncode}): "
+                        f"{(lrel_proc.stderr or lrel_proc.stdout).strip()[:300]}"
+                    )
+                elif tmp_qm.read_bytes() != tracked_qm.read_bytes():
+                    report["errors"].append(
+                        f"{tracked_qm.name} is out of date relative to {tracked_ts.name}; rebuild with lrelease"
+                    )
+                else:
+                    qm_parity = True
 
-        if lrel_proc.returncode != 0 or not tmp_qm.is_file():
-            report["errors"].append(
-                f"lrelease failed (exit {lrel_proc.returncode}): "
-                f"{(lrel_proc.stderr or lrel_proc.stdout).strip()[:300]}"
-            )
-            return report
+            report["catalogs"].append({
+                "catalog": rel_ts,
+                "tracked_count": len(tracked),
+                "missing_count": len(missing),
+                "extra_count": len(extra),
+                "qm_parity": qm_parity,
+                "qm_loaded": False,
+            })
 
-        if tmp_qm.read_bytes() != tracked_qm.read_bytes():
-            report["errors"].append(
-                f"{tracked_qm.name} is out of date relative to {tracked_ts.name}; rebuild with lrelease"
-            )
-            return report
+    if report["errors"]:
+        return report
 
     from qgis.PyQt.QtCore import QCoreApplication, QTranslator
 
     app = QCoreApplication.instance() or QCoreApplication([])
     app.applicationName()
-    translator = QTranslator()
-    if not translator.load(str(tracked_qm)):
-        report["errors"].append(f"QTranslator failed to load {tracked_qm}")
-        return report
-    if not QCoreApplication.installTranslator(translator):
-        report["errors"].append(f"QCoreApplication failed to install {tracked_qm}")
-        return report
-    try:
-        translated = QCoreApplication.translate("ChatDock", "Ready")
-        if translated != "Pronto":
-            report["errors"].append(
-                f"Expected translated ChatDock/Ready == 'Pronto', got {translated!r}"
-            )
-            return report
-        report["qm_loaded"] = True
-    finally:
-        QCoreApplication.removeTranslator(translator)
+    all_loaded = True
+    for cat_entry, (_rel_ts, _tracked_ts, tracked_qm) in zip(report["catalogs"], catalog_paths):
+        translator = QTranslator()
+        if not translator.load(str(tracked_qm)) or translator.isEmpty():
+            report["errors"].append(f"QTranslator failed to load {tracked_qm}")
+            all_loaded = False
+            continue
+        if not QCoreApplication.installTranslator(translator):
+            report["errors"].append(f"QCoreApplication failed to install {tracked_qm}")
+            all_loaded = False
+            continue
+        try:
+            if tracked_qm.name == "AgenticGIS_pt_BR.qm":
+                translated = QCoreApplication.translate("ChatDock", "Ready")
+                if translated != "Pronto":
+                    report["errors"].append(
+                        f"Expected translated ChatDock/Ready == 'Pronto', got {translated!r}"
+                    )
+                    all_loaded = False
+                    continue
+            cat_entry["qm_loaded"] = True
+        finally:
+            QCoreApplication.removeTranslator(translator)
 
+    if not all_loaded or report["errors"]:
+        return report
+
+    report["qm_loaded"] = True
     report["ok"] = True
     return report
 
@@ -1372,6 +1399,7 @@ def _format_i18n_summary(report: dict) -> str:
     status = "PASSED" if report["ok"] else "FAILED"
     lines = [
         f"## Qt {report['qt_major']} Linguist Check: {status}",
+        f"- Catalogs checked: {len(report.get('catalogs', []))}",
         f"- Extracted entries: {report['extracted_count']}",
         f"- Tracked entries: {report['tracked_count']}",
         f"- QM loaded & verified: {report['qm_loaded']}",

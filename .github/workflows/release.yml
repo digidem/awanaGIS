@@ -24,7 +24,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -52,9 +51,9 @@ jobs:
           python3 ci/check_plugin.py release-meta metadata.txt --tag "$TAG" --github-output "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Tagged commit $GITHUB_SHA is not reachable from origin/main"
+          COMPARE_STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}" --jq '.status')
+          if [ "$COMPARE_STATUS" != "identical" ] && [ "$COMPARE_STATUS" != "behind" ]; then
+            echo "::error::Tagged commit $GITHUB_SHA is not reachable from main (compare status: $COMPARE_STATUS)"
             exit 1
           fi
 
@@ -154,11 +153,31 @@ jobs:
             echo "::error::Published GitHub Release for $TAG already exists"
             exit 1
           elif [ "$RELEASE_STATE" = "draft" ]; then
+            EXISTING_ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)
+            while IFS= read -r asset; do
+              [ -z "$asset" ] && continue
+              case "$asset" in
+                "AgenticGIS-${VERSION}.zip"|"SHA256SUMS.txt"|"package-manifest.json") ;;
+                *)
+                  echo "::error::Existing draft release for $TAG contains unexpected asset: $asset"
+                  exit 1
+                  ;;
+              esac
+            done <<< "$EXISTING_ASSETS"
+
             gh release upload "$TAG" \
               --clobber \
               "$RUNNER_TEMP/pkg/AgenticGIS-${VERSION}.zip" \
               "$RUNNER_TEMP/pkg/SHA256SUMS.txt" \
               "$RUNNER_TEMP/pkg/package-manifest.json"
+
+            EXPECTED_ASSETS=$(printf '%s\n' "AgenticGIS-${VERSION}.zip" "SHA256SUMS.txt" "package-manifest.json" | LC_ALL=C sort)
+            FINAL_ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)
+            if [ "$FINAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
+              echo "::error::Draft release assets for $TAG do not match expected set"
+              exit 1
+            fi
+
             gh release edit "$TAG" \
               --title "AgenticGIS $TAG" \
               --prerelease="$PRERELEASE" \

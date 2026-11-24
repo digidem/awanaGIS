@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import zipfile
 from pathlib import Path
@@ -700,6 +701,129 @@ class ScannerAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertFalse(check_plugin.validate_release_metadata(dep_meta, "v0.4.6")["ok"])
+
+    def test_check_i18n_validates_all_catalogs(self):
+        pt_ts = (
+            "<TS version='2.1'><context><name>ChatDock</name>"
+            "<message><source>Ready</source><translation>Pronto</translation></message>"
+            "</context></TS>\n"
+        )
+        es_ts = (
+            "<TS version='2.1'><context><name>ChatDock</name>"
+            "<message><source>Ready</source><translation>Listo</translation></message>"
+            "</context></TS>\n"
+        )
+        stale_ts = (
+            "<TS version='2.1'><context><name>ChatDock</name>"
+            "<message><source>Missing</source><translation>Falta</translation></message>"
+            "</context></TS>\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "plugin.py").write_text("# dummy source\n", encoding="utf-8")
+            i18n = repo / "i18n"
+            i18n.mkdir()
+            (i18n / "AgenticGIS.pro").write_text(
+                "SOURCES = ../plugin.py\n"
+                "TRANSLATIONS = AgenticGIS_pt_BR.ts \\\n"
+                "    AgenticGIS_es.ts\n",
+                encoding="utf-8",
+            )
+            (i18n / "AgenticGIS_pt_BR.ts").write_text(pt_ts, encoding="utf-8")
+            (i18n / "AgenticGIS_pt_BR.qm").write_bytes(b"QM_PT_BR")
+            (i18n / "AgenticGIS_es.ts").write_text(stale_ts, encoding="utf-8")
+            (i18n / "AgenticGIS_es.qm").write_bytes(b"QM_ES")
+
+            def fake_subproc(cmd, **_kwargs):
+                if cmd[0] == "pylupdate6":
+                    out_ts = Path(cmd[cmd.index("-ts") + 1])
+                    out_ts.write_text(pt_ts, encoding="utf-8")
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+                if Path(cmd[0]).name == "lrelease":
+                    in_ts = Path(cmd[1])
+                    out_qm = Path(cmd[cmd.index("-qm") + 1])
+                    data = b"QM_PT_BR" if in_ts.stem.endswith("pt_BR") else b"QM_ES"
+                    out_qm.write_bytes(data)
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+                raise AssertionError(f"Unexpected command: {cmd}")
+
+            # Second catalog string mismatch MUST fail even though pt_BR matches
+            with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                 patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
+                bad_ts = check_plugin.check_i18n(repo, 6)
+            self.assertFalse(bad_ts["ok"])
+            self.assertTrue(any("AgenticGIS_es.ts" in e for e in bad_ts["errors"]), bad_ts)
+
+            # Fix second TS, leave second QM stale -> MUST fail
+            (i18n / "AgenticGIS_es.ts").write_text(es_ts, encoding="utf-8")
+            (i18n / "AgenticGIS_es.qm").write_bytes(b"STALE_ES")
+            with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                 patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
+                bad_qm = check_plugin.check_i18n(repo, 6)
+            self.assertFalse(bad_qm["ok"])
+            self.assertTrue(any("AgenticGIS_es.qm" in e for e in bad_qm["errors"]), bad_qm)
+
+            # Matching second QM -> passes, checking both catalogs
+            (i18n / "AgenticGIS_es.qm").write_bytes(b"QM_ES")
+            installed = []
+
+            class FakeTranslator:
+                def __init__(self):
+                    self.path = None
+
+                def load(self, path):
+                    self.path = Path(path)
+                    return True
+
+                def isEmpty(self):
+                    return False
+
+            class FakeCoreApp:
+                _active = None
+
+                @classmethod
+                def instance(cls):
+                    return cls()
+
+                def applicationName(self):
+                    return "fake"
+
+                @classmethod
+                def installTranslator(cls, tr):
+                    cls._active = tr.path.name
+                    installed.append(cls._active)
+                    return True
+
+                @classmethod
+                def removeTranslator(cls, tr):
+                    if cls._active == tr.path.name:
+                        cls._active = None
+
+                @classmethod
+                def translate(cls, ctx, src):
+                    if ctx == "ChatDock" and src == "Ready" and cls._active == "AgenticGIS_pt_BR.qm":
+                        return "Pronto"
+                    return src
+
+            fake_qtcore = types.ModuleType("qgis.PyQt.QtCore")
+            fake_qtcore.QCoreApplication = FakeCoreApp
+            fake_qtcore.QTranslator = FakeTranslator
+            fake_pyqt = types.ModuleType("qgis.PyQt")
+            fake_pyqt.QtCore = fake_qtcore
+            fake_qgis = types.ModuleType("qgis")
+            fake_qgis.PyQt = fake_pyqt
+
+            with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                 patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc), \
+                 patch.dict(
+                     sys.modules,
+                     {"qgis": fake_qgis, "qgis.PyQt": fake_pyqt, "qgis.PyQt.QtCore": fake_qtcore},
+                 ):
+                ok_rep = check_plugin.check_i18n(repo, 6)
+            self.assertTrue(ok_rep["ok"], ok_rep)
+            self.assertTrue(ok_rep["qm_loaded"])
+            self.assertEqual(len(ok_rep["catalogs"]), 2)
+            self.assertEqual(installed, ["AgenticGIS_pt_BR.qm", "AgenticGIS_es.qm"])
 
 
 class RealScannerIntegrationTests(unittest.TestCase):
