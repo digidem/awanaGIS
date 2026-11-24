@@ -7,6 +7,7 @@ import threading
 import unicodedata
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
 from .manifest import (
@@ -437,27 +438,30 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
         )
         with urllib.request.urlopen(req, timeout=timeout, context=ssl_ctx) as resp:  # strict TLS with bundled intermediates
             status_code = getattr(resp, "status", 200)
-            read_limit = (2 * 1024 * 1024) if proto == "wfs" else 65536
+            read_limit = (8 * 1024 * 1024) if proto == "wfs" else 65536
             snippet = resp.read(read_limit).decode("utf-8", errors="replace") if method == "GET" else ""
             if proto == "wfs":
-                low_snip = snippet.lstrip().lower()
-                is_error_doc = (
-                    not low_snip.startswith("<")
-                    or low_snip.startswith(("<!doctype html", "<html"))
-                    or any(tok in snippet for tok in ("<ServiceException", "<ows:Exception", "<ExceptionReport"))
-                )
-                has_caps_xml = bool(
-                    re.search(r"<(?:[A-Za-z_][\w.-]*:)?WFS_Capabilities(?:\s|>)", snippet)
-                    and re.search(r"<(?:[A-Za-z_][\w.-]*:)?FeatureTypeList(?:\s|>)", snippet)
-                )
-                if not is_error_doc and has_caps_xml:
-                    typename = entry.get("typename") or ""
-                    layer_found = (not typename) or bool(
-                        re.search(
-                            rf"<(?:[A-Za-z_][\w.-]*:)?Name>\s*{re.escape(typename)}\s*</(?:[A-Za-z_][\w.-]*:)?Name>",
-                            snippet,
-                        )
+                parsed_root = None
+                if "<!ENTITY" not in snippet.upper():
+                    try:
+                        parsed_root = ET.fromstring(snippet)
+                    except ET.ParseError:
+                        parsed_root = None
+                root_local = parsed_root.tag.rsplit("}", 1)[-1] if parsed_root is not None else ""
+                ft_list = None
+                if root_local == "WFS_Capabilities":
+                    ft_list = next(
+                        (el for el in parsed_root.iter() if el.tag.rsplit("}", 1)[-1] == "FeatureTypeList"),
+                        None,
                     )
+                if root_local == "WFS_Capabilities" and ft_list is not None:
+                    typename = (entry.get("typename") or "").strip()
+                    ft_names = {
+                        (el.text or "").strip()
+                        for el in ft_list.iter()
+                        if el.tag.rsplit("}", 1)[-1] == "Name" and (el.text or "").strip()
+                    }
+                    layer_found = (not typename) or (typename in ft_names)
                     svc_status = "reachable" if layer_found else "offline_http_error"
                     reason_txt = (
                         "WFS GetCapabilities reachable and typename present."
