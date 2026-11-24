@@ -802,15 +802,14 @@ def _is_import_guard_try(node: ast.Try) -> bool:
     return False
 
 
-def _is_sibling_import_try(node: ast.Try) -> bool:
-    for handler in node.handlers:
-        if handler.type is None:
-            continue
-        types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-        for typ in types:
-            if isinstance(typ, ast.Name) and typ.id in ("ImportError", "ModuleNotFoundError"):
-                return True
-    return False
+def _is_import_error_handler(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return False
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(
+        isinstance(typ, ast.Name) and typ.id in ("ImportError", "ModuleNotFoundError")
+        for typ in types
+    )
 
 
 def _walk_static_ast(
@@ -842,17 +841,17 @@ def _walk_static_ast(
         return
     if isinstance(node, ast.Try):
         guard_try = _is_import_guard_try(node)
-        sibling_try = _is_sibling_import_try(node)
         for child in node.body:
             _walk_static_ast(
                 child, py_file, rel_path, stdlib, findings,
                 in_guard or guard_try, in_import_fallback, current_func,
             )
         for handler in node.handlers:
+            handler_fallback = _is_import_error_handler(handler)
             for child in handler.body:
                 _walk_static_ast(
                     child, py_file, rel_path, stdlib, findings,
-                    in_guard, in_import_fallback or sibling_try, current_func,
+                    in_guard, in_import_fallback or handler_fallback, current_func,
                 )
         for child in node.orelse + node.finalbody:
             _walk_static_ast(
@@ -1124,6 +1123,9 @@ def _ts_entries(ts_path: Path) -> set[tuple[str, str, bool]]:
     for ctx in tree.getroot().findall("context"):
         ctx_name = ctx.findtext("name") or ""
         for msg in ctx.findall("message"):
+            tr = msg.find("translation")
+            if tr is not None and tr.get("type") in ("vanished", "obsolete"):
+                continue
             source = msg.findtext("source") or ""
             numerus = msg.get("numerus") == "yes"
             entries.add((ctx_name, source, numerus))
@@ -1497,7 +1499,10 @@ def _parse_metadata_bool(raw: str, key: str) -> tuple[bool | None, str | None]:
         return True, None
     if val in ("false", "no", "0", ""):
         return False, None
-    return None, f"Invalid boolean value for '{key}' in metadata.txt: {raw!r}"
+    return None, (
+        f"Invalid boolean value for '{key}' in metadata.txt; "
+        "expected true/false/yes/no/1/0"
+    )
 
 
 def validate_release_metadata(metadata_path: Path, tag: str) -> dict:
@@ -1541,7 +1546,7 @@ def validate_release_metadata(metadata_path: Path, tag: str) -> dict:
     meta_version = general.get("version", "").strip()
     if meta_version != expected_version:
         report["errors"].append(
-            f"metadata.txt version ({meta_version!r}) does not match tag version ({expected_version!r})"
+            f"metadata.txt 'version' does not match tag version {expected_version!r}"
         )
 
     deprecated, dep_err = _parse_metadata_bool(general.get("deprecated", "False"), "deprecated")

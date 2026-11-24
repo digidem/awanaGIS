@@ -652,6 +652,24 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertEqual(sig_lines, [1, 2])
             (target / "qt_sig_bad.py").unlink()
 
+            # Non-ImportError exception handler does NOT inherit sibling-import exemption
+            (target / "handler_bad.py").write_text(
+                "try:\n"
+                "    from . import helper\n"
+                "except ImportError:\n"
+                "    import helper\n"
+                "except ValueError:\n"
+                "    import helper\n",
+                encoding="utf-8",
+            )
+            handler_rep = check_plugin.run_scans(target, "static", None)
+            self.assertFalse(handler_rep["ok"])
+            handler_findings = handler_rep["checks"][0]["blocking_findings"]
+            self.assertEqual(len(handler_findings), 1)
+            self.assertEqual(handler_findings[0]["line"], 6)
+            self.assertEqual(handler_findings[0]["rule"], "UNEXPECTED_DEPENDENCY")
+            (target / "handler_bad.py").unlink()
+
     def test_manifest_verification_and_release_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
@@ -701,6 +719,22 @@ class ScannerAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertFalse(check_plugin.validate_release_metadata(dep_meta, "v0.4.6")["ok"])
+
+            # Rejected metadata values (version/experimental/deprecated) must not leak into summary/errors
+            secret_ver = "SECRET_TOKEN_VERSION_123"
+            secret_exp = "SECRET_TOKEN_EXP_456"
+            secret_dep = "SECRET_TOKEN_DEP_789"
+            secret_meta = tmp_dir / "secret_metadata.txt"
+            secret_meta.write_text(
+                VALID_METADATA.replace("version=0.4.6", f"version={secret_ver}")
+                + f"experimental={secret_exp}\ndeprecated={secret_dep}\n",
+                encoding="utf-8",
+            )
+            sec_rep = check_plugin.validate_release_metadata(secret_meta, "v0.4.6")
+            self.assertFalse(sec_rep["ok"])
+            sec_out = json.dumps(sec_rep) + "\n" + check_plugin._format_release_meta_summary(sec_rep)
+            for leaked in (secret_ver, secret_exp, secret_dep):
+                self.assertNotIn(leaked, sec_out)
 
     def test_check_i18n_validates_all_catalogs(self):
         pt_ts = (
@@ -824,6 +858,24 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertTrue(ok_rep["qm_loaded"])
             self.assertEqual(len(ok_rep["catalogs"]), 2)
             self.assertEqual(installed, ["AgenticGIS_pt_BR.qm", "AgenticGIS_es.qm"])
+
+            # Vanished/obsolete TS entries must NOT count toward parity when string is reintroduced
+            for inactive_type in ("vanished", "obsolete"):
+                with self.subTest(inactive_type=inactive_type):
+                    (i18n / "AgenticGIS_es.ts").write_text(
+                        "<TS version='2.1'><context><name>ChatDock</name>"
+                        f"<message><source>Ready</source><translation type='{inactive_type}'>Listo</translation></message>"
+                        "</context></TS>\n",
+                        encoding="utf-8",
+                    )
+                    with patch("ci.check_plugin.shutil.which", return_value="/usr/bin/lrelease"), \
+                         patch("ci.check_plugin.subprocess.run", side_effect=fake_subproc):
+                        inactive_rep = check_plugin.check_i18n(repo, 6)
+                    self.assertFalse(inactive_rep["ok"])
+                    self.assertTrue(
+                        any("AgenticGIS_es.ts" in e for e in inactive_rep["errors"]),
+                        inactive_rep,
+                    )
 
 
 class RealScannerIntegrationTests(unittest.TestCase):
