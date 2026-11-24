@@ -248,7 +248,9 @@ def _validate_metadata(
     try:
         parser.read_string(text, source="metadata.txt")
     except configparser.Error as exc:
-        return [f"Malformed metadata.txt: {exc}"], warnings
+        lineno = getattr(exc, "lineno", None)
+        loc = f" near line {lineno}" if lineno else ""
+        return [f"Malformed metadata.txt syntax ({type(exc).__name__}{loc})"], warnings
 
     if not parser.has_section("general"):
         return ["metadata.txt is missing required [general] section"], warnings
@@ -265,11 +267,11 @@ def _validate_metadata(
     for url_key in ("tracker", "repository"):
         val = general.get(url_key, "").strip()
         if val and not _is_valid_http_url(val):
-            errors.append(f"metadata.txt [general] '{url_key}' must be a valid http(s) URL: {val!r}")
+            errors.append(f"metadata.txt [general] '{url_key}' must be a valid non-placeholder http(s) URL")
 
     homepage = general.get("homepage", "").strip()
     if homepage and not _is_valid_http_url(homepage):
-        errors.append(f"metadata.txt [general] 'homepage' must be a valid http(s) URL: {homepage!r}")
+        errors.append("metadata.txt [general] 'homepage' must be a valid non-placeholder http(s) URL")
 
     if "supportsqt6" in general:
         warnings.append({
@@ -281,22 +283,22 @@ def _validate_metadata(
     min_raw = general.get("qgisMinimumVersion", "").strip()
     min_ver = _parse_qgis_version(min_raw) if min_raw else None
     if min_raw and min_ver is None:
-        errors.append(f"Invalid qgisMinimumVersion in metadata.txt: {min_raw!r}")
+        errors.append("Invalid qgisMinimumVersion in metadata.txt")
 
     max_raw = general.get("qgisMaximumVersion", "").strip()
     max_ver = _parse_qgis_version(max_raw) if max_raw else None
     if max_raw and max_ver is None:
-        errors.append(f"Invalid qgisMaximumVersion in metadata.txt: {max_raw!r}")
+        errors.append("Invalid qgisMaximumVersion in metadata.txt")
 
     if min_ver is not None and max_ver is not None and min_ver > max_ver:
         errors.append(
-            f"metadata.txt qgisMinimumVersion ({min_raw}) exceeds qgisMaximumVersion ({max_raw})"
+            "metadata.txt qgisMinimumVersion exceeds qgisMaximumVersion"
         )
 
     icon_rel = general.get("icon", "").strip()
     if icon_rel:
         if "\\" in icon_rel or icon_rel.startswith("/") or ".." in icon_rel.split("/"):
-            errors.append(f"Invalid metadata.txt icon path: {icon_rel!r}")
+            errors.append("Invalid metadata.txt icon path")
         elif file_members is not None:
             expected_icon = f"{EXPECTED_ROOT}/{icon_rel.lstrip('./')}"
             if expected_icon not in file_members:
@@ -380,6 +382,7 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
         seen_raw: set[str] = set()
         seen_normalized: dict[str, str] = {}
+        implied_dirs_ci: set[str] = set()
         file_infos: list[tuple[zipfile.ZipInfo, str]] = []
         file_members: set[str] = set()
 
@@ -416,6 +419,11 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
                 if leak_err:
                     report["blocking_errors"].append(leak_err)
                     continue
+
+            parts = norm_path.split("/")
+            parent_depth = len(parts) + 1 if is_dir else len(parts)
+            for idx in range(1, parent_depth):
+                implied_dirs_ci.add("/".join(parts[:idx]).lower())
 
             if is_dir:
                 continue
@@ -475,6 +483,12 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
             if header != QM_MAGIC:
                 report["blocking_errors"].append(
                     f"Invalid Qt QM catalog header in {qm_member}"
+                )
+
+        for _, norm_path in file_infos:
+            if norm_path.lower() in implied_dirs_ci:
+                report["blocking_errors"].append(
+                    f"Archive path type collision (file vs directory): {norm_path}"
                 )
 
         if report["blocking_errors"]:
@@ -674,6 +688,7 @@ def _run_secrets(target_dir: Path, exclude_metadata: bool = True) -> dict:
     cmd = [
         _resolve_tool("detect-secrets"),
         "scan",
+        "--no-verify",
         "--all-files",
     ]
     if exclude_metadata:

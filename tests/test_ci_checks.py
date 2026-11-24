@@ -284,6 +284,37 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(rep_url["ok"])
             self.assertTrue(any("tracker" in e for e in rep_url["blocking_errors"]))
 
+            # Invalid metadata URL or syntax error must not echo embedded credentials
+            secret_url_token = "SECRET_" + "URL_CREDENTIAL_99"
+            secret_url_meta = VALID_METADATA.replace(
+                "tracker=https://example.invalid/issues",
+                f"tracker=ftp://user:{secret_url_token}@example.invalid/issues",
+            ).encode("utf-8")
+            secret_url_zip = _build_valid_zip(tmp_dir / "secret_url.zip", metadata_override=secret_url_meta)
+            rep_secret_url = check_plugin.validate_and_extract_archive(secret_url_zip, tmp_dir / "ext_secret_url")
+            self.assertFalse(rep_secret_url["ok"])
+            self.assertNotIn(secret_url_token, json.dumps(rep_secret_url))
+
+            bad_ini_meta = f"not_a_section = {secret_url_token}\n".encode("utf-8")
+            bad_ini_zip = _build_valid_zip(tmp_dir / "bad_ini.zip", metadata_override=bad_ini_meta)
+            rep_bad_ini = check_plugin.validate_and_extract_archive(bad_ini_zip, tmp_dir / "ext_bad_ini")
+            self.assertFalse(rep_bad_ini["ok"])
+            self.assertNotIn(secret_url_token, json.dumps(rep_bad_ini))
+
+            # File vs directory prefix collision is rejected before creating destination
+            collision_zip = _build_valid_zip(
+                tmp_dir / "collision.zip",
+                extra_entries=[
+                    ("AgenticGIS/assets", b"file-first", stat.S_IFREG | 0o644),
+                    ("AgenticGIS/assets/logo.png", b"png", stat.S_IFREG | 0o644),
+                ],
+            )
+            ext_collision = tmp_dir / "ext_collision"
+            rep_col = check_plugin.validate_and_extract_archive(collision_zip, ext_collision)
+            self.assertFalse(rep_col["ok"])
+            self.assertTrue(any("path type collision" in e for e in rep_col["blocking_errors"]))
+            self.assertFalse(ext_collision.exists())
+
             # Deprecated supportsQt6 produces informational warning without blocking
             qt6_meta = (VALID_METADATA + "supportsQt6=True\n").encode("utf-8")
             qt6_zip = _build_valid_zip(tmp_dir / "qt6_warn.zip", metadata_override=qt6_meta)
@@ -456,6 +487,7 @@ class ScannerAdapterTests(unittest.TestCase):
                 res = check_plugin._run_secrets(target)
             self.assertTrue(res["ok"], res)
             self.assertEqual(res["baselined_count"], 1)
+            self.assertIn("--no-verify", mock_run.call_args.args[0])
             self.assertNotIn("--baseline", mock_run.call_args.args[0])
             self.assertEqual(baseline_path.read_bytes(), baseline_bytes)
 

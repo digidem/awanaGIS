@@ -58,6 +58,16 @@ jobs:
             exit 1
           fi
 
+          TAG_OBJ_TYPE=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          if [ "$TAG_OBJ_TYPE" = "tag" ]; then
+            TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_SHA}" --jq '.object.sha')
+          fi
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::Remote tag $TAG points to $TAG_SHA instead of tested commit $GITHUB_SHA"
+            exit 1
+          fi
+
           RELEASE_STATE=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "missing")
           if [ "$RELEASE_STATE" = "published" ]; then
             echo "::error::Published GitHub Release for $TAG already exists"
@@ -126,6 +136,16 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
           PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
         run: |
+          TAG_OBJ_TYPE=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type')
+          TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')
+          if [ "$TAG_OBJ_TYPE" = "tag" ]; then
+            TAG_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_SHA}" --jq '.object.sha')
+          fi
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::Remote tag $TAG points to $TAG_SHA instead of tested commit $GITHUB_SHA"
+            exit 1
+          fi
+
           RELEASE_STATE=$(gh release view "$TAG" --json isDraft --jq 'if .isDraft then "draft" else "published" end' 2>/dev/null || echo "missing")
           if [ "$RELEASE_STATE" = "published" ]; then
             echo "::error::Published GitHub Release for $TAG already exists"
