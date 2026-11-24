@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT.parent))
 smp_tools = import_module(f"{ROOT.name}.integrations.smp.tools")
 smp_exporter = import_module(f"{ROOT.name}.integrations.smp.exporter")
 smp_estimator = import_module(f"{ROOT.name}.integrations.smp.estimator")
-AwanaPlugin = import_module(f"{ROOT.name}.plugin").AgenticGisPlugin
+AwanaPlugin = import_module(f"{ROOT.name}.plugin").AwanaGisPlugin
 
 
 def setUpModule():

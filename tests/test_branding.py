@@ -422,6 +422,7 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
     def test_residual_agenticgis_references_strictly_classified(self):
         allowed_files = {
             "LICENSE",
+            "LICENSES/GPL-2.0.txt",
             "NOTICE",
             "THIRD_PARTY_LICENSES.md",
             "README.md",
@@ -434,6 +435,8 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
             "gui/settings_dialog.py",
             "i18n/awanagis_pt_BR.ts",
             "resources/ASSET_PROVENANCE.md",
+            "integrations/brazil/VENDOR_ATTRIBUTION.md",
+            "integrations/smp/policy.py",
         }
         pattern = re.compile(r"agenticgis", re.IGNORECASE)
         unexpected = []

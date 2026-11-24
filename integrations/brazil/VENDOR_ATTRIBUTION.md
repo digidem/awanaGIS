@@ -40,7 +40,7 @@ Excluded from runtime bundle:
    - `vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py` (docstring)
    - `vendor/gisbr/algorithms/diagnostico/osm_network.py` (docstring/comment)
 5. **Plugin lifecycle registration (`integrations/brazil/runtime.py` & `plugin.py`):**
-   - Provider is registered exclusively in `AgenticGisPlugin.initGui()` and unregistered exclusively in `AgenticGisPlugin.unload()` via instance tracking, leaving any separately installed `gisbr` plugin untouched.
+   - Provider is registered exclusively in `AwanaGisPlugin.initGui()` and unregistered exclusively in `AwanaGisPlugin.unload()` via instance tracking, leaving any separately installed `gisbr` plugin untouched.
 
 ## Refreshing the Pinned Snapshot
 

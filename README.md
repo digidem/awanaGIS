@@ -14,6 +14,8 @@
 - **Edit fields** — `field_calculator` adds calculated fields from QGIS expressions (permanent or virtual).
 - **Layouts & export** — `create_layout` builds a print layout with map items; `export_layout` exports to PDF or PNG.
 - **Remote sensing** — drive Google Earth Engine for satellite imagery, spectral indices, cloud-masked mosaics, and land-cover work (requires the optional `ee_plugin` installed and authenticated separately).
+- **Brazilian & Indigenous public datasets (`br_*`, `awanagis_brazil`)** — search 90+ GISBR and curated Indigenous/environmental sources (`br_search_sources`, `br_source_details`), resolve IBGE municipalities and named Indigenous territories (`br_resolve_area`), plan bounded polygon/bbox clips (`br_plan_load`), and load layers with provenance (`br_execute_load`). Strictly enforces CARE/governance restrictions: blocks `mapi_isolated_peoples` isolated-peoples records and holds exact village/locality points as discovery-only.
+- **CoMapeo offline `.smp` export (`smp_*`)** — inspect the styled QGIS project (`smp_inspect_map`), recommend World/Region/Local zoom slots within storage budgets (`smp_suggest_regions`), calculate exact XYZ tile counts with optional sample-calibrated size/duration intervals (`smp_estimate`), export atomically with trusted user approval (`smp_start_export`, `smp_export_status`, `smp_cancel_export`), and validate `.smp` archives (`smp_validate_file`).
 - **Fetch** — pull a public URL or API endpoint with `web_fetch` when a task needs outside reference data (gated behind explicit user permission).
 
 ## How it works
@@ -41,6 +43,18 @@ QGIS session
       field_calculator          add calculated fields from QGIS expressions
       create_layout             print layout with map items
       export_layout             export layout to PDF / PNG
+      br_search_sources         search GISBR + curated Indigenous catalog
+      br_source_details         inspect source metadata, constraints & provenance
+      br_resolve_area           resolve IBGE municipality, named TI, or project layer
+      br_plan_load              build deterministic bounded load plan
+      br_execute_load           cancellable download/clip & layer registration
+      smp_inspect_map           inspect styled QGIS map & export policy
+      smp_suggest_regions       suggest World/Region/Local zoom plans
+      smp_estimate              exact XYZ tile count & calibrated size/time forecast
+      smp_start_export          cancellable background .smp export (user-approved)
+      smp_export_status         poll export progress & manifest
+      smp_cancel_export         cancel running export cleanly
+      smp_validate_file         validate .smp ZIP/style/tile coverage
       web_fetch                 pull a public URL or API response
       ask_user                  ask the user a clarifying question
 ```
@@ -158,12 +172,19 @@ Run the headless QGIS/Qt test suite from the parent directory of an `awanagis` c
 PYTHONPATH=.. QT_QPA_PLATFORM=offscreen /usr/bin/python3 -m unittest discover -s tests -v
 ```
 
-## Roadmap & Planned Integrations
+## Integrated Capabilities & Attribution
 
-This branding-only baseline preserves all core QGIS, Processing, PyQGIS, GEE, CLI, MCP, and PT-BR features. Dedicated feature lanes (such as Brazilian/Indigenous public-data discovery `br_*` and CoMapeo offline map `.smp` export `smp_*`) are developed separately and are **not** bundled in this baseline release candidate.
+AwanaGIS combines the branded AwanaGIS workspace and preserved PT-BR localization with two self-contained bundled integrations (no separate `gisbr` or `comapeo_smp` plugin required):
+
+- **Brazilian & Indigenous Public Data (`integrations/brazil/`):** Bundles adapted `gisbr` (`GPL-3.0`, `https://github.com/d-camargo/gisbr`, pinned `06d84dfab9942e4e840637bb8d8f96af173330ad`) under namespaced Processing provider `awanagis_brazil`, merged with curated FUNAI/DSEI/INPE/IBGE/ISA/Mapi/RAISG/MapBiomas governance adapters.
+- **CoMapeo SMP Export (`integrations/smp/`):** Bundles the `qgis-smp-plugin` raster tile renderer (`MIT`, Awana Digital, `https://github.com/digidem/qgis-smp-plugin`, pinned `34715788e94718d036a58f9992d7ef69b9ecf3d5`) with budget planning, sample-calibrated estimation, trusted approval gates, and archive validation.
 
 ## Attribution & License
 
-- **License:** GNU General Public License v2.0 or later (`GPL-2.0-or-later`), see [`LICENSE`](LICENSE).
-- **Upstream attribution:** Derived from [AgenticGIS](https://github.com/ultramenid/AgenticGIS) by Muhammad Alichamdan (`1e4f70b` / `v0.4.6` + PT-BR localization `51c8a79`). See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+- **Combined License:** GNU General Public License v3.0 or later (`GPL-3.0-or-later`), see [`LICENSE`](LICENSE) and [`LICENSES/`](LICENSES/).
+- **Upstream attributions:**
+  - Derived from [AgenticGIS](https://github.com/ultramenid/AgenticGIS) by Muhammad Alichamdan (`1e4f70b` / `v0.4.6` + PT-BR localization `51c8a79`, `GPL-2.0-or-later`).
+  - Adapted [GISBR](https://github.com/d-camargo/gisbr) (`06d84df`, `GPL-3.0`).
+  - Adapted [CoMapeo Map Builder (`qgis-smp-plugin`)](https://github.com/digidem/qgis-smp-plugin) (`3471578`, `MIT`, Awana Digital).
+  - See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 - **Brand & visual identity:** Uses Awana Digital's official color palette and typography roles (`gui/brand.py`, `gui/theme.py`). `resources/icon.svg` and `resources/icon.png` are draft proposals awaiting Awana Digital design-team signoff (`resources/ASSET_PROVENANCE.md`).

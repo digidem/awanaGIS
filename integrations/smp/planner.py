@@ -196,11 +196,17 @@ def _resolve_reference_bounds(ref, iface, project, warnings, label):
             sbbox = layer.boundingBoxOfSelected()
             wgs = transform_rect_to_wgs84(sbbox, layer.crs(), project)
             if wgs is not None and not wgs.isEmpty():
-                union_rect = wgs if union_rect is None else union_rect.united(wgs)
+                if union_rect is None:
+                    union_rect = QgsRectangle(wgs)
+                else:
+                    union_rect.combineExtentWith(wgs)
             elif wgs is not None and sbbox.width() == 0 and sbbox.height() == 0:
                 # Point selection with 0-width bbox
                 pt_rect = QgsRectangle(wgs.xMinimum(), wgs.yMinimum(), wgs.xMaximum(), wgs.yMaximum())
-                union_rect = pt_rect if union_rect is None else union_rect.united(pt_rect)
+                if union_rect is None:
+                    union_rect = pt_rect
+                else:
+                    union_rect.combineExtentWith(pt_rect)
         if union_rect is None or count == 0:
             raise ValueError(f"No selected features found for {label}.")
         raw = [union_rect.xMinimum(), union_rect.yMinimum(), union_rect.xMaximum(), union_rect.yMaximum()]
@@ -256,7 +262,10 @@ def _auto_detect_region_and_local(iface, project, warnings):
     for layer in visible_layers:
         wgs = transform_rect_to_wgs84(layer.extent(), layer.crs() or project.crs(), project)
         if wgs is not None:
-            layers_union = wgs if layers_union is None else layers_union.united(wgs)
+            if layers_union is None:
+                layers_union = QgsRectangle(wgs)
+            else:
+                layers_union.combineExtentWith(wgs)
 
     # Check if features are selected -> Local = selection, Region = layers union or canvas
     sel_union = None
@@ -268,7 +277,10 @@ def _auto_detect_region_and_local(iface, project, warnings):
                 sel_count += sc
                 wgs = transform_rect_to_wgs84(layer.boundingBoxOfSelected(), layer.crs(), project)
                 if wgs is not None:
-                    sel_union = wgs if sel_union is None else sel_union.united(wgs)
+                    if sel_union is None:
+                        sel_union = QgsRectangle(wgs)
+                    else:
+                        sel_union.combineExtentWith(wgs)
 
     canvas_wgs = None
     if iface is not None and callable(getattr(iface, "mapCanvas", None)):

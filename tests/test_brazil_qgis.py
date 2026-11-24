@@ -46,7 +46,7 @@ QgisToolkit = import_module(f"{PKG}.core.toolkit").QgisToolkit
 core_tools = import_module(f"{PKG}.core.tools")
 catalog = import_module(f"{PKG}.integrations.brazil.catalog")
 resolver = import_module(f"{PKG}.integrations.brazil.resolver")
-AgenticGisPlugin = import_module(f"{PKG}.plugin").AgenticGisPlugin
+AgenticGisPlugin = import_module(f"{PKG}.plugin").AwanaGisPlugin
 mcp_server = import_module(f"{PKG}.server.mcp_server")
 
 

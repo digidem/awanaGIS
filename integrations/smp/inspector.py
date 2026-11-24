@@ -213,7 +213,10 @@ def inspect_map(iface=None, include_hidden=False):
             b = entry["extent"]["bounds_wgs84"]
             if b is not None:
                 r = QgsRectangle(*b)
-                union_wgs84 = r if union_wgs84 is None else union_wgs84.united(r)
+                if union_wgs84 is None:
+                    union_wgs84 = QgsRectangle(r)
+                else:
+                    union_wgs84.combineExtentWith(r)
         if union_wgs84 is not None and not union_wgs84.isEmpty():
             canvas_extent_info = {
                 "crs": "EPSG:4326",
@@ -243,7 +246,10 @@ def inspect_map(iface=None, include_hidden=False):
             sbbox = layer.boundingBoxOfSelected()
             swgs = transform_rect_to_wgs84(sbbox, layer.crs(), project)
             if swgs is not None and not swgs.isEmpty():
-                selection_union_wgs84 = swgs if selection_union_wgs84 is None else selection_union_wgs84.united(swgs)
+                if selection_union_wgs84 is None:
+                    selection_union_wgs84 = QgsRectangle(swgs)
+                else:
+                    selection_union_wgs84.combineExtentWith(swgs)
         except Exception:
             pass
 
