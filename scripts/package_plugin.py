@@ -42,6 +42,25 @@ EXCLUDED_FILES = frozenset({
     "Thumbs.db",
 })
 
+APPROVED_EXTENSIONLESS_FILES = frozenset({
+    "LICENSE",
+    "NOTICE",
+})
+
+APPROVED_RUNTIME_SUFFIXES = frozenset({
+    ".py",
+    ".qm",
+    ".ts",
+    ".pro",
+    ".png",
+    ".svg",
+    ".md",
+    ".txt",
+    ".json",
+    ".csv",
+    ".pem",
+})
+
 EXCLUDED_SUFFIXES = (
     ".pyc",
     ".pyo",
@@ -50,8 +69,6 @@ EXCLUDED_SUFFIXES = (
     ".log",
     ".qgs~",
     ".qgz~",
-    ".ts",
-    ".pro",
 )
 
 
@@ -69,6 +86,9 @@ def should_include(rel_path: Path) -> bool:
     parts = rel_path.parts
     if not parts:
         return False
+    # Never ship dotfiles or dot-directories (e.g., .env, .git, .DS_Store)
+    if any(part.startswith(".") for part in parts):
+        return False
     if len(parts) == 1:
         return parts[0] in APPROVED_ROOT_FILES
     if parts[0] not in APPROVED_RUNTIME_DIRS:
@@ -78,7 +98,9 @@ def should_include(rel_path: Path) -> bool:
     name = parts[-1]
     if name in EXCLUDED_FILES or name.endswith(EXCLUDED_SUFFIXES):
         return False
-    return True
+    if name in APPROVED_EXTENSIONLESS_FILES:
+        return True
+    return Path(name).suffix.lower() in APPROVED_RUNTIME_SUFFIXES
 
 
 def _iter_git_tracked_paths(repo_root: Path):

@@ -422,6 +422,7 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
     def test_residual_agenticgis_references_strictly_classified(self):
         allowed_files = {
             "LICENSE",
+            "LICENSES/GPL-2.0.txt",
             "NOTICE",
             "THIRD_PARTY_LICENSES.md",
             "README.md",
@@ -434,6 +435,8 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
             "gui/settings_dialog.py",
             "i18n/awanagis_pt_BR.ts",
             "resources/ASSET_PROVENANCE.md",
+            "integrations/brazil/VENDOR_ATTRIBUTION.md",
+            "integrations/smp/policy.py",
         }
         pattern = re.compile(r"agenticgis", re.IGNORECASE)
         unexpected = []
@@ -516,6 +519,8 @@ class PackagingAndSmokeTests(unittest.TestCase):
                     "awanagis/resources/icon.svg",
                     "awanagis/resources/ASSET_PROVENANCE.md",
                     "awanagis/i18n/awanagis_pt_BR.qm",
+                    "awanagis/i18n/awanagis_pt_BR.ts",
+                    "awanagis/i18n/awanagis.pro",
                 ):
                     self.assertIn(required, entries)
                 for forbidden_prefix in (
@@ -526,7 +531,7 @@ class PackagingAndSmokeTests(unittest.TestCase):
                     "awanagis/graft/",
                 ):
                     self.assertFalse(any(e.startswith(forbidden_prefix) for e in entries), forbidden_prefix)
-                self.assertFalse(any("__pycache__" in e or e.endswith((".pyc", ".ts", ".pro", ".db", ".zip")) for e in entries))
+                self.assertFalse(any("__pycache__" in e or e.endswith((".pyc", ".db", ".zip", ".env", ".gpkg")) for e in entries))
 
                 qm_bytes = zf.read("awanagis/i18n/awanagis_pt_BR.qm")
                 self.assertEqual(qm_bytes[:4], b"\x3c\xb8\x64\x18")
@@ -601,6 +606,34 @@ class PackagingAndSmokeTests(unittest.TestCase):
             self.assertNotIn("awanagis/core/tracked_link.py", names)
             self.assertNotIn("awanagis/tests/test_x.py", names)
             self.assertNotIn("awanagis/docs/note.md", names)
+
+    def test_package_exported_tree_rejects_dotfiles_and_unapproved_data_extensions(self):
+        with TemporaryDirectory() as tmp:
+            exported = Path(tmp) / "awanagis_export"
+            (exported / "integrations").mkdir(parents=True)
+            (exported / "resources").mkdir(parents=True)
+            (exported / "i18n").mkdir(parents=True)
+            (exported / "__init__.py").write_text("def classFactory(i): pass\n", encoding="utf-8")
+            (exported / "plugin.py").write_text("", encoding="utf-8")
+            (exported / "config.py").write_text("", encoding="utf-8")
+            (exported / "metadata.txt").write_text("version=0.1.0\n", encoding="utf-8")
+            (exported / "README.md").write_text("# AwanaGIS\n", encoding="utf-8")
+            (exported / "LICENSE").write_text("GPL\n", encoding="utf-8")
+            (exported / "NOTICE").write_text("Notice\n", encoding="utf-8")
+            (exported / "THIRD_PARTY_LICENSES.md").write_text("Licenses\n", encoding="utf-8")
+            (exported / "integrations" / "__init__.py").write_text("", encoding="utf-8")
+            (exported / "integrations" / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+            (exported / "resources" / "private.gpkg").write_bytes(b"SQLite format 3\x00")
+            (exported / "i18n" / "awanagis_pt_BR.ts").write_text("<TS/>", encoding="utf-8")
+            (exported / "i18n" / "awanagis.pro").write_text("TRANSLATIONS = awanagis_pt_BR.ts\n", encoding="utf-8")
+
+            out_zip = Path(tmp) / "export_out.zip"
+            _, _, _, names = package_plugin.build_plugin_zip(exported, out_zip)
+            self.assertIn("awanagis/integrations/__init__.py", names)
+            self.assertIn("awanagis/i18n/awanagis_pt_BR.ts", names)
+            self.assertIn("awanagis/i18n/awanagis.pro", names)
+            self.assertNotIn("awanagis/integrations/.env", names)
+            self.assertNotIn("awanagis/resources/private.gpkg", names)
 
 
 
