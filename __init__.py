@@ -1,4 +1,4 @@
-"""AgenticGIS — in-QGIS agentic chat assistant.
+"""AwanaGIS — in-QGIS conversational geospatial assistant.
 
 Zero third-party dependencies: everything runs on QGIS's bundled Python
 standard library, so the plugin is drop-in on any stock QGIS install. The
@@ -8,13 +8,13 @@ QGIS plugin loader calls ``classFactory`` to obtain the plugin instance.
 
 def classFactory(iface):  # noqa: N802 (QGIS API naming)
     try:
-        from .plugin import AgenticGisPlugin
+        from .plugin import AwanaGisPlugin
 
-        return AgenticGisPlugin(iface)
+        return AwanaGisPlugin(iface)
     except Exception:
         import traceback
 
-        msg = "AgenticGIS classFactory error:\n" + traceback.format_exc()
+        msg = "AwanaGIS classFactory error:\n" + traceback.format_exc()
         try:
             from qgis.core import QgsMessageLog, Qgis
 
@@ -22,7 +22,7 @@ def classFactory(iface):  # noqa: N802 (QGIS API naming)
             level = getattr(Qgis, "Critical", None)
             if level is None:
                 level = getattr(getattr(Qgis, "MessageLevel", Qgis), "Critical", 2)
-            QgsMessageLog.logMessage(msg, "AgenticGIS", level)
+            QgsMessageLog.logMessage(msg, "AwanaGIS", level)
         except Exception:  # nosec B110
             pass
         try:

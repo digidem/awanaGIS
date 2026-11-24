@@ -1,9 +1,9 @@
 """Use an installed, already-logged-in agent CLI as a model proxy.
 
 This backend no longer exposes QGIS through MCP to the spawned CLI. Instead it
-prompts the CLI for a small JSON instruction, then AgenticGIS executes any QGIS
+prompts the CLI for a small JSON instruction, then AwanaGIS executes any QGIS
 tool calls in-process just like the custom/API backends. Because the CLI is
-already authenticated, no API key is needed and AgenticGIS never reads the
+already authenticated, no API key is needed and AwanaGIS never reads the
 CLI-owned OAuth tokens.
 
 Conversation continuity is handled per-tool: Claude Code returns a
@@ -269,7 +269,7 @@ def _cmdline_too_long(cmd):
 
     CreateProcess caps the whole command line at 32767 chars and fails with
     WinError 206 ("The filename or extension is too long") past that. The
-    AgenticGIS system prompt plus tool specs is already ~30K, so any adapter
+    AwanaGIS system prompt plus tool specs is already ~30K, so any adapter
     that passes the prompt on argv overflows. Margin left for quoting.
     """
     if platform.system() != "Windows":
@@ -394,7 +394,7 @@ def _windows_home_dir():
 
 
 def _empty_runtime_dir(name):
-    path = os.path.join(tempfile.gettempdir(), "AgenticGIS", name)
+    path = os.path.join(tempfile.gettempdir(), "AwanaGIS", name)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -1015,7 +1015,7 @@ class NormalizingStream:
         # Deduplicate tool calls that arrive twice (e.g. Claude CLI may emit
         # both a content_block_delta and raw JSON for the same call).
         self._emitted_tool_call_keys = set()
-        # Accumulator for an AgenticGIS tool_calls protocol JSON that the CLI
+        # Accumulator for an AwanaGIS tool_calls protocol JSON that the CLI
         # streams across many text fragments (e.g. a run_pyqgis call whose
         # ``code`` argument is a whole Python program). Each fragment alone
         # fails parse_protocol_text, so without buffering the raw partial
@@ -1118,7 +1118,7 @@ class NormalizingStream:
                 return True
         return False
 
-    # AgenticGIS tool_calls protocol objects can be large — a run_pyqgis call
+    # AwanaGIS tool_calls protocol objects can be large — a run_pyqgis call
     # carries an entire Python program in ``arguments.code``. CLIs stream the
     # assistant text containing this JSON across many small
     # content_block_delta events; each fragment alone fails
@@ -1215,7 +1215,7 @@ class NormalizingStream:
         self.final_text = buf
 
     def _try_consume_protocol(self, text):
-        """Try to absorb *text* as part of an AgenticGIS tool_calls
+        """Try to absorb *text* as part of an AwanaGIS tool_calls
         protocol JSON.
 
         Return True if consumed (in which case the caller must NOT emit it
@@ -1262,7 +1262,7 @@ class NormalizingStream:
         decoded = raw_bytes.decode("utf-8", "replace")
         stripped = decoded.strip()
 
-        # Early protocol check: if the raw line is the AgenticGIS tool_calls
+        # Early protocol check: if the raw line is the AwanaGIS tool_calls
         # protocol JSON, parse it immediately before any other processing.
         # This catches both raw protocol JSON and protocol embedded in CLI
         # text events (e.g. Claude's content_block_delta text fields).
@@ -1343,7 +1343,7 @@ class NormalizingStream:
             self.emit(AgentEvent(EventType.ERROR, {"error": err_text}))
             return
         if norm.text:
-            # If the assistant's text is actually the AgenticGIS
+            # If the assistant's text is actually the AwanaGIS
             # tool_calls protocol JSON, convert it to a tool call
             # rather than emitting the raw JSON as a chat message.
             protocol_event = self.adapter.parse_protocol_text(norm.text)
@@ -1649,7 +1649,7 @@ class CliToolBackend(AgentBackend):
     def _mcp_url(self):
         """Return the in-process MCP bridge URL (starting it if needed).
 
-        When available, the launched CLI gets the AgenticGIS tools
+        When available, the launched CLI gets the AwanaGIS tools
         registered as native MCP tools, so the agent calls them directly
         instead of via the JSON text protocol. Best-effort: any failure
         just falls back to the protocol and must never break the launch.
@@ -1678,26 +1678,26 @@ class CliToolBackend(AgentBackend):
         if mcp_registered:
             transport_rules = (
                 "## CLI proxy rules\n\n"
-                "You are running inside a CLI transport, and the AgenticGIS "
+                "You are running inside a CLI transport, and the AwanaGIS "
                 "QGIS tools are REGISTERED in your session as native MCP "
-                "tools on the MCP server 'agenticgis' (mcp__agenticgis__"
-                "list_layers, mcp__agenticgis__run_pyqgis, "
-                "mcp__agenticgis__run_processing, …). Call them directly as "
+                "tools on the MCP server 'awanagis' (mcp__awanagis__"
+                "list_layers, mcp__awanagis__run_pyqgis, "
+                "mcp__awanagis__run_processing, …). Call them directly as "
                 "tools whenever you need QGIS project data — that is the "
                 "preferred path. Do NOT use this CLI's own filesystem, "
                 "shell, browser, plugin, or skill tools for the user's GIS "
                 "request.\n\n"
-                "Only if the AgenticGIS MCP tools turn out to be missing "
+                "Only if the AwanaGIS MCP tools turn out to be missing "
                 "from your session, fall back to the JSON protocol below.\n\n"
             )
         else:
             transport_rules = (
                 "## CLI proxy rules\n\n"
-                "You are running inside a CLI transport, but AgenticGIS "
+                "You are running inside a CLI transport, but AwanaGIS "
                 "executes all QGIS tools in-process. Do not use this CLI's "
                 "own filesystem, shell, browser, plugin, skill, or MCP "
                 "tools to answer the user's GIS request. When you need "
-                "project data, request an AgenticGIS tool call in the JSON "
+                "project data, request an AwanaGIS tool call in the JSON "
                 "protocol below.\n\n"
             )
         return (
@@ -1706,12 +1706,12 @@ class CliToolBackend(AgentBackend):
             "For final answers, write normal plain text/markdown directly, "
             "with the same rich, useful, detailed answer you would give in "
             "API/custom mode. Do not wrap final answers in JSON. Preserve the "
-            "normal AgenticGIS style: concrete findings, useful context, "
+            "normal AwanaGIS style: concrete findings, useful context, "
             "tables/charts/layers when relevant, and one useful follow-up "
             "sentence after analysis.\n\n"
-            "Return JSON ONLY when you need to call one or more AgenticGIS "
+            "Return JSON ONLY when you need to call one or more AwanaGIS "
             "tools. No markdown fences, no extra text around the JSON.\n"
-            "To call one or more AgenticGIS tools:\n"
+            "To call one or more AwanaGIS tools:\n"
             '{"type":"tool_calls","calls":[{"name":"list_layers","arguments":{}}]}\n'
             "Use tool_calls when QGIS project data is needed. Use plain final "
             "text for ordinary conversation or once tool results are sufficient."
@@ -1731,7 +1731,7 @@ class CliToolBackend(AgentBackend):
     def _conversation_prompt(self, messages):
         return (
             f"{self._system_prompt(mcp_registered=bool(self._mcp_url()))}\n\n"
-            f"Available AgenticGIS tools:\n{self._tool_prompt()}\n\n"
+            f"Available AwanaGIS tools:\n{self._tool_prompt()}\n\n"
             "Conversation, newest last:\n"
             f"{json.dumps(messages, default=str)}"
         )
@@ -1857,7 +1857,7 @@ class CliToolBackend(AgentBackend):
                     args = call.get("arguments", {}) or {}
                     tool_use_id = call.get("_tool_use_id", "")
                     if name not in tools_mod.TOOL_BY_NAME:
-                        # Non-AgenticGIS tool (e.g. Codex command_execution).
+                        # Non-AwanaGIS tool (e.g. Codex command_execution).
                         # Surface for UI display but don't execute it here.
                         continue
                     if "output" in call:
@@ -1895,7 +1895,7 @@ class CliToolBackend(AgentBackend):
                     messages.extend(tool_messages)
                     new_messages = tool_messages
                     continue
-                # All calls were non-AgenticGIS tools or already executed — fall through to text handling.
+                # All calls were non-AwanaGIS tools or already executed — fall through to text handling.
             elif getattr(stream, "malformed_protocol", "") and protocol_retries < _MAX_PROTOCOL_RETRIES:
                 # The model tried to call a tool but its JSON didn't parse. API
                 # mode would never show that JSON, so ask for a clean resend.
