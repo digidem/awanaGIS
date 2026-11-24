@@ -18,7 +18,7 @@ from PIL import Image
 from qgis.PyQt.QtCore import QRectF, QSettings, Qt
 from qgis.PyQt.QtGui import QColor, QImage, QPainter, QPalette
 from qgis.PyQt.QtSvg import QSvgRenderer
-from qgis.PyQt.QtWidgets import QApplication, QMainWindow
+from qgis.PyQt.QtWidgets import QApplication, QMainWindow, QMessageBox
 from qgis.core import QgsApplication
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -293,6 +293,126 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertTrue(res["error"])
 
+    def test_import_sessions_preserves_existing_awanagis_chats_at_capacity(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "cap.ini"), QSettings.Format.IniFormat)
+            existing = [
+                {
+                    "id": f"aw-{i}",
+                    "name": f"Awana {i}",
+                    "created_at": f"2026-09-{i+1:02d}T00:00:00Z",
+                    "updated_at": f"2026-09-{i+1:02d}T00:00:00Z",
+                    "backend_history": [],
+                    "transcript_events": [],
+                    "backend_state": {},
+                }
+                for i in range(18)
+            ]
+            settings.setValue(
+                session_store.SETTINGS_KEY,
+                json.dumps({"schema_version": 1, "active_session_id": "aw-0", "sessions": existing}),
+            )
+            legacy = [
+                {
+                    "id": f"leg-{i}",
+                    "name": f"Legacy {i}",
+                    "created_at": f"2026-11-{i+1:02d}T00:00:00Z",
+                    "updated_at": f"2026-11-{i+1:02d}T00:00:00Z",
+                    "backend_history": [],
+                    "transcript_events": [],
+                    "backend_state": {},
+                }
+                for i in range(5)
+            ]
+            settings.setValue(
+                migration.LEGACY_SESSIONS_KEY,
+                json.dumps({"schema_version": 1, "active_session_id": "leg-0", "sessions": legacy}),
+            )
+            settings.sync()
+
+            res = migration.import_sessions_from_agenticgis(settings, limit=20)
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["imported_count"], 2)
+            self.assertEqual(res["dropped_count"], 3)
+
+            store = session_store.SessionStore(settings=settings, limit=20)
+            ids = {item["id"] for item in store.list_sessions()}
+            self.assertEqual(len(ids), 20)
+            for i in range(18):
+                self.assertIn(f"aw-{i}", ids)
+            self.assertIn("leg-4", ids)
+            self.assertIn("leg-3", ids)
+
+    def test_live_session_store_import_and_font_scale_refresh(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "live.ini"), QSettings.Format.IniFormat)
+            settings.setValue("AgenticGIS/font_scale", 1.5)
+            settings.setValue("AgenticGIS/provider", "openai")
+            settings.setValue("AgenticGIS/model", "gpt-4o-mini")
+            settings.setValue(
+                migration.LEGACY_SESSIONS_KEY,
+                json.dumps({
+                    "schema_version": 1,
+                    "active_session_id": "leg-live",
+                    "sessions": [{
+                        "id": "leg-live",
+                        "name": "Imported Live Chat",
+                        "created_at": "2026-10-10T00:00:00Z",
+                        "updated_at": "2026-10-10T00:00:00Z",
+                        "backend_history": [{"role": "user", "content": "hello"}],
+                        "transcript_events": [{"type": "user", "text": "hello"}],
+                        "backend_state": {},
+                    }],
+                }),
+            )
+            settings.sync()
+
+            cfg = config_mod.Config()
+            cfg._s = settings
+            store = session_store.SessionStore(settings=settings)
+            dock = ChatDock(
+                lambda: None,
+                lambda: None,
+                lambda: None,
+                toolkit=None,
+                session_store=store,
+                show_startup_picker=False,
+            )
+            self.addCleanup(dock.close)
+            active_id = dock._active_session_id
+            # Simulate an un-flushed debounced edit before opening Settings.
+            store.schedule_save(
+                active_id,
+                transcript_events=[{"type": "user", "text": "unsaved edit"}],
+            )
+
+            dlg = SettingsDialog(cfg, session_store=store)
+            self.addCleanup(dlg.close)
+            self.assertEqual(dlg.font_scale_combo.currentData(), 1.0)
+
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                 patch.object(QMessageBox, "information"):
+                dlg._import_from_agenticgis()
+
+            self.assertTrue(dlg.sessions_imported)
+            self.assertEqual(dlg.font_scale_combo.currentData(), 1.5)
+
+            # Saving immediately after import must keep imported 1.5 scale, not stale 1.0.
+            dlg.api_key_edit.setText("sk-test-only")
+            with patch.object(QMessageBox, "warning") as warn_mock:
+                dlg._save_and_accept()
+            warn_mock.assert_not_called()
+            self.assertEqual(cfg.get("font_scale"), 1.5)
+
+            dock.refresh_sessions()
+            ids = {s["id"] for s in dock._session_store.list_sessions()}
+            self.assertIn("leg-live", ids)
+            self.assertIn(active_id, ids)
+            self.assertEqual(
+                dock._session_store.get_session(active_id)["transcript_events"],
+                [{"type": "user", "text": "unsaved edit"}],
+            )
+
 
 class ResidualBrandAndAssetTests(unittest.TestCase):
     @classmethod
@@ -442,6 +562,46 @@ class PackagingAndSmokeTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("SMOKE_OK", proc.stdout)
+
+    def test_package_excludes_untracked_files_and_symlinks(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "awanagis_repo"
+            (repo / "core").mkdir(parents=True)
+            (repo / "tests").mkdir()
+            (repo / "docs").mkdir()
+            (repo / "__init__.py").write_text("def classFactory(i): pass\n", encoding="utf-8")
+            (repo / "plugin.py").write_text("", encoding="utf-8")
+            (repo / "config.py").write_text("", encoding="utf-8")
+            (repo / "metadata.txt").write_text("version=0.1.0\n", encoding="utf-8")
+            (repo / "README.md").write_text("# AwanaGIS\n", encoding="utf-8")
+            (repo / "LICENSE").write_text("GPL\n", encoding="utf-8")
+            (repo / "NOTICE").write_text("Notice\n", encoding="utf-8")
+            (repo / "THIRD_PARTY_LICENSES.md").write_text("Licenses\n", encoding="utf-8")
+            (repo / "core" / "mod.py").write_text("X = 1\n", encoding="utf-8")
+            (repo / "tests" / "test_x.py").write_text("", encoding="utf-8")
+            (repo / "docs" / "note.md").write_text("", encoding="utf-8")
+
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+
+            # Create untracked files and symlinks that must NEVER be packaged.
+            (repo / ".env.local").write_text("SECRET=1\n", encoding="utf-8")
+            (repo / "core" / "untracked_secret.py").write_text("SECRET=1\n", encoding="utf-8")
+            (repo / "core" / "symlink.py").symlink_to(repo / "core" / "mod.py")
+            # Even a tracked symlink must be rejected.
+            (repo / "core" / "tracked_link.py").symlink_to(repo / "core" / "mod.py")
+            subprocess.run(["git", "add", "core/tracked_link.py"], cwd=repo, check=True, capture_output=True)
+
+            out_zip = Path(tmp) / "out.zip"
+            zip_path, _, _, names = package_plugin.build_plugin_zip(repo, out_zip)
+            self.assertIn("awanagis/core/mod.py", names)
+            self.assertNotIn("awanagis/.env.local", names)
+            self.assertNotIn("awanagis/core/untracked_secret.py", names)
+            self.assertNotIn("awanagis/core/symlink.py", names)
+            self.assertNotIn("awanagis/core/tracked_link.py", names)
+            self.assertNotIn("awanagis/tests/test_x.py", names)
+            self.assertNotIn("awanagis/docs/note.md", names)
+
 
 
 if __name__ == "__main__":

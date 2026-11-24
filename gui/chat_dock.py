@@ -571,6 +571,20 @@ class ChatDock(QgsDockWidget):
         except Exception:
             return (QCoreApplication.translate("ChatDock", "Not configured") if display else "Not configured"), ""
 
+    def refresh_sessions(self):
+        """Reload persisted sessions from ``SessionStore`` and sync status."""
+        if self._session_store is None:
+            return
+        self._session_store.reload()
+        current = self._session_store.get_session(self._active_session_id)
+        if current is None:
+            active = self._session_store.active_session()
+            self._active_session_id = active["id"]
+            self._status_session_name = active.get("name") or self._default_session_title
+        else:
+            self._status_session_name = current.get("name") or self._default_session_title
+        self._render_status()
+
     def refresh_composer(self):
         """Re-read the connection settings into the composer chips."""
         conn, model = self._connection_labels()
