@@ -440,9 +440,24 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
             read_limit = (2 * 1024 * 1024) if proto == "wfs" else 65536
             snippet = resp.read(read_limit).decode("utf-8", errors="replace") if method == "GET" else ""
             if proto == "wfs":
-                if "FeatureTypeList" in snippet or "WFS_Capabilities" in snippet:
+                low_snip = snippet.lstrip().lower()
+                is_error_doc = (
+                    not low_snip.startswith("<")
+                    or low_snip.startswith(("<!doctype html", "<html"))
+                    or any(tok in snippet for tok in ("<ServiceException", "<ows:Exception", "<ExceptionReport"))
+                )
+                has_caps_xml = bool(
+                    re.search(r"<(?:[A-Za-z_][\w.-]*:)?WFS_Capabilities(?:\s|>)", snippet)
+                    and re.search(r"<(?:[A-Za-z_][\w.-]*:)?FeatureTypeList(?:\s|>)", snippet)
+                )
+                if not is_error_doc and has_caps_xml:
                     typename = entry.get("typename") or ""
-                    layer_found = (not typename) or (typename in snippet)
+                    layer_found = (not typename) or bool(
+                        re.search(
+                            rf"<(?:[A-Za-z_][\w.-]*:)?Name>\s*{re.escape(typename)}\s*</(?:[A-Za-z_][\w.-]*:)?Name>",
+                            snippet,
+                        )
+                    )
                     svc_status = "reachable" if layer_found else "offline_http_error"
                     reason_txt = (
                         "WFS GetCapabilities reachable and typename present."
