@@ -72,7 +72,8 @@ Notes:
 
 While AwanaGIS is loaded and **Settings → External agents → Expose QGIS tools over MCP** is enabled, QGIS tools are exposed over a localhost MCP server:
 
-- Listens on `127.0.0.1` using a dynamically allocated ephemeral loopback port by default (`mcp_port = 0`, never colliding with other instances or legacy plugins).
+- Listens on `127.0.0.1` on port 7318 by default (AgenticGIS uses 7317); set `mcp_port = 0` for an ephemeral port. If the port is busy (for example, a second QGIS window), the bridge falls back to an ephemeral port and publishes it in the discovery file.
+- Known limitation: Antigravity (`agy`) keeps one user-global MCP entry, so with several QGIS windows open, `agy` turns can reach whichever window registered last. Use one QGIS window with `agy`, or another CLI agent, for multi-window work.
 - Every running instance publishes its bound URL to `~/.awanagis/mcp.json` (override with `AWANAGIS_MCP_DISCOVERY`).
 - Most CLIs speak the *stdio* MCP transport, so AwanaGIS ships a zero-dependency proxy at `server/mcp_stdio.py`.
 
@@ -109,7 +110,7 @@ AwanaGIS is packaged and namespaced independently so it can coexist side by side
 
 - Plugin directory & Python package: `awanagis/`
 - `QSettings` group: `AwanaGIS/` (sessions stored in `AwanaGIS/sessions_json`)
-- MCP discovery registry: `~/.awanagis/mcp.json` (env override `AWANAGIS_MCP_DISCOVERY`) and dynamic loopback port (`0`)
+- MCP discovery registry: `~/.awanagis/mcp.json` (env override `AWANAGIS_MCP_DISCOVERY`) and default port 7318 (AgenticGIS uses 7317)
 - Dock object name & title: `AwanaGisDock` / `AwanaGIS`
 
 Fresh installs **never** automatically read, migrate, or delete `AgenticGIS/` settings, API keys, or security approvals. If legacy `AgenticGIS/` preferences or sessions exist on the machine, an **opt-in, read-only** import option is available in **Settings → Appearance → Import from AgenticGIS** (and in `core/migration.py`), which copies only non-secret preferences and chat sessions while leaving `AgenticGIS/` data untouched. API keys, custom endpoint/base URLs, and CLI executable paths and arguments are never imported; re-enter or select them in AwanaGIS settings.

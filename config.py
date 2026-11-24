@@ -48,7 +48,7 @@ DEFAULTS = {
     # "External agent access (MCP)".
     "mcp_enabled": True,
     "mcp_host": "127.0.0.1",
-    "mcp_port": 0,                 # 0 => dynamic loopback allocation (never collides)
+    "mcp_port": 7318,              # fixed default so client configs stay valid; distinct from AgenticGIS 7317; 0 => random port
     # Performance
     "main_thread_timeout": 60.0,      # seconds for main-thread operations
     "processing_timeout": 0.0,        # 0 or less => unlimited processing task setup wait

@@ -85,7 +85,7 @@ If the current fork has already implemented (2)–(4), **do not undo them**. Pre
 
 - Move `config.py` QSettings group to `AwanaGIS`; update session-store key, cached paths, temporary directories and debug logs to independent namespaces.
 - Update `server/discovery.py`, `server/mcp_stdio.py`, `server/mcp_server.py`, CLI backend instructions, adapter configuration and README examples to use `awanagis`, `AWANAGIS_MCP_DISCOVERY`, and `~/.awanagis/mcp.json`.
-- Default to a dynamically assigned loopback MCP port (`mcp_port=0`) and have discovery publish the actual bound port; verify client bootstrap and reconnect. If explicit fixed ports remain configurable, handle port-in-use errors without stealing an old instance.
+- Default to loopback MCP port 7318 (AgenticGIS uses 7317); `mcp_port=0` selects a dynamic port. Discovery publishes the bound port. Handle port-in-use errors without stealing an old instance.
 - Keep **MCP JSON-RPC and tool schemas stable**. New server name affects client registration/prefix, but established tool operations such as `run_processing`, `run_pyqgis`, `br_search_sources`, `smp_suggest_regions`, `smp_estimate`, `smp_start_export`, etc. must **not** be mechanically renamed; preserve working method dispatch and remote clients. Update first-party CLI text that explicitly references `mcp__agenticgis__*` to the correct new client registration name; do not alter third-party tool call payloads or user transcripts.
 - Update QGIS dock object names only where the old brand leaks or where they could conflict with the simultaneously installed original plugin. Avoid broad CSS/style refactoring.
 - Maintain QGIS 3/Qt5 and QGIS 4/Qt6 compatibility as in the actual fork.

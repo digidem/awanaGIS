@@ -32,6 +32,7 @@ migration = import_module(f"{ROOT.name}.core.migration")
 adapters = import_module(f"{ROOT.name}.backends.adapters")
 discovery = import_module(f"{ROOT.name}.server.discovery")
 mcp_server = import_module(f"{ROOT.name}.server.mcp_server")
+plugin_mod = import_module(f"{ROOT.name}.plugin")
 ChatDock = import_module(f"{ROOT.name}.gui.chat_dock").ChatDock
 SettingsDialog = import_module(f"{ROOT.name}.gui.settings_dialog").SettingsDialog
 package_plugin = import_module(f"{ROOT.name}.scripts.package_plugin")
@@ -130,7 +131,7 @@ class IsolationAndMcpTests(unittest.TestCase):
 
     def test_settings_session_and_discovery_isolation(self):
         self.assertEqual(config_mod._GROUP, "AwanaGIS")
-        self.assertEqual(config_mod.DEFAULTS["mcp_port"], 0)
+        self.assertEqual(config_mod.DEFAULTS["mcp_port"], 7318)
         self.assertEqual(config_mod.DEFAULTS["mcp_host"], "127.0.0.1")
         self.assertEqual(session_store.SETTINGS_KEY, "AwanaGIS/sessions_json")
         self.assertEqual(discovery.ENV_VAR, "AWANAGIS_MCP_DISCOVERY")
@@ -253,7 +254,7 @@ class MigrationTests(unittest.TestCase):
             cfg._s = settings
             self.assertEqual(cfg.get("provider"), "anthropic")
             self.assertEqual(cfg.get("api_key"), "")
-            self.assertEqual(cfg.get("mcp_port"), 0)
+            self.assertEqual(cfg.get("mcp_port"), 7318)
             self.assertFalse(cfg.get("external_access_always_allowed"))
 
             preview = migration.inspect_legacy_data(settings)
@@ -262,6 +263,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(preview["session_count"], 1)
             self.assertIn("api_key", preview["excluded_keys"])
             self.assertIn("external_access_always_allowed", preview["excluded_keys"])
+            self.assertIn("mcp_port", preview["excluded_keys"])
 
             # SettingsDialog shows opt-in migration button only when legacy data exists.
             dlg = SettingsDialog(cfg)
@@ -286,7 +288,9 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse(cfg.get("gee_always_allowed"))
             self.assertTrue(cfg.get("auto_run"))
             self.assertTrue(cfg.get("confirm_dangerous_calls"))
-            self.assertEqual(cfg.get("mcp_port"), 0)
+            self.assertEqual(cfg.get("mcp_port"), 7318)
+            self.assertIn("mcp_port", result["preferences"]["excluded_keys"])
+            self.assertFalse(settings.contains("AwanaGIS/mcp_port"))
 
             # Session merged idempotently; legacy data untouched.
             store = session_store.SessionStore(settings=settings)
@@ -559,6 +563,8 @@ class ResidualBrandAndAssetTests(unittest.TestCase):
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
             for idx, line in enumerate(text.splitlines(), 1):
+                if rel == "config.py" and 'distinct from AgenticGIS 7317; 0 => random port' in line:
+                    continue  # Documents the coexistence port choice.
                 if rel == "ci/qgis_zip_smoke.py" and 'tag in ("AwanaGIS", "AgenticGIS")' in line:
                     continue  # Legacy log tag remains a smoke-test failure.
                 if pattern.search(line):

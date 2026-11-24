@@ -43,7 +43,7 @@
 | MCP server client slug | `agenticgis` | `awanagis` | `MCP_SERVER_NAME` in `backends/adapters.py` |
 | MCP discovery path | `~/.agenticgis/mcp.json` | `~/.awanagis/mcp.json` | Independent discovery file |
 | MCP discovery env var | `AGENTICGIS_MCP_DISCOVERY` | `AWANAGIS_MCP_DISCOVERY` | Independent env override |
-| MCP default port | `7317` | `0` (dynamic loopback) | Ephemeral OS port on `127.0.0.1` avoids collision |
+| MCP default port | `7317` | `7318` | Distinct loopback ports allow the plugins to coexist |
 | MCP tool prefix normalization | `mcp__agenticgis__`, etc. | `mcp__awanagis__`, `awanagis__`, `awanagis.`, `awanagis_`, `awanagis/` | Legacy `mcp__agenticgis__*` kept as fallback |
 | Translation catalog prefix | `AgenticGIS_<locale>.ts/.qm` | `awanagis_<locale>.ts/.qm` | Existing PT-BR translations preserved |
 | Dev log env vars & filename | `AGENTICGIS_DEV_LOG*` / `agenticgis-dev.log` | `AWANAGIS_DEV_LOG*` / `awanagis-dev.log` | Isolated debug logging |

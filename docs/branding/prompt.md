@@ -23,7 +23,7 @@ sessions_key: AwanaGIS/sessions_json
 mcp_server_name: awanagis
 mcp_discovery_path: ~/.awanagis/mcp.json
 mcp_discovery_env: AWANAGIS_MCP_DISCOVERY
-mcp_port_default: 0          # dynamically allocated, loopback only
+mcp_port_default: 7318       # loopback only; 0 selects a dynamic port
 translation_catalog_prefix: awanagis
 initial_version_candidate: 0.1.0
 release_destination: UNCONFIRMED
