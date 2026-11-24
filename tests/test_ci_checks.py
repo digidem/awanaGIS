@@ -297,6 +297,12 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(rep_size["ok"])
             self.assertTrue(any("exceeds limit" in e for e in rep_size["blocking_errors"]))
 
+            with patch.object(check_plugin, "PLUGIN_MAX_EXPANDED_SIZE", 50), \
+                 patch("zipfile.ZipFile.testzip", side_effect=AssertionError("testzip must not run")):
+                rep_bomb = check_plugin.validate_and_extract_archive(sized, tmp_dir / "ext_bomb")
+            self.assertFalse(rep_bomb["ok"])
+            self.assertTrue(any("expanded size" in e for e in rep_bomb["blocking_errors"]), rep_bomb)
+
             # Corrupt CRC is rejected before extraction
             crc_zip = _build_valid_zip(tmp_dir / "crc.zip")
             raw = bytearray(crc_zip.read_bytes())
@@ -856,6 +862,8 @@ class ScannerAdapterTests(unittest.TestCase):
                     out_ts.write_text(pt_ts, encoding="utf-8")
                     return subprocess.CompletedProcess(cmd, 0, "", "")
                 if Path(cmd[0]).name == "lrelease":
+                    if cmd[1:] == ["-version"]:
+                        return subprocess.CompletedProcess(cmd, 0, "lrelease version 6.8.2\n", "")
                     in_ts = Path(cmd[1])
                     out_qm = Path(cmd[cmd.index("-qm") + 1])
                     data = b"QM_PT_BR" if in_ts.stem.endswith("pt_BR") else b"QM_ES"
@@ -1016,6 +1024,23 @@ class ScannerAdapterTests(unittest.TestCase):
                 any("AgenticGIS_fr.qm" in e for e in unlisted_cat["errors"]),
                 unlisted_cat,
             )
+
+            # Wrong-major generic lrelease MUST be rejected for qt_major=6
+            with (
+                patch("pathlib.Path.is_file", return_value=False),
+                patch(
+                    "ci.check_plugin.shutil.which",
+                    side_effect=lambda name: "/usr/bin/lrelease" if name == "lrelease" else None,
+                ),
+                patch(
+                    "ci.check_plugin.subprocess.run",
+                    return_value=subprocess.CompletedProcess([], 0, "lrelease version 5.15.13\n", ""),
+                ),
+            ):
+                wrong_bin, wrong_err = check_plugin._resolve_lrelease(6)
+            self.assertIsNone(wrong_bin)
+            self.assertIsNotNone(wrong_err)
+            self.assertIn("version 6.x", wrong_err)
 
 
 class RealScannerIntegrationTests(unittest.TestCase):

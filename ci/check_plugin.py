@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 EXPECTED_ROOT = "AgenticGIS"
 PLUGIN_MAX_UPLOAD_SIZE = 25_000_000
+PLUGIN_MAX_EXPANDED_SIZE = 100_000_000
 QM_MAGIC = b"\x3c\xb8\x64\x18\xca\xef\x9c\x95\xcd\x21\x1c\xbf\x60\xa1\xbd\xdd"
 HIDDEN_ALLOWLIST = frozenset({
     ".bandit",
@@ -381,6 +382,25 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
         return report
 
     with zf:
+        infos = zf.infolist()
+        if not infos:
+            report["blocking_errors"].append("Archive is empty")
+            return report
+
+        total_uncompressed = 0
+        for info in infos:
+            if info.file_size < 0 or info.file_size > PLUGIN_MAX_EXPANDED_SIZE:
+                report["blocking_errors"].append(
+                    f"Archive member exceeds expanded size limit ({PLUGIN_MAX_EXPANDED_SIZE} bytes): {info.filename}"
+                )
+                return report
+            total_uncompressed += info.file_size
+            if total_uncompressed > PLUGIN_MAX_EXPANDED_SIZE:
+                report["blocking_errors"].append(
+                    f"Archive expanded size exceeds limit ({PLUGIN_MAX_EXPANDED_SIZE} bytes)"
+                )
+                return report
+
         try:
             bad_member = zf.testzip()
         except (RuntimeError, zipfile.BadZipFile, NotImplementedError, OSError, EOFError, zlib.error) as exc:
@@ -392,11 +412,6 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
             report["blocking_errors"].append(
                 f"Corrupt ZIP member (CRC check failed): {bad_member}"
             )
-            return report
-
-        infos = zf.infolist()
-        if not infos:
-            report["blocking_errors"].append("Archive is empty")
             return report
 
         seen_raw: set[str] = set()
@@ -533,6 +548,7 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
         extract_to.mkdir(parents=True, exist_ok=True)
         extract_root = extract_to.resolve()
+        extracted_bytes = 0
         for info, norm_path in file_infos:
             target = (extract_root / norm_path).resolve()
             if not target.is_relative_to(extract_root):
@@ -542,7 +558,17 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
                 return report
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info, "r") as src, target.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
+                while True:
+                    chunk = src.read(65536)
+                    if not chunk:
+                        break
+                    extracted_bytes += len(chunk)
+                    if extracted_bytes > PLUGIN_MAX_EXPANDED_SIZE:
+                        report["blocking_errors"].append(
+                            f"Archive expanded size exceeds limit ({PLUGIN_MAX_EXPANDED_SIZE} bytes)"
+                        )
+                        return report
+                    dst.write(chunk)
             report["extracted_files"] += 1
 
     report["ok"] = True
@@ -1226,6 +1252,41 @@ def _find_unlisted_translation_sources(repo_root: Path, listed_sources: set[Path
     return unlisted
 
 
+def _resolve_lrelease(qt_major: int) -> tuple[str | None, str | None]:
+    candidates: list[str] = []
+    for raw in (
+        f"/usr/lib/qt{qt_major}/bin/lrelease",
+        f"/usr/lib/x86_64-linux-gnu/qt{qt_major}/bin/lrelease",
+        f"/usr/lib/aarch64-linux-gnu/qt{qt_major}/bin/lrelease",
+    ):
+        p = Path(raw)
+        if p.is_file() and os.access(p, os.X_OK):
+            candidates.append(str(p))
+    for tool_name in (f"lrelease-qt{qt_major}", f"lrelease{qt_major}", "lrelease"):
+        found = shutil.which(tool_name)
+        if found and found not in candidates:
+            candidates.append(found)
+
+    version_re = re.compile(rf"\bversion\s+{qt_major}\.", re.IGNORECASE)
+    for candidate in candidates:
+        try:
+            ver_proc = subprocess.run(
+                [candidate, "-version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        output = (ver_proc.stdout or "") + "\n" + (ver_proc.stderr or "")
+        if ver_proc.returncode == 0 and version_re.search(output):
+            return candidate, None
+
+    if candidates:
+        return None, f"No Qt {qt_major} lrelease executable matched version {qt_major}.x"
+    return None, f"Qt {qt_major} lrelease tool not found"
+
+
 def check_i18n(repo_root: Path, qt_major: int) -> dict:
     """Verify Qt Linguist extraction parity and compiled QM loading."""
     report: dict = {
@@ -1290,13 +1351,9 @@ def check_i18n(repo_root: Path, qt_major: int) -> dict:
     if report["errors"]:
         return report
 
-    lrelease_bin = shutil.which("lrelease")
-    if lrelease_bin is None and qt_major == 6:
-        qt6_lrelease = Path("/usr/lib/qt6/bin/lrelease")
-        if qt6_lrelease.is_file() and os.access(qt6_lrelease, os.X_OK):
-            lrelease_bin = str(qt6_lrelease)
-    if lrelease_bin is None:
-        report["errors"].append("Qt lrelease tool not found")
+    lrelease_bin, lrelease_err = _resolve_lrelease(qt_major)
+    if lrelease_err or lrelease_bin is None:
+        report["errors"].append(lrelease_err or f"Qt {qt_major} lrelease tool not found")
         return report
 
     with tempfile.TemporaryDirectory() as tmp:
