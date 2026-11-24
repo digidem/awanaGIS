@@ -327,8 +327,11 @@ jobs:
             bash -lc '
               set -euo pipefail
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 -c "import os; from qgis.core import Qgis; from qgis.PyQt.QtCore import QT_VERSION_STR; print(\"Runtime:\", Qgis.QGIS_VERSION, \"Qt\", QT_VERSION_STR); assert Qgis.QGIS_VERSION.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QGIS_MAJOR\"], Qgis.QGIS_VERSION; assert QT_VERSION_STR.split(\".\")[0] == os.environ[\"AGENTICGIS_EXPECT_QT_MAJOR\"], QT_VERSION_STR"
+              /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py archive \
+                /pkg/AgenticGIS.zip \
+                --extract-to /run-work/zip-extracted
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 /workspace/AgenticGIS/ci/check_plugin.py \
-                i18n /workspace/AgenticGIS --qt-major "$AGENTICGIS_EXPECT_QT_MAJOR"
+                i18n /run-work/zip-extracted/AgenticGIS --qt-major "$AGENTICGIS_EXPECT_QT_MAJOR"
               cd /workspace/AgenticGIS
               QT_QPA_PLATFORM=offscreen /usr/bin/python3 -m unittest discover -s tests -v
               PYTHONPATH=/usr/share/qgis/python timeout --kill-after=15 180 xvfb-run -a qgis \

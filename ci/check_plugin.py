@@ -312,9 +312,10 @@ def _validate_metadata(
         if "\\" in icon_rel or icon_rel.startswith("/") or ".." in icon_rel.split("/"):
             errors.append("Invalid metadata.txt icon path")
         elif file_members is not None:
-            expected_icon = f"{EXPECTED_ROOT}/{icon_rel.lstrip('./')}"
+            icon_rel_norm = icon_rel[2:] if icon_rel.startswith("./") else icon_rel
+            expected_icon = f"{EXPECTED_ROOT}/{icon_rel_norm}"
             if expected_icon not in file_members:
-                errors.append(f"metadata.txt icon target not found in archive: {expected_icon}")
+                errors.append("metadata.txt icon target not found in archive")
 
     return errors, warnings
 

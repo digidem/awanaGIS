@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import importlib
 import json
 import os
@@ -129,9 +130,15 @@ def _run_smoke() -> None:
             raise AssertionError(
                 f"AgenticGIS loaded from unexpected directory instead of installed ZIP: {plugin_dir}"
             )
-        icon_file = plugin_dir / "resources" / "icon.png"
-        if not icon_file.is_file() or QIcon(str(icon_file)).isNull():
-            raise AssertionError(f"Plugin icon failed to load as non-null QIcon: {icon_file}")
+        meta_parser = configparser.ConfigParser(interpolation=None)
+        meta_parser.read(plugin_dir / "metadata.txt", encoding="utf-8")
+        icon_rel = meta_parser.get("general", "icon", fallback="").strip()
+        if not icon_rel:
+            raise AssertionError("Plugin metadata.txt missing icon entry")
+        icon_rel = icon_rel[2:] if icon_rel.startswith("./") else icon_rel
+        icon_file = (plugin_dir / icon_rel).resolve()
+        if plugin_dir.resolve() not in icon_file.parents or not icon_file.is_file() or QIcon(str(icon_file)).isNull():
+            raise AssertionError("Declared plugin icon failed to load as non-null QIcon")
 
         all_plugins = installer_plugins.all()
         if "AgenticGIS" not in all_plugins:

@@ -325,6 +325,14 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(rep_bad_ini["ok"])
             self.assertNotIn(secret_url_token, json.dumps(rep_bad_ini))
 
+            bad_icon_meta = VALID_METADATA.replace(
+                "icon=resources/icon.png", f"icon=resources/{secret_url_token}.png"
+            ).encode("utf-8")
+            bad_icon_zip = _build_valid_zip(tmp_dir / "bad_icon.zip", metadata_override=bad_icon_meta)
+            rep_bad_icon = check_plugin.validate_and_extract_archive(bad_icon_zip, tmp_dir / "ext_bad_icon")
+            self.assertFalse(rep_bad_icon["ok"])
+            self.assertNotIn(secret_url_token, json.dumps(rep_bad_icon))
+
             # File vs directory prefix collision is rejected before creating destination
             collision_zip = _build_valid_zip(
                 tmp_dir / "collision.zip",
