@@ -1,0 +1,448 @@
+"""Comprehensive AwanaGIS branding, isolation, migration, icon, MCP, and packaging tests."""
+
+from importlib import import_module
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
+import time
+import unittest
+from unittest.mock import Mock, patch
+import urllib.request
+import zipfile
+
+from PIL import Image
+from qgis.PyQt.QtCore import QRectF, QSettings, Qt
+from qgis.PyQt.QtGui import QColor, QImage, QPainter, QPalette
+from qgis.PyQt.QtSvg import QSvgRenderer
+from qgis.PyQt.QtWidgets import QApplication, QMainWindow
+from qgis.core import QgsApplication
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT.parent))
+
+brand = import_module(f"{ROOT.name}.gui.brand")
+theme = import_module(f"{ROOT.name}.gui.theme")
+config_mod = import_module(f"{ROOT.name}.config")
+session_store = import_module(f"{ROOT.name}.core.session_store")
+migration = import_module(f"{ROOT.name}.core.migration")
+discovery = import_module(f"{ROOT.name}.server.discovery")
+mcp_server = import_module(f"{ROOT.name}.server.mcp_server")
+ChatDock = import_module(f"{ROOT.name}.gui.chat_dock").ChatDock
+SettingsDialog = import_module(f"{ROOT.name}.gui.settings_dialog").SettingsDialog
+package_plugin = import_module(f"{ROOT.name}.scripts.package_plugin")
+
+
+class BrandTokenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QgsApplication.instance() or QgsApplication([], True)
+
+    def test_tokens_match_official_json_exactly(self):
+        tokens_path = ROOT / "docs" / "branding" / "brand-tokens.json"
+        data = json.loads(tokens_path.read_text(encoding="utf-8"))
+        official = data["official"]
+
+        self.assertEqual(dict(brand.OFFICIAL_PRIMARY), official["primary"])
+        self.assertEqual(dict(brand.OFFICIAL_SECONDARY), official["secondary"])
+        self.assertEqual(dict(brand.FONT_ROLES), official["font_roles"])
+        for key, value in data["awanagis_proposals"]["light"].items():
+            self.assertEqual(brand.LIGHT_PROPOSAL[key], value)
+        self.assertEqual(brand.WCAG_AA_NORMAL_MIN, data["awanagis_proposals"]["contrast_normal_text_min"])
+        self.assertEqual(brand.WCAG_AA_UI_MIN, data["awanagis_proposals"]["contrast_large_text_and_ui_min"])
+
+    def test_wcag_aa_contrast_light_and_dark_palettes(self):
+        light_pal = QPalette()
+        light_pal.setColor(QPalette.ColorRole.Window, QColor("#FDF7EF"))
+        light_pal.setColor(QPalette.ColorRole.Base, QColor("#FFFFFF"))
+        light_pal.setColor(QPalette.ColorRole.AlternateBase, QColor("#F5ECE0"))
+        light_pal.setColor(QPalette.ColorRole.WindowText, QColor("#1E1E1E"))
+
+        dark_pal = QPalette()
+        dark_pal.setColor(QPalette.ColorRole.Window, QColor("#202124"))
+        dark_pal.setColor(QPalette.ColorRole.Base, QColor("#28292D"))
+        dark_pal.setColor(QPalette.ColorRole.AlternateBase, QColor("#313236"))
+        dark_pal.setColor(QPalette.ColorRole.WindowText, QColor("#E8EAED"))
+
+        self.assertFalse(brand.is_dark_palette(light_pal))
+        self.assertTrue(brand.is_dark_palette(dark_pal))
+
+        light_tok = brand.resolve_semantic_tokens(light_pal)
+        self.assertFalse(light_tok["is_dark"])
+        self.assertEqual(light_tok["canvas"], "#FDF7EF")
+        self.assertEqual(light_tok["text"], "#6B0030")
+        self.assertEqual(light_tok["accent"], "#8D003E")
+
+        dark_tok = brand.resolve_semantic_tokens(dark_pal)
+        self.assertTrue(dark_tok["is_dark"])
+        self.assertEqual(dark_tok["canvas"], "#202124")
+
+        for tok in (light_tok, dark_tok):
+            for fg in ("text", "text_2", "text_3", "text_4", "blue", "warn", "success", "danger"):
+                for bg in ("canvas", "surface", "surface_2", "input_bg"):
+                    ratio = brand.contrast_ratio(tok[fg], tok[bg])
+                    self.assertGreaterEqual(ratio, 4.5, f"{fg} on {bg} contrast {ratio:.2f} < 4.5")
+            self.assertGreaterEqual(brand.contrast_ratio(tok["accent_text"], tok["accent"]), 4.5)
+            self.assertGreaterEqual(brand.contrast_ratio(tok["danger_text"], tok["danger_bg"]), 4.5)
+            self.assertGreaterEqual(brand.contrast_ratio(tok["highlight_fg"], tok["highlight"]), 4.5)
+            self.assertGreaterEqual(brand.contrast_ratio(tok["border"], tok["surface_2"]), 3.0)
+
+    def test_font_roles_fallback_and_curved_scrollbars(self):
+        installed = {"Tomorrow", "Public Sans", "Space Grotesk"}
+        self.assertEqual(brand.resolve_font_family("display", installed), "Tomorrow")
+        self.assertEqual(brand.resolve_font_family("body", installed), "Public Sans")
+        self.assertEqual(brand.resolve_font_family("caption", installed), "Space Grotesk")
+
+        empty = set()
+        for role in ("display", "body", "caption"):
+            fallback = brand.resolve_font_family(role, empty)
+            self.assertTrue(fallback)
+            self.assertNotIn(fallback, ("Tomorrow", "Public Sans", "Space Grotesk"))
+
+        qss = theme.curved_scrollbar_qss(thickness=10, handle_radius=4, include_horizontal=True)
+        self.assertIn("border-radius: 4px", qss)
+        self.assertIn("QScrollBar::handle:vertical", qss)
+        self.assertIn("QScrollBar::handle:horizontal", qss)
+        self.assertIn("background: transparent", qss)
+        self.assertIn("width: 0px; height: 0px", qss)
+
+    def test_settings_dialog_does_not_mutate_global_qapplication_stylesheet(self):
+        app = QApplication.instance()
+        before_qss = app.styleSheet()
+        with TemporaryDirectory() as tmp:
+            ini = QSettings(str(Path(tmp) / "settings.ini"), QSettings.Format.IniFormat)
+            cfg = config_mod.Config()
+            cfg._s = ini
+            dlg = SettingsDialog(cfg)
+            self.addCleanup(dlg.close)
+            self.assertEqual(app.styleSheet(), before_qss)
+            self.assertEqual(dlg.windowTitle(), "AwanaGIS — Settings")
+
+
+class IsolationAndMcpTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QgsApplication.instance() or QgsApplication([], True)
+
+    def test_settings_session_and_discovery_isolation(self):
+        self.assertEqual(config_mod._GROUP, "AwanaGIS")
+        self.assertEqual(config_mod.DEFAULTS["mcp_port"], 0)
+        self.assertEqual(config_mod.DEFAULTS["mcp_host"], "127.0.0.1")
+        self.assertEqual(session_store.SETTINGS_KEY, "AwanaGIS/sessions_json")
+        self.assertEqual(discovery.ENV_VAR, "AWANAGIS_MCP_DISCOVERY")
+        self.assertTrue(discovery.discovery_path().endswith(os.path.join(".awanagis", "mcp.json")))
+
+        with TemporaryDirectory() as tmp:
+            ini = QSettings(str(Path(tmp) / "isolated.ini"), QSettings.Format.IniFormat)
+            cfg = config_mod.Config()
+            cfg._s = ini
+            store = session_store.SessionStore(settings=ini)
+            dock = ChatDock(
+                lambda: None,
+                lambda: None,
+                lambda: None,
+                toolkit=None,
+                session_store=store,
+                show_startup_picker=False,
+            )
+            self.addCleanup(dock.close)
+            self.assertEqual(dock.windowTitle(), "AwanaGIS")
+            self.assertEqual(dock.objectName(), "AwanaGisDock")
+
+    def test_dynamic_mcp_bridge_tools_list_and_call(self):
+        with TemporaryDirectory() as tmp:
+            disc_file = Path(tmp) / "mcp.json"
+            with patch.dict(os.environ, {"AWANAGIS_MCP_DISCOVERY": str(disc_file)}):
+                toolkit = Mock()
+                executor = Mock()
+                server = mcp_server.McpBridgeServer(
+                    toolkit, executor, host="127.0.0.1", port=0,
+                    poll_interval=0.05, server_timeout=0.05,
+                )
+                server.start()
+                self.addCleanup(server.stop)
+
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline and (not disc_file.is_file() or server._server is None):
+                    time.sleep(0.02)
+
+                self.assertGreater(server.port, 0)
+                self.assertTrue(disc_file.is_file())
+                entries = discovery.read_servers()
+                self.assertTrue(any(e.get("url") == server.base_url for e in entries))
+
+                def rpc(method, params=None, req_id=1):
+                    payload = json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "method": method,
+                        "params": params or {},
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        server.base_url,
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+
+                init_res = rpc("initialize", req_id=1)
+                self.assertEqual(init_res["result"]["serverInfo"]["name"], "AwanaGIS")
+
+                list_res = rpc("tools/list", req_id=2)
+                tool_names = [t["name"] for t in list_res["result"]["tools"]]
+                self.assertIn("list_layers", tool_names)
+                self.assertIn("run_processing", tool_names)
+
+                with patch.object(mcp_server.tools_mod, "dispatch", return_value={"ok": True, "layers": []}):
+                    call_res = rpc("tools/call", {"name": "list_layers", "arguments": {}}, req_id=3)
+                self.assertEqual(
+                    json.loads(call_res["result"]["content"][0]["text"]),
+                    {"ok": True, "layers": []},
+                )
+
+
+class MigrationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QgsApplication.instance() or QgsApplication([], True)
+
+    def test_no_auto_migration_and_opt_in_excludes_secrets(self):
+        with TemporaryDirectory() as tmp:
+            ini_path = Path(tmp) / "coexist.ini"
+            settings = QSettings(str(ini_path), QSettings.Format.IniFormat)
+            settings.setValue("AgenticGIS/provider", "openai")
+            settings.setValue("AgenticGIS/model", "gpt-4o")
+            settings.setValue("AgenticGIS/font_scale", 1.25)
+            settings.setValue("AgenticGIS/api_key", "sk-secret-legacy")
+            settings.setValue("AgenticGIS/custom_api_key", "sk-custom-secret")
+            settings.setValue("AgenticGIS/external_access_always_allowed", True)
+            settings.setValue("AgenticGIS/gee_always_allowed", True)
+            settings.setValue("AgenticGIS/auto_run", False)
+            settings.setValue("AgenticGIS/confirm_dangerous_calls", False)
+            settings.setValue("AgenticGIS/mcp_enabled", False)
+            settings.setValue("AgenticGIS/mcp_port", 7317)
+            legacy_sessions = {
+                "schema_version": 1,
+                "active_session_id": "s1",
+                "sessions": [{
+                    "id": "s1",
+                    "name": "Legacy mapping",
+                    "created_at": "2026-10-01T00:00:00Z",
+                    "updated_at": "2026-10-02T00:00:00Z",
+                    "backend_history": [{"role": "user", "content": "hi"}],
+                    "transcript_events": [{"type": "user", "text": "hi"}],
+                    "backend_state": {},
+                }],
+            }
+            settings.setValue("AgenticGIS/sessions_json", json.dumps(legacy_sessions))
+            settings.sync()
+
+            # Fresh AwanaGIS config/store never reads legacy values automatically.
+            cfg = config_mod.Config()
+            cfg._s = settings
+            self.assertEqual(cfg.get("provider"), "anthropic")
+            self.assertEqual(cfg.get("api_key"), "")
+            self.assertEqual(cfg.get("mcp_port"), 0)
+            self.assertFalse(cfg.get("external_access_always_allowed"))
+
+            preview = migration.inspect_legacy_data(settings)
+            self.assertTrue(preview["has_preferences"])
+            self.assertTrue(preview["has_sessions"])
+            self.assertEqual(preview["session_count"], 1)
+            self.assertIn("api_key", preview["excluded_keys"])
+            self.assertIn("external_access_always_allowed", preview["excluded_keys"])
+
+            # SettingsDialog shows opt-in migration button only when legacy data exists.
+            dlg = SettingsDialog(cfg)
+            self.addCleanup(dlg.close)
+            self.assertTrue(hasattr(dlg, "_import_legacy_btn"))
+
+            result = migration.import_from_agenticgis(settings)
+            self.assertTrue(result["ok"])
+            self.assertEqual(cfg.get("provider"), "openai")
+            self.assertEqual(cfg.get("model"), "gpt-4o")
+            self.assertEqual(cfg.get("font_scale"), 1.25)
+
+            # Secrets and security approvals are NEVER copied.
+            self.assertEqual(cfg.get("api_key"), "")
+            self.assertEqual(cfg.get("custom_api_key"), "")
+            self.assertFalse(cfg.get("external_access_always_allowed"))
+            self.assertFalse(cfg.get("gee_always_allowed"))
+            self.assertTrue(cfg.get("auto_run"))
+            self.assertTrue(cfg.get("confirm_dangerous_calls"))
+            self.assertEqual(cfg.get("mcp_port"), 0)
+
+            # Session merged idempotently; legacy data untouched.
+            store = session_store.SessionStore(settings=settings)
+            self.assertIsNotNone(store.get_session("s1"))
+            second = migration.import_from_agenticgis(settings)
+            self.assertEqual(second["sessions"]["imported_count"], 0)
+            self.assertEqual(second["sessions"]["skipped_count"], 1)
+            self.assertEqual(settings.value("AgenticGIS/api_key"), "sk-secret-legacy")
+
+    def test_corrupt_legacy_session_fails_safely(self):
+        with TemporaryDirectory() as tmp:
+            settings = QSettings(str(Path(tmp) / "bad.ini"), QSettings.Format.IniFormat)
+            settings.setValue("AgenticGIS/sessions_json", "{not valid json")
+            res = migration.import_sessions_from_agenticgis(settings)
+            self.assertFalse(res["ok"])
+            self.assertTrue(res["error"])
+
+
+class ResidualBrandAndAssetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QgsApplication.instance() or QgsApplication([], True)
+
+    def test_residual_agenticgis_references_strictly_classified(self):
+        allowed_files = {
+            "LICENSE",
+            "NOTICE",
+            "THIRD_PARTY_LICENSES.md",
+            "README.md",
+            "REBRAND_AUDIT.md",
+            "metadata.txt",
+            "core/migration.py",
+            "core/toolkit.py",
+            "backends/adapters.py",
+            "gui/formatting.py",
+            "gui/settings_dialog.py",
+            "i18n/awanagis_pt_BR.ts",
+            "resources/ASSET_PROVENANCE.md",
+        }
+        pattern = re.compile(r"agenticgis", re.IGNORECASE)
+        unexpected = []
+        for path in ROOT.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            if rel == ".git" or rel.startswith(("docs/", "tests/", "graft/", ".git/", "dist/")):
+                continue
+            if path.suffix in (".pyc", ".pyo", ".qm", ".png", ".zip"):
+                continue
+            if rel in allowed_files:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for idx, line in enumerate(text.splitlines(), 1):
+                if pattern.search(line):
+                    unexpected.append(f"{rel}:{idx}: {line.strip()}")
+        self.assertEqual(unexpected, [], f"Unexpected AgenticGIS hits: {unexpected}")
+
+    def test_icon_readability_and_provenance_draft_status(self):
+        svg_path = ROOT / "resources" / "icon.svg"
+        png_path = ROOT / "resources" / "icon.png"
+        prov_path = ROOT / "resources" / "ASSET_PROVENANCE.md"
+        self.assertTrue(svg_path.is_file())
+        self.assertTrue(png_path.is_file())
+        self.assertTrue(prov_path.is_file())
+
+        prov_text = prov_path.read_text(encoding="utf-8").lower()
+        self.assertIn("draft", prov_text)
+        self.assertIn("signoff", prov_text)
+
+        renderer = QSvgRenderer(str(svg_path))
+        self.assertTrue(renderer.isValid())
+        for size in (16, 24, 32, 64, 128):
+            img = QImage(size, size, QImage.Format.Format_ARGB32)
+            img.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(img)
+            renderer.render(painter, QRectF(0, 0, size, size))
+            painter.end()
+            # Ensure non-empty foreground and background pixel groups at every target size
+            fg_pixels = 0
+            bg_pixels = 0
+            for y in range(size):
+                for x in range(size):
+                    c = img.pixelColor(x, y)
+                    if c.alpha() < 180:
+                        continue
+                    if c.red() > 210 and c.green() > 200:
+                        fg_pixels += 1
+                    elif 80 <= c.red() <= 170 and c.green() < 40:
+                        bg_pixels += 1
+            self.assertGreater(fg_pixels, 0, f"No light foreground pixels at {size}x{size}")
+            self.assertGreater(bg_pixels, 0, f"No burgundy background pixels at {size}x{size}")
+
+        with Image.open(png_path) as pil_img:
+            self.assertEqual(pil_img.size, (128, 128))
+
+
+class PackagingAndSmokeTests(unittest.TestCase):
+    def test_zip_package_structure_and_headless_qgis_lifecycle(self):
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            out_zip = tmp_path / "awanagis-0.1.0-test.zip"
+            zip_path, sha_path, digest, names = package_plugin.build_plugin_zip(ROOT, out_zip)
+            self.assertTrue(zip_path.is_file())
+            self.assertTrue(sha_path.is_file())
+            self.assertIn(digest, sha_path.read_text(encoding="utf-8"))
+
+            with zipfile.ZipFile(zip_path) as zf:
+                entries = zf.namelist()
+                self.assertTrue(all(name.startswith("awanagis/") for name in entries))
+                for required in (
+                    "awanagis/__init__.py",
+                    "awanagis/plugin.py",
+                    "awanagis/metadata.txt",
+                    "awanagis/LICENSE",
+                    "awanagis/NOTICE",
+                    "awanagis/THIRD_PARTY_LICENSES.md",
+                    "awanagis/resources/icon.png",
+                    "awanagis/resources/icon.svg",
+                    "awanagis/resources/ASSET_PROVENANCE.md",
+                    "awanagis/i18n/awanagis_pt_BR.qm",
+                ):
+                    self.assertIn(required, entries)
+                for forbidden_prefix in (
+                    "awanagis/.git/",
+                    "awanagis/docs/",
+                    "awanagis/tests/",
+                    "awanagis/scripts/",
+                    "awanagis/graft/",
+                ):
+                    self.assertFalse(any(e.startswith(forbidden_prefix) for e in entries), forbidden_prefix)
+                self.assertFalse(any("__pycache__" in e or e.endswith((".pyc", ".ts", ".pro", ".db", ".zip")) for e in entries))
+
+                qm_bytes = zf.read("awanagis/i18n/awanagis_pt_BR.qm")
+                self.assertEqual(qm_bytes[:4], b"\x3c\xb8\x64\x18")
+
+                extract_dir = tmp_path / "plugins"
+                zf.extractall(extract_dir)
+
+            script = (
+                "import sys; "
+                "from unittest.mock import Mock; "
+                "from qgis.PyQt.QtWidgets import QMainWindow; "
+                "from qgis.core import QgsApplication; "
+                f"sys.path.insert(0, {str(extract_dir)!r}); "
+                "app = QgsApplication([], False); "
+                "import awanagis; "
+                "iface = Mock(); "
+                "iface.mainWindow.return_value = QMainWindow(); "
+                "plugin = awanagis.classFactory(iface); "
+                "plugin.config.set('mcp_enabled', False); "
+                "plugin.initGui(); "
+                "assert plugin._action.text() == 'AwanaGIS'; "
+                "plugin.unload(); "
+                "print('SMOKE_OK')"
+            )
+            env = dict(os.environ)
+            env["QT_QPA_PLATFORM"] = "offscreen"
+            proc = subprocess.run(
+                [sys.executable, "-c", script],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("SMOKE_OK", proc.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

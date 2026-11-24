@@ -14,10 +14,10 @@ from qgis.PyQt.QtCore import QCoreApplication, QLocale, QSettings
 from qgis.PyQt.QtWidgets import QMainWindow
 from qgis.core import QgsApplication
 
-from AgenticGIS.core.session_store import SETTINGS_KEY, SessionStore
-from AgenticGIS.i18n import load_plugin_translator, resolve_qgis_locale
-from AgenticGIS.plugin import AgenticGisPlugin
-from AgenticGIS.server import mcp_server, mcp_stdio
+from awanagis.core.session_store import SETTINGS_KEY, SessionStore
+from awanagis.i18n import load_plugin_translator, resolve_qgis_locale
+from awanagis.plugin import AwanaGisPlugin
+from awanagis.server import mcp_server, mcp_stdio
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,9 +55,9 @@ class LocaleTests(unittest.TestCase):
     def test_corrupt_and_language_only_catalog(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)
-            (directory / "AgenticGIS_pt_BR.qm").write_bytes(b"invalid")
+            (directory / "awanagis_pt_BR.qm").write_bytes(b"invalid")
             self.assertIsNone(load_plugin_translator("pt_BR", directory))
-            (directory / "AgenticGIS_pt.qm").write_bytes((ROOT / "i18n/AgenticGIS_pt_BR.qm").read_bytes())
+            (directory / "awanagis_pt.qm").write_bytes((ROOT / "i18n/awanagis_pt_BR.qm").read_bytes())
             self.assertIsNotNone(load_plugin_translator("pt_BR", directory))
             self.assertIsNotNone(load_plugin_translator("pt_PT", directory))
 
@@ -65,12 +65,12 @@ class LocaleTests(unittest.TestCase):
         iface = Mock()
         window = QMainWindow()
         iface.mainWindow.side_effect = lambda: self.assert_ready("Pronto") or window
-        plugin = AgenticGisPlugin(iface)
-        with patch("AgenticGIS.plugin.resolve_qgis_locale", return_value="pt_BR"), \
+        plugin = AwanaGisPlugin(iface)
+        with patch("awanagis.plugin.resolve_qgis_locale", return_value="pt_BR"), \
              patch.object(plugin, "_apply_mcp_state"), \
-             patch("AgenticGIS.core.network_cache.sweep_stale_cache_on_startup"), \
-             patch("AgenticGIS.core.network_cache.maybe_enable_default_cache"), \
-             patch("AgenticGIS.core.network_cache.clear_cache_on_unload"):
+             patch("awanagis.core.network_cache.sweep_stale_cache_on_startup"), \
+             patch("awanagis.core.network_cache.maybe_enable_default_cache"), \
+             patch("awanagis.core.network_cache.clear_cache_on_unload"):
             try:
                 plugin.initGui()
                 plugin.initGui()
@@ -85,11 +85,11 @@ class LocaleTests(unittest.TestCase):
     def test_translator_removed_when_gui_teardown_raises(self):
         iface = Mock()
         iface.mainWindow.return_value = QMainWindow()
-        plugin = AgenticGisPlugin(iface)
-        with patch("AgenticGIS.plugin.resolve_qgis_locale", return_value="pt_BR"), \
+        plugin = AwanaGisPlugin(iface)
+        with patch("awanagis.plugin.resolve_qgis_locale", return_value="pt_BR"), \
              patch.object(plugin, "_apply_mcp_state"), \
-             patch("AgenticGIS.core.network_cache.sweep_stale_cache_on_startup"), \
-             patch("AgenticGIS.core.network_cache.maybe_enable_default_cache"), \
+             patch("awanagis.core.network_cache.sweep_stale_cache_on_startup"), \
+             patch("awanagis.core.network_cache.maybe_enable_default_cache"), \
              patch.object(plugin, "_unload_gui", side_effect=RuntimeError("teardown")):
             plugin.initGui()
             self.assert_ready("Pronto")
@@ -104,7 +104,7 @@ class LocaleTests(unittest.TestCase):
 
 class CatalogTests(unittest.TestCase):
     def test_catalog_matches_literal_translation_calls(self):
-        tree = ET.parse(ROOT / "i18n/AgenticGIS_pt_BR.ts")
+        tree = ET.parse(ROOT / "i18n/awanagis_pt_BR.ts")
         catalog = {
             (context.findtext("name"), message.findtext("source"))
             for context in tree.findall("context")
@@ -132,7 +132,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(catalog, literals)
 
     def test_finished_messages_and_placeholders(self):
-        tree = ET.parse(ROOT / "i18n/AgenticGIS_pt_BR.ts")
+        tree = ET.parse(ROOT / "i18n/awanagis_pt_BR.ts")
         formatter = string.Formatter()
         for message in tree.findall(".//message"):
             source = message.findtext("source")
