@@ -53,6 +53,7 @@ def format_relative_time(value, now=None):
 _ARG_KEYS = (
     "alg_id", "path", "file_path", "filename", "layer", "layer_name", "layer_id",
     "query", "sql", "expression", "url", "name", "id",
+    "plan_id", "ibge_code", "territory_id",
 )
 
 
@@ -100,6 +101,11 @@ _TOOL_LABELS = {
     "save_project_as": QT_TRANSLATE_NOOP("ToolNames", "Save project as"),
     "create_layout": QT_TRANSLATE_NOOP("ToolNames", "Create layout"),
     "export_layout": QT_TRANSLATE_NOOP("ToolNames", "Export layout"),
+    "br_search_sources": QT_TRANSLATE_NOOP("ToolNames", "Search Brazilian sources"),
+    "br_source_details": QT_TRANSLATE_NOOP("ToolNames", "Inspect Brazilian sources"),
+    "br_resolve_area": QT_TRANSLATE_NOOP("ToolNames", "Resolve Brazilian area"),
+    "br_plan_load": QT_TRANSLATE_NOOP("ToolNames", "Plan Brazilian data load"),
+    "br_execute_load": QT_TRANSLATE_NOOP("ToolNames", "Load Brazilian data"),
 }
 
 

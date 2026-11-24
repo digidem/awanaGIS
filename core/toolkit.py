@@ -1195,6 +1195,56 @@ class QgisToolkit:
                 ),
             )
 
+        if tool_name == "br_execute_load":
+            from ..integrations.brazil.planner import get_frozen_plan
+            plan, _err = get_frozen_plan(args.get("plan_id") or "")
+            if plan is not None:
+                sources = ", ".join(plan.get("executable_ids") or []) or "none"
+                dest = plan.get("output_gpkg") or ""
+                return (
+                    f"download Brazilian geospatial data ({sources}) and write to {dest}",
+                    QCoreApplication.translate(
+                        "ExternalAccess",
+                        "download Brazilian geospatial data ({sources}) and write to {dest}",
+                    ).format(sources=sources, dest=dest),
+                )
+
+        if tool_name == "br_source_details" and args.get("probe"):
+            from ..integrations.brazil.catalog import get_source
+            from ..integrations.brazil.policy import (
+                is_blocked_sensitive,
+                is_discovery_only,
+                is_portal_only,
+            )
+            probeable = []
+            for sid in (args.get("source_ids") or [])[:25]:
+                entry = get_source(str(sid))
+                if entry is not None and not (
+                    is_blocked_sensitive(entry)
+                    or is_discovery_only(entry)
+                    or is_portal_only(entry)
+                    or entry.get("loader_state") in ("manual_required", "unavailable")
+                ):
+                    probeable.append(entry["source_id"])
+            if probeable:
+                sids = ", ".join(probeable)
+                return (
+                    f"probe Brazilian geospatial endpoint metadata ({sids})",
+                    QCoreApplication.translate(
+                        "ExternalAccess",
+                        "probe Brazilian geospatial endpoint metadata ({sources})",
+                    ).format(sources=sids),
+                )
+
+        if tool_name == "br_resolve_area" and args.get("allow_live_lookup"):
+            return (
+                "query IBGE Localidades API for municipality disambiguation",
+                QCoreApplication.translate(
+                    "ExternalAccess",
+                    "query IBGE Localidades API for municipality disambiguation",
+                ),
+            )
+
         return None
 
     def confirm_external_access(self, tool_name, args):

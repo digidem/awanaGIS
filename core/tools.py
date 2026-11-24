@@ -10,6 +10,11 @@ import time
 import traceback
 
 from .dev_logging import log_event
+from ..integrations.brazil.tools import (
+    BRAZIL_DISPATCH_TABLE,
+    BRAZIL_TOOL_NAMES,
+    BRAZIL_TOOL_SPECS,
+)
 
 TOOL_SPECS = [
     {
@@ -1088,6 +1093,7 @@ TOOL_SPECS = [
             "required": ["layout_id", "output_path"],
         },
     },
+    *BRAZIL_TOOL_SPECS,
 ]
 
 TOOL_BY_NAME = {spec["name"]: spec for spec in TOOL_SPECS}
@@ -1274,7 +1280,10 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
         }
         log_event("tool.dispatch.error", tool=name, error_type="UnknownTool", error=result["error"])
         return result
-    method = getattr(toolkit, spec["method"])
+    if name in BRAZIL_TOOL_NAMES:
+        method = BRAZIL_DISPATCH_TABLE[name]
+    else:
+        method = getattr(toolkit, spec["method"])
     args = dict(arguments or {})
     start = time.perf_counter()
     log_event("tool.dispatch.start", tool=name, arg_keys=sorted(args.keys()))
@@ -1358,11 +1367,41 @@ def _dispatch(toolkit, executor, name, arguments, should_stop=None):
             return result
 
         can_run_background = getattr(toolkit, "can_run_background", None)
-        if can_run_background is not None and can_run_background(name):
+        if name not in BRAZIL_TOOL_NAMES and can_run_background is not None and can_run_background(name):
             if _dispatch_cancelled(should_stop):
                 return _cancelled_result()
             result = toolkit.run_background_tool(executor, name, args)
             _log_dispatch_end(name, "background", start, result)
+            return result
+
+        if name == "br_execute_load":
+            cancel_reg = getattr(toolkit, "_cancel", None)
+
+            def run_brazil_load():
+                if _dispatch_cancelled(should_stop):
+                    return _cancelled_result()
+                extra_keys = set(args.keys()) - {"plan_id"}
+                if extra_keys:
+                    return {
+                        "ok": False,
+                        "status": "invalid_input",
+                        "cancelled": False,
+                        "results": [],
+                        "error": f"br_execute_load accepts only plan_id; rejected unexpected keys: {sorted(extra_keys)}",
+                    }
+
+                def _combined_stop():
+                    if _dispatch_cancelled(should_stop):
+                        return True
+                    return bool(cancel_reg is not None and cancel_reg.is_cancelled())
+
+                if cancel_reg is not None and hasattr(cancel_reg, "scope"):
+                    with cancel_reg.scope():
+                        return method(plan_id=args.get("plan_id"), should_stop=_combined_stop)
+                return method(plan_id=args.get("plan_id"), should_stop=_combined_stop)
+
+            result = executor.run_sync(run_brazil_load)
+            _log_dispatch_end(name, "brazil_load", start, result)
             return result
 
         def run_method():
