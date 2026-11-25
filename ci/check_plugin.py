@@ -194,12 +194,22 @@ def _validate_member_path(raw_name: str, is_dir: bool) -> tuple[str | None, str 
     return trimmed, None
 
 
+# Whole-file grammar: CERTIFICATE blocks (base64 body), whitespace, and
+# whole-line "#" comments (the shipped ca_roots.pem documents each root).
+_CERT_BLOCK = (
+    rb"-----BEGIN CERTIFICATE-----[ \t]*\r?\n"
+    rb"(?:[A-Za-z0-9+/=]+[ \t]*\r?\n)+"
+    rb"-----END CERTIFICATE-----[ \t]*(?:\r?\n|\Z)"
+)
+_CERT_ONLY_RE = re.compile(
+    rb"(?:\s|#[^\r\n]*(?:\r?\n|\Z))*(?:" + _CERT_BLOCK
+    + rb"(?:\s|#[^\r\n]*(?:\r?\n|\Z))*)+"
+)
+
+
 def _is_cert_only_bundle(data: bytes) -> bool:
     """True when *data* holds certificates and no private-key material."""
-    if b"-----BEGIN CERTIFICATE-----" not in data:
-        return False
-    upper = data.upper()
-    return not any(marker in upper for marker in PRIVATE_KEY_MARKERS)
+    return _CERT_ONLY_RE.fullmatch(data) is not None
 
 
 def _check_forbidden_member(
@@ -222,18 +232,19 @@ def _check_forbidden_member(
         return f"Forbidden test artifact in archive: {raw_name}"
     if lower_name.endswith(FORBIDDEN_SUFFIXES):
         return f"Forbidden compiled/database artifact in archive: {raw_name}"
+    secret_name = (
+        lower_name in PRIVATE_KEY_NAMES
+        or any(lower_name.startswith(n + ".") for n in PRIVATE_KEY_NAMES)
+    )
     if (
-        lower_name.endswith(".pem")
+        not secret_name
+        and lower_name.endswith(".pem")
         and tuple(rel_parts[:-1]) == APPROVED_CERT_PREFIX
         and member_bytes is not None
         and _is_cert_only_bundle(member_bytes)
     ):
         return None
-    if (
-        lower_name in PRIVATE_KEY_NAMES
-        or lower_name.startswith("id_rsa.")
-        or lower_name.endswith(PRIVATE_KEY_SUFFIXES)
-    ):
+    if secret_name or lower_name.endswith(PRIVATE_KEY_SUFFIXES):
         return f"Forbidden key/certificate file in archive: {raw_name}"
     if lower_name.endswith(NESTED_ARCHIVE_SUFFIXES):
         return f"Forbidden nested archive in package: {raw_name}"

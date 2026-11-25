@@ -22,6 +22,24 @@ from .policy import (
     validate_safe_output_path,
 )
 from .vendor.gisbr.core import capabilities, catalog as gisbr_catalog
+from .vendor.gisbr.core import constants as gisbr_constants
+
+
+def _mask_provider_hosts() -> set:
+    """Hosts the loader may contact to fetch a municipality/area mask (IPEA geobr + GitHub mirrors)."""
+    urls = [
+        gisbr_constants.METADATA_URL,
+        gisbr_constants.IPEA_BASE,
+        gisbr_constants.IPEA_V2_FALLBACK_BASE,
+        gisbr_constants.GEOBR_V2_API_LATEST,
+        gisbr_constants.GEOBR_V2_API_RELEASES,
+        *gisbr_constants.GITHUB_MIRRORS,
+    ]
+    out = {(urlparse(u).hostname or "").lower() for u in urls}
+    # GitHub release assets are served from this host after redirect.
+    out.add("objects.githubusercontent.com")
+    out.discard("")
+    return out
 
 _SCALE_RANK = {
     "municipality": 0,
@@ -446,17 +464,16 @@ def plan_load(
         executable_ids.append(canonical_id)
 
     can_execute = len(executable_ids) > 0
+    if can_execute and not area.get("geometry_wkt"):
+        # Loader fetches an area mask from IPEA/GitHub mirrors when no polygon is supplied.
+        hosts.update(_mask_provider_hosts())
     external_db_notice = (
         "External databases to contact: "
         + ", ".join(f"{d['source_id']} ({d['publisher']} @ {d['host']})" for d in external_databases)
         + ". External government/public geoportals may go offline intermittently."
     ) if external_databases else ""
-    area_fingerprint_payload = {
-        "type": area.get("type"),
-        "id": area.get("id"),
-        "codes": area.get("codes"),
-        "geometry_fingerprint": area.get("geometry_fingerprint"),
-    }
+    # Bind the ID to every execution input carried by the area (bbox, WKT, terrai_cod, ...).
+    area_fingerprint_payload = {k: area[k] for k in sorted(area)}
     plan_payload = {
         "catalog_version": CATALOG_VERSION,
         "executable_ids": executable_ids,

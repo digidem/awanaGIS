@@ -64,7 +64,8 @@ class BrazilSafetyTests(unittest.TestCase):
         ]
 
         # 1) Probing must never call network and must return blocked/discovery/portal status
-        with patch.object(catalog.urllib.request, "urlopen", side_effect=AssertionError("Probe must not hit network")):
+        with patch.object(catalog.urllib.request, "urlopen", side_effect=AssertionError("Probe must not hit network")), \
+                patch.object(catalog.urllib.request, "build_opener", side_effect=AssertionError("Probe must not hit network")):
             for sid, expected_status in restricted_cases:
                 with self.subTest(stage="probe", sid=sid):
                     det = br_tools.br_source_details([sid], probe=True)

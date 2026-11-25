@@ -424,6 +424,26 @@ class BrazilQgisTests(unittest.TestCase):
         self.assertEqual(check.featureCount(), 1)
         del check
 
+        # Case-variant table name MUST also be refused (SQLite/GPKG names collide case-insensitively)
+        ok_cv, msg_cv, _ = loader._write_vector_atomically(
+            layer2, gpkg, "SHARED_TABLE", replace_existing=False
+        )
+        self.assertFalse(ok_cv)
+        self.assertIn("Refusing to overwrite", msg_cv)
+        check_cv = QgsVectorLayer(f"{gpkg}|layername=shared_table", "check_cv", "ogr")
+        self.assertEqual(check_cv.featureCount(), 1)
+        del check_cv
+
+        # Uninspectable existing GeoPackage MUST fail closed, not be treated as absent
+        broken = self.tmp / "broken_guard.gpkg"
+        broken.write_bytes(b"not a sqlite database" * 64)
+        ok_bk, msg_bk, _ = loader._write_vector_atomically(
+            layer2, broken, "any_table", replace_existing=False
+        )
+        self.assertFalse(ok_bk)
+        self.assertIn("cannot inspect", msg_bk)
+        self.assertEqual(broken.read_bytes(), b"not a sqlite database" * 64)
+
         # Sidecar fallback MUST also refuse overwrite when replace_existing=False
         sidecar = gpkg.with_name(f"{gpkg.stem}_new_table.gpkg")
         sidecar.write_bytes(b"existing-sidecar-sentinel")
@@ -671,6 +691,13 @@ class BrazilQgisTests(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
+        class _FakeOpener:
+            def __init__(self, opener_open):
+                self._open = opener_open
+
+            def open(self, req, timeout=None, **kwargs):
+                return self._open(req, timeout=timeout, **kwargs)
+
         def fake_probe_urlopen(req, timeout=8.0, **_kwargs):
             observed["probe_tid"] = threading.get_ident()
             return _Resp(caps_xml)
@@ -716,11 +743,11 @@ class BrazilQgisTests(unittest.TestCase):
 
         def bg_agent_thread():
             catalog._PROBE_CACHE.clear()
-            with patch.object(catalog.urllib.request, "urlopen", side_effect=fake_probe_urlopen):
+            with patch.object(catalog.urllib.request, "build_opener", side_effect=lambda *h, **k: _FakeOpener(fake_probe_urlopen)):
                 results["probe"] = core_tools.dispatch(
                     toolkit, executor, "br_source_details", {"source_ids": ["inpe_prodes"], "probe": True}
                 )
-            with patch.object(resolver.urllib.request, "urlopen", side_effect=fake_ibge_urlopen):
+            with patch.object(resolver.urllib.request, "build_opener", side_effect=lambda *h, **k: _FakeOpener(fake_ibge_urlopen)):
                 results["ibge"] = core_tools.dispatch(
                     toolkit, executor, "br_resolve_area", {"type": "municipality", "ibge_code": "9999998", "allow_live_lookup": True}
                 )

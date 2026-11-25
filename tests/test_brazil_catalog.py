@@ -23,6 +23,35 @@ core_tools = import_module(f"{PKG}.core.tools")
 formatting = import_module(f"{PKG}.gui.formatting")
 
 
+class _FakeOpener:
+    """Stand-in for the OpenerDirector built by catalog._probe_endpoint."""
+
+    def __init__(self, handlers, opener_open):
+        self.handlers = handlers
+        self._open = opener_open
+
+    def open(self, req, timeout=None, **kwargs):
+        return self._open(req, timeout=timeout, **kwargs)
+
+
+def _patch_build_opener(*, return_value=None, side_effect=None, handlers_seen=None):
+    """Patch urllib.request.build_opener so opener.open behaves like a mocked urlopen."""
+
+    def _open(req, timeout=None, **kwargs):
+        if side_effect is not None:
+            if isinstance(side_effect, BaseException):
+                raise side_effect
+            return side_effect(req, timeout=timeout, **kwargs)
+        return return_value
+
+    def _build(*handlers, **kwargs):
+        if handlers_seen is not None:
+            handlers_seen.append(handlers)
+        return _FakeOpener(handlers, _open)
+
+    return patch.object(catalog.urllib.request, "build_opener", side_effect=_build)
+
+
 class _FakeHttpResp:
     def __init__(self, body: bytes, status: int = 200):
         self._body = body
@@ -144,7 +173,8 @@ class BrazilCatalogTests(unittest.TestCase):
 
     def test_source_details_offline_and_bounded_probe(self):
         # Offline details (probe=False) must never call urlopen
-        with patch.object(catalog.urllib.request, "urlopen", side_effect=AssertionError("Network forbidden")):
+        with _patch_build_opener(side_effect=AssertionError("Network forbidden")), \
+                patch.object(catalog.urllib.request, "urlopen", side_effect=AssertionError("Network forbidden")):
             res = br_tools.br_source_details(
                 ["funai_dsei_areas", "mapbiomas_cobertura", "raisg_indigenous_territories"],
                 probe=False,
@@ -168,7 +198,7 @@ class BrazilCatalogTests(unittest.TestCase):
             "<FeatureTypeList><FeatureType><Name>prodes-legal-amz:yearly_deforestation</Name></FeatureType></FeatureTypeList>"
             "</WFS_Capabilities>"
         ).encode("utf-8")
-        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(caps_xml)):
+        with _patch_build_opener(return_value=_FakeHttpResp(caps_xml)):
             res_probe = br_tools.br_source_details(["inpe_prodes"], probe=True)
             self.assertTrue(res_probe["ok"])
             src = res_probe["sources"][0]
@@ -267,6 +297,7 @@ class BrazilCatalogTests(unittest.TestCase):
     def test_funai_cert_context_and_offline_probe_classification(self):
         import ssl
         import urllib.error
+        import urllib.request
         from datetime import datetime, timezone
 
         ssl_support = import_module(f"{PKG}.integrations.brazil.vendor.gisbr.core.ssl_support")
@@ -301,7 +332,8 @@ class BrazilCatalogTests(unittest.TestCase):
         ]
         for exc, expected_code in err_cases:
             catalog._PROBE_CACHE.clear()
-            with patch.object(catalog.urllib.request, "urlopen", side_effect=exc):
+            handlers_seen = []
+            with _patch_build_opener(side_effect=exc, handlers_seen=handlers_seen):
                 det = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
                 self.assertTrue(det["ok"])
                 src = det["sources"][0]
@@ -310,6 +342,17 @@ class BrazilCatalogTests(unittest.TestCase):
                 self.assertTrue(src["external_db"]["is_offline"])
                 self.assertEqual(src["external_db"]["fallback_source_id"], "geobr_terras_indigenas")
                 self.assertIn("geoserver.funai.gov.br", det["user_notice"])
+                # Probe opener must carry a strict-TLS HTTPSHandler context
+                https_ctxs = [
+                    h.__dict__.get("_context")
+                    for hs in handlers_seen
+                    for h in hs
+                    if isinstance(h, urllib.request.HTTPSHandler)
+                ]
+                self.assertTrue(https_ctxs)
+                for hctx in https_ctxs:
+                    self.assertEqual(hctx.verify_mode, ssl.CERT_REQUIRED)
+                    self.assertTrue(hctx.check_hostname)
 
         # Failed probe cache expires after 30s (_PROBE_FAILURE_TTL_SECONDS) so recoveries re-probe
         catalog._PROBE_CACHE["funai_ti_boundaries"] = {
@@ -324,7 +367,7 @@ class BrazilCatalogTests(unittest.TestCase):
             b"<WFS_Capabilities><FeatureTypeList><FeatureType>"
             b"<Name>Funai:tis_poligonais</Name></FeatureType></FeatureTypeList></WFS_Capabilities>"
         )
-        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(caps_ok)):
+        with _patch_build_opener(return_value=_FakeHttpResp(caps_ok)):
             det_rec = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
             self.assertEqual(det_rec["sources"][0]["status"], "reachable")
             self.assertEqual(det_rec["sources"][0]["service_status"], "reachable")
@@ -338,7 +381,7 @@ class BrazilCatalogTests(unittest.TestCase):
             b"<WFS_Capabilities><FeatureTypeList><script><Name>Funai:tis_poligonais</Name></script></FeatureTypeList></WFS_Capabilities>",
         ):
             catalog._PROBE_CACHE.clear()
-            with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(maint_html)):
+            with _patch_build_opener(return_value=_FakeHttpResp(maint_html)):
                 det_html = br_tools.br_source_details(["funai_ti_boundaries"], probe=True)
                 self.assertEqual(det_html["sources"][0]["status"], "unavailable")
                 self.assertEqual(det_html["sources"][0]["service_status"], "offline_http_error")
@@ -346,7 +389,7 @@ class BrazilCatalogTests(unittest.TestCase):
 
         catalog._PROBE_CACHE.clear()
         empty_ft = b"<WFS_Capabilities><FeatureTypeList><FeatureType/></FeatureTypeList></WFS_Capabilities>"
-        with patch.object(catalog.urllib.request, "urlopen", return_value=_FakeHttpResp(empty_ft)):
+        with _patch_build_opener(return_value=_FakeHttpResp(empty_ft)):
             det_empty_ft = br_tools.br_source_details(["funai_dsei_areas"], probe=True)
             self.assertEqual(det_empty_ft["sources"][0]["status"], "unavailable")
             self.assertFalse(det_empty_ft["sources"][0]["machine_access_verified"])

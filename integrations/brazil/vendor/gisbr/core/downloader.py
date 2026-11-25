@@ -5,6 +5,8 @@
 Sem requests / urllib de terceiros.
 """
 
+import os
+import tempfile
 from pathlib import Path
 
 from qgis.PyQt.QtCore import QStandardPaths, QUrl
@@ -121,9 +123,22 @@ def _fetch_to_cache(file_id, urls, feedback=None):
         if not data:
             errors.append(f"  - {candidate}: arquivo vazio")
             continue
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        tmp.write_bytes(data)
-        tmp.replace(dest)
+        # Arquivo de staging unico no mesmo diretorio do destino: cargas
+        # concorrentes do mesmo recurso nao compartilham o .part nem expoem
+        # bytes parciais; a publicacao so acontece apos a escrita completa.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(dest.parent), prefix=dest.name + ".", suffix=".part"
+        )
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(tmp_name, dest)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
         return dest
 
     raise DownloadError(_format_friendly_error(errors, file_id))

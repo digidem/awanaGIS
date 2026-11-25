@@ -15,6 +15,7 @@ import unicodedata
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from .http import AllowlistedRedirectHandler
 from .vendor.gisbr.core.constants import UF_ABBREV_TO_CODE, UF_CODE_TO_ABBREV
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -152,7 +153,8 @@ def _maybe_live_ibge_lookup(ibge_code: str, *, allow_network: bool = False) -> O
     url = f"https://servicodados.ibge.gov.br/api/v1/localidades/municipios/{ibge_code}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "AwanaGIS-Resolver/0.1"})
-        with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 - fixed https IBGE URL
+        opener = urllib.request.build_opener(AllowlistedRedirectHandler({"servicodados.ibge.gov.br"}))
+        with opener.open(req, timeout=5) as resp:
             obj = json.loads(resp.read(65536).decode("utf-8", errors="replace"))
         if isinstance(obj, dict) and obj.get("id"):
             uf_sigla = (

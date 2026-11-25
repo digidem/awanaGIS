@@ -220,20 +220,25 @@ def _clip_to_mask(layer, mask_layer, target_name: str, feedback=None, transform_
 
 
 def _gpkg_has_layer(gpkg_path: Path, layer_name: str) -> bool:
+    """Return True when ``layer_name`` exists in the GeoPackage (case-insensitive).
+
+    Raises RuntimeError when the file cannot be inspected, so callers fail closed.
+    """
     if not gpkg_path.exists():
         return False
+    wanted = layer_name.casefold()
     try:
         from qgis.core import QgsVectorLayer
 
         vl = QgsVectorLayer(str(gpkg_path), "probe_existing", "ogr")
         if not vl.isValid():
-            return False
+            raise RuntimeError("GeoPackage probe reported an invalid source")
         for sub in vl.dataProvider().subLayers():
             parts = sub.split("!!::!!")
-            if len(parts) > 1 and parts[1] == layer_name:
+            if len(parts) > 1 and parts[1].casefold() == wanted:
                 return True
-    except Exception:
-        return False
+    except Exception as exc:
+        raise RuntimeError(f"cannot inspect layers in {gpkg_path.name}: {exc}") from exc
     return False
 
 
@@ -377,12 +382,17 @@ def _write_vector_atomically(
                 except FileExistsError:
                     pass
 
-            if not replace_existing and _gpkg_has_layer(gpkg_path, layer_name):
-                return (
-                    False,
-                    f"Refusing to overwrite existing layer '{layer_name}' in {gpkg_path.name} (replace_existing=false).",
-                    gpkg_path,
-                )
+            if not replace_existing:
+                try:
+                    layer_exists = _gpkg_has_layer(gpkg_path, layer_name)
+                except RuntimeError as exc:
+                    return False, f"Refusing to write: {exc} (replace_existing=false).", gpkg_path
+                if layer_exists:
+                    return (
+                        False,
+                        f"Refusing to overwrite existing layer '{layer_name}' in {gpkg_path.name} (replace_existing=false).",
+                        gpkg_path,
+                    )
 
             opts2 = QgsVectorFileWriter.SaveVectorOptions()
             opts2.driverName = "GPKG"

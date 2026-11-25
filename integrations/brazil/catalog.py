@@ -10,6 +10,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
+from .http import AllowlistedRedirectHandler
 from .manifest import (
     CATALOG_VERSION,
     CURATED_INDIGENOUS_SOURCES,
@@ -406,7 +407,7 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
             "external_db": external_db_descriptor(entry, status="unsupported", reason="No direct URL configured."),
         }
 
-    ok_url, url_err = validate_allowlisted_url(base_url, _ALLOWED_HOSTS)
+    ok_url, url_err = validate_allowlisted_url(base_url, _ALLOWED_HOSTS, require_https=True)
     if not ok_url:
         return {
             "status": "unsupported",
@@ -436,7 +437,10 @@ def _probe_endpoint(entry: Dict[str, Any], *, timeout: float = 8.0) -> Dict[str,
             method=method,
             headers={"User-Agent": "AwanaGIS-Probe/0.1 (read-only metadata check)"},
         )
-        with urllib.request.urlopen(req, timeout=timeout, context=ssl_ctx) as resp:  # nosec B310 - allowlisted https host, strict TLS with bundled intermediates
+        opener = urllib.request.build_opener(
+            AllowlistedRedirectHandler(_ALLOWED_HOSTS), urllib.request.HTTPSHandler(context=ssl_ctx)
+        )
+        with opener.open(req, timeout=timeout) as resp:
             status_code = getattr(resp, "status", 200)
             read_limit = (8 * 1024 * 1024) if proto == "wfs" else 65536
             snippet = resp.read(read_limit).decode("utf-8", errors="replace") if method == "GET" else ""

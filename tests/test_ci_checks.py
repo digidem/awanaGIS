@@ -162,6 +162,25 @@ class ArchiveCheckTests(unittest.TestCase):
             self.assertFalse(report["ok"], name)
             self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
 
+    def test_pem_with_trailing_junk_or_secret_filename_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        base = "awanagis/integrations/brazil/vendor/gisbr/core/certs/"
+        for name, data in (
+            (base + "ca.pem", cert + b"password=hunter2\n"),
+            (base + "ca.pem", b"token=abc\n" + cert),
+            (base + "ca.pem", b"# note\n" + cert + b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"),
+            (base + "ca.pem", cert.replace(b"MIIB", b"MI!B")),
+            (base + "id_rsa.pem", cert),
+            (base + "id_ed25519.pem", cert),
+        ):
+            report = self._pem_report(name, data)
+            self.assertFalse(report["ok"], name)
+
+    def test_multi_cert_pem_at_approved_path_is_allowed(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        report = self._pem_report(APPROVED_PEM, b"# roots\n" + cert + b"\n# two\n" + cert)
+        self.assertTrue(report["ok"], report["blocking_errors"])
+
     def test_key_file_at_approved_cert_path_is_rejected(self):
         cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
         for suffix in (".key", ".p12", ".pfx", ".kdbx"):
