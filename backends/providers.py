@@ -14,6 +14,8 @@ BUILT_INS = [
         "format": "openai",
         "default_model": "deepseek-v4-1-flash",
         "key_env": "TINFOIL_API_KEY",
+        # GET /models is unauthenticated, so it cannot validate a key.
+        "models_public": True,
     },
     {
         "id": "anthropic",
@@ -123,7 +125,7 @@ def pick_default_model(provider_id, models, current=""):
     return models[0]
 
 
-def fetch_models(fmt, base_url, key):
+def fetch_models(fmt, base_url, key, provider_id=None):
     """List models from a provider endpoint; ``(models, error)``.
 
     Blocking network call: run it off the UI thread. Doubles as a connection
@@ -137,4 +139,12 @@ def fetch_models(fmt, base_url, key):
         from .openai_http import OpenAIHttpClient
 
         client = OpenAIHttpClient(api_key=key or None, base_url=base_url or None)
+        models, err = client.list_models()
+        provider = get_provider(provider_id) or {}
+        if not err and provider.get("models_public"):
+            # The listing needs no key, so prove the key works with a probe.
+            probe_err = client.check_key(pick_default_model(provider_id, models))
+            if probe_err:
+                return [], probe_err
+        return models, err
     return client.list_models()

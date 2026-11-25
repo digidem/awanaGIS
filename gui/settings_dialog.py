@@ -1383,8 +1383,10 @@ class SettingsDialog(QDialog):
             self._set_status(status, QCoreApplication.translate("SettingsDialog", "Enter a base URL first."), _DANGER)
             return
 
-        def fetch(fmt=fmt, base_url=base_url, key=key):
-            return providers.fetch_models(fmt, base_url, key)
+        provider_id = None if mode == config_mod.MODE_CUSTOM else self.provider_combo.currentData()
+
+        def fetch(fmt=fmt, base_url=base_url, key=key, provider_id=provider_id):
+            return providers.fetch_models(fmt, base_url, key, provider_id)
 
         def done(result, err, m=mode):
             models, fetch_err = result if result else ([], "")

@@ -263,7 +263,7 @@ class OnboardingPage(QWidget):
         pid = provider.get("id", "")
 
         def fetch():
-            return providers.fetch_models(fmt, base_url, key)
+            return providers.fetch_models(fmt, base_url, key, pid)
 
         task = _BgTask(fetch)
         _LIVE_TASKS.add(task)

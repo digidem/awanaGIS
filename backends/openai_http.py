@@ -255,6 +255,42 @@ class OpenAIHttpClient:
         headers.update(self.extra_headers)
         return headers
 
+    def check_key(self, model, timeout=20):
+        """Verify the key with a 1-token chat completion.
+
+        For servers whose `/models` listing is public (so it cannot validate a
+        key). Returns None when accepted, else an error message (the server's
+        own message for HTTP errors).
+        """
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions", data=payload,
+            headers=self._headers(), method="POST",
+        )
+        try:
+            response = _safe_urlopen(request, timeout=timeout)  # nosec B310
+            response.read()
+            return None
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", "replace")
+            except Exception:
+                body = ""
+            try:
+                err = json.loads(body).get("error")
+                message = err.get("message") if isinstance(err, dict) else err
+            except Exception:
+                message = None
+            return str(message) if message else f"HTTP {exc.code}"
+        except urllib.error.URLError as exc:
+            return BackendFeedback(QT_TRANSLATE_NOOP("BackendFeedback", "Connection error: {detail}"), detail=exc.reason)
+        except Exception as exc:  # noqa: BLE001
+            return f"{type(exc).__name__}: {exc}"
+
     def list_models(self, timeout=15):
         """GET ``{base_url}/models``. Doubles as a connection test.
 

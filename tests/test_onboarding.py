@@ -83,6 +83,63 @@ class PickDefaultModelTests(unittest.TestCase):
         self.assertEqual(providers.pick_default_model("openai", [], ""), "gpt-4.1")
 
 
+class FetchModelsProbeTests(unittest.TestCase):
+    URL = "https://inference.tinfoil.sh/v1"
+
+    @staticmethod
+    def _resp(body):
+        import io
+
+        class R(io.BytesIO):
+            pass
+
+        return R(body)
+
+    def _run(self, provider_id, post_result):
+        import json as _json
+        import urllib.error
+
+        requests = []
+
+        def fake_urlopen(request, **kwargs):
+            requests.append(request)
+            if request.get_method() == "GET":
+                return self._resp(_json.dumps({"data": [{"id": "deepseek-v4-1-flash", "endpoints": ["/v1/chat/completions"]}]}).encode())
+            if post_result == 200:
+                return self._resp(b"{}")
+            raise urllib.error.HTTPError(
+                request.full_url, post_result, "x", {},
+                self._resp(_json.dumps({"error": {"message": "Incorrect API key provided.", "code": "invalid_api_key"}}).encode()),
+            )
+
+        with patch.object(openai_http, "_safe_urlopen", fake_urlopen):
+            result = providers.fetch_models("openai", self.URL, "tk_bogus", provider_id)
+        return result, requests
+
+    def test_tinfoil_bad_key_fails(self):
+        result, requests = self._run("tinfoil", 401)
+        self.assertEqual(result, ([], "Incorrect API key provided."))
+        post = requests[-1]
+        self.assertEqual(post.get_method(), "POST")
+        self.assertEqual(post.full_url, self.URL + "/chat/completions")
+        self.assertIn(b'"max_tokens": 1', post.data)
+        self.assertIn(b"deepseek-v4-1-flash", post.data)
+
+    def test_tinfoil_good_key_returns_models(self):
+        result, requests = self._run("tinfoil", 200)
+        self.assertEqual(result, (["deepseek-v4-1-flash"], None))
+        self.assertEqual(len(requests), 2)
+
+    def test_other_provider_has_no_probe(self):
+        result, requests = self._run("openai", 401)
+        self.assertEqual(result, (["deepseek-v4-1-flash"], None))
+        self.assertEqual([r.get_method() for r in requests], ["GET"])
+
+    def test_custom_none_has_no_probe(self):
+        _result, requests = self._run(None, 401)
+        self.assertEqual(len(requests), 1)
+
+
 class ModelFilterTests(unittest.TestCase):
     def test_endpoints_filter(self):
         items = [
@@ -183,7 +240,7 @@ class DockOnboardingTests(unittest.TestCase):
         self.assertFalse(page.start_btn.isEnabled())
         calls = []
 
-        def fake_fetch(fmt, base_url, key):
+        def fake_fetch(fmt, base_url, key, provider_id=None):
             calls.append((fmt, base_url, key))
             return ["other", "deepseek-v4-1-flash"], None
 
@@ -208,7 +265,7 @@ class DockOnboardingTests(unittest.TestCase):
         dock = self.make_dock()
         page = dock._onboarding_page
         page._timer.setInterval(10)
-        with patch.object(providers, "fetch_models", lambda f, b, k: ([], "HTTP 401")):
+        with patch.object(providers, "fetch_models", lambda f, b, k, p=None: ([], "HTTP 401")):
             page.key_edit.setText("bad")
             for _ in range(100):
                 QTest.qWait(20)
