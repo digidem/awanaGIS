@@ -141,10 +141,11 @@ def fetch_models(fmt, base_url, key, provider_id=None):
         client = OpenAIHttpClient(api_key=key or None, base_url=base_url or None)
         models, err = client.list_models()
         provider = get_provider(provider_id) or {}
-        if not err and provider.get("models_public"):
-            # The listing needs no key, so prove the key works with a probe.
-            probe_err = client.check_key(pick_default_model(provider_id, models))
-            if probe_err:
-                return [], probe_err
+        if not err and models and provider.get("models_public"):
+            # The listing needs no key, so probe it. Only an auth rejection
+            # proves the key bad; other probe failures leave it unproven.
+            status, message = client.check_key(pick_default_model(provider_id, models))
+            if status in (401, 403):
+                return [], message
         return models, err
     return client.list_models()

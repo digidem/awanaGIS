@@ -1,5 +1,6 @@
 """Provider setup screen shown in the chat dock until an AI backend is connected."""
 
+import os
 from html import escape
 
 from qgis.PyQt.QtCore import QCoreApplication, QTimer, Qt, pyqtSignal
@@ -50,10 +51,8 @@ class OnboardingPage(QWidget):
         super().__init__(parent)
         self._config = config
         self._open_settings = open_settings
-        self._debounce_ms = debounce_ms
         self._generation = 0
         self._tested = False
-        self._busy = False
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -109,17 +108,19 @@ class OnboardingPage(QWidget):
                 f"border-radius: 6px; padding: 6px 8px; font-size: {fs(12)}px; }}"
             )
 
-        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Provider")))
+        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Provider"), self.provider_combo))
         col.addWidget(self.provider_combo)
-        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Base URL")))
+        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Base URL"), self.base_url_edit))
         col.addWidget(self.base_url_edit)
-        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "API key")))
+        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "API key"), self.key_edit))
         col.addWidget(self.key_edit)
 
         self.key_link = QLabel()
         self.key_link.setObjectName("OnboardingKeyLink")
         self.key_link.setTextFormat(Qt.TextFormat.RichText)
         self.key_link.setOpenExternalLinks(True)
+        self.key_link.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.key_link.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.key_link.setStyleSheet(f"background: transparent; font-size: {fs(12)}px;")
         link_text = QCoreApplication.translate("OnboardingPage", "Get a Tinfoil API key")
         self.key_link.setText(f'<a href="{TINFOIL_KEY_URL}" style="color: {_ACCENT};">{escape(link_text)}</a>')
@@ -131,7 +132,7 @@ class OnboardingPage(QWidget):
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         col.addWidget(self.status)
 
-        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Model")))
+        col.addWidget(self._field_label(QCoreApplication.translate("OnboardingPage", "Model"), self.model_combo))
         col.addWidget(self.model_combo)
         col.addSpacing(8)
 
@@ -168,8 +169,10 @@ class OnboardingPage(QWidget):
         self.more_btn.clicked.connect(lambda: self._open_settings())
 
     @staticmethod
-    def _field_label(text):
+    def _field_label(text, buddy):
         lbl = QLabel(text)
+        lbl.setBuddy(buddy)
+        buddy.setAccessibleName(text)
         lbl.setStyleSheet(f"color: {_TEXT_3}; background: transparent; font-size: {fs(11)}px;")
         return lbl
 
@@ -211,13 +214,36 @@ class OnboardingPage(QWidget):
         )
 
     def _on_provider_changed(self, _index):
+        # A key typed for one provider must never be sent to another, so the
+        # key is cleared and no test runs until the user edits URL or key.
         provider = self._provider()
-        self.base_url_edit.blockSignals(True)
+        for w in (self.base_url_edit, self.key_edit):
+            w.blockSignals(True)
         self.base_url_edit.setText(provider.get("base_url", ""))
-        self.base_url_edit.blockSignals(False)
+        self.key_edit.clear()
+        for w in (self.base_url_edit, self.key_edit):
+            w.blockSignals(False)
+        self._timer.stop()
         self._after_provider_set()
         self._reset_test()
-        self._maybe_schedule()
+        self._update_idle_status()
+
+    def shutdown(self):
+        """Stop the debounce timer and ignore any test still in flight."""
+        self._timer.stop()
+        self._generation += 1
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
+
+    def _effective_key(self):
+        """Typed key, else the provider's environment variable (if set)."""
+        key = self.key_edit.text().strip()
+        env = self._provider().get("key_env", "")
+        if not key and env:
+            key = (os.environ.get(env, "") or "").strip()
+        return key
 
     def _on_input_changed(self, _text):
         self._reset_test()
@@ -233,7 +259,7 @@ class OnboardingPage(QWidget):
     def _can_test(self):
         if not self.base_url_edit.text().strip():
             return False
-        return bool(self.key_edit.text().strip()) or not provider_needs_key(self._provider())
+        return bool(self._effective_key()) or not provider_needs_key(self._provider())
 
     def _maybe_schedule(self):
         if self._can_test():
@@ -241,10 +267,19 @@ class OnboardingPage(QWidget):
             self._timer.start()
         else:
             self._timer.stop()
+            self._update_idle_status()
+
+    def _update_idle_status(self):
+        if not self.base_url_edit.text().strip():
+            self._set_status(QCoreApplication.translate("OnboardingPage", "Enter the provider base URL."), _TEXT_3)
+        elif self._can_test():
+            self._set_status("", _TEXT_3)
+        else:
             self._set_status(QCoreApplication.translate("OnboardingPage", "Enter your API key to connect."), _TEXT_3)
 
     def _set_status(self, text, color):
         self.status.setText(text)
+        self.status.setAccessibleDescription(text)
         self.status.setStyleSheet(f"color: {color}; background: transparent; font-size: {fs(12)}px;")
 
     def _update_start_enabled(self, *_):
@@ -259,7 +294,7 @@ class OnboardingPage(QWidget):
         provider = self._provider()
         fmt = provider.get("format", "openai")
         base_url = self.base_url_edit.text().strip()
-        key = self.key_edit.text().strip()
+        key = self._effective_key()
         pid = provider.get("id", "")
 
         def fetch():
@@ -270,6 +305,7 @@ class OnboardingPage(QWidget):
 
         def finish(result, err):
             _LIVE_TASKS.discard(task)
+            task.wait()  # done is emitted at the end of run(); returns at once
             task.deleteLater()
             try:
                 if generation != self._generation:

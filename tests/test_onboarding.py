@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from qgis.PyQt.QtCore import QSettings
+from qgis.PyQt.QtCore import QEvent, QSettings
 from qgis.PyQt.QtTest import QTest
 from qgis.core import QgsApplication
 
@@ -130,6 +130,44 @@ class FetchModelsProbeTests(unittest.TestCase):
         self.assertEqual(result, (["deepseek-v4-1-flash"], None))
         self.assertEqual(len(requests), 2)
 
+    def test_tinfoil_non_auth_probe_failures_keep_models(self):
+        for code in (400, 404, 500):
+            result, _requests = self._run("tinfoil", code)
+            self.assertEqual(result, (["deepseek-v4-1-flash"], None), code)
+
+    def test_tinfoil_403_fails(self):
+        result, _requests = self._run("tinfoil", 403)
+        self.assertEqual(result[0], [])
+
+    def test_no_probe_for_empty_model_list(self):
+        import io
+        import json as _json
+
+        requests = []
+
+        def fake_urlopen(request, **kwargs):
+            requests.append(request)
+            return io.BytesIO(_json.dumps({"data": []}).encode())
+
+        with patch.object(openai_http, "_safe_urlopen", fake_urlopen):
+            result = providers.fetch_models("openai", self.URL, "k", "tinfoil")
+        self.assertEqual(result, ([], None))
+        self.assertEqual(len(requests), 1)
+
+    def test_check_key_structured_result(self):
+        import io
+        import urllib.error
+
+        client = openai_http.OpenAIHttpClient(api_key="k", base_url=self.URL)
+        with patch.object(openai_http, "_safe_urlopen", lambda r, **kw: io.BytesIO(b"{}")):
+            self.assertEqual(client.check_key("m"), (None, None))
+
+        def boom(request, **kwargs):
+            raise urllib.error.HTTPError(request.full_url, 404, "x", {}, io.BytesIO(b"nope"))
+
+        with patch.object(openai_http, "_safe_urlopen", boom):
+            self.assertEqual(client.check_key("m"), (404, "HTTP 404"))
+
     def test_other_provider_has_no_probe(self):
         result, requests = self._run("openai", 401)
         self.assertEqual(result, (["deepseek-v4-1-flash"], None))
@@ -138,6 +176,38 @@ class FetchModelsProbeTests(unittest.TestCase):
     def test_custom_none_has_no_probe(self):
         _result, requests = self._run(None, 401)
         self.assertEqual(len(requests), 1)
+
+
+class MigrationTests(unittest.TestCase):
+    def make(self, **saved):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        settings = QSettings(str(Path(tmp.name) / "m.ini"), QSettings.Format.IniFormat)
+        for k, v in saved.items():
+            settings.setValue(f"AwanaGIS/{k}", v)
+        cfg = config_mod.Config()
+        cfg._s = settings
+        return cfg
+
+    def test_saved_key_without_provider_stays_anthropic(self):
+        cfg = self.make(api_key="sk-x")
+        self.assertTrue(cfg.migrate_legacy_defaults())
+        self.assertEqual(cfg.get("provider"), "anthropic")
+        self.assertEqual(cfg.get("model"), "claude-opus-4-8")
+        self.assertFalse(cfg.migrate_legacy_defaults())
+
+    def test_saved_model_is_kept(self):
+        cfg = self.make(api_key="sk-x", model="claude-sonnet-x")
+        cfg.migrate_legacy_defaults()
+        self.assertEqual(cfg.get("model"), "claude-sonnet-x")
+
+    def test_no_change_without_key_or_with_provider(self):
+        cfg = self.make()
+        self.assertFalse(cfg.migrate_legacy_defaults())
+        self.assertEqual(cfg.get("provider"), "tinfoil")
+        cfg = self.make(api_key="k", provider="openai")
+        self.assertFalse(cfg.migrate_legacy_defaults())
+        self.assertEqual(cfg.get("provider"), "openai")
 
 
 class ModelFilterTests(unittest.TestCase):
@@ -212,8 +282,21 @@ class DockOnboardingTests(unittest.TestCase):
         )
         dock.resize(380, 650)
         dock.show()
-        self.addCleanup(dock.close)
+        self.addCleanup(self._dispose, dock)
         return dock
+
+    def _dispose(self, widget):
+        settings_dialog = import_module(f"{pkg}.gui.settings_dialog")
+        for task in list(settings_dialog._LIVE_TASKS):
+            task.wait(5000)
+        self.app.processEvents()
+        shutdown = getattr(getattr(widget, "_onboarding_page", None), "shutdown", None)
+        if shutdown:
+            shutdown()
+        widget.close()
+        widget.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.app.processEvents()
 
     def test_unconfigured_shows_onboarding_then_chat(self):
         dock = self.make_dock()
@@ -260,6 +343,103 @@ class DockOnboardingTests(unittest.TestCase):
         self.assertEqual(self.config.get("api_base_url"), "")
         self.assertEqual(self.config.get("model"), "deepseek-v4-1-flash")
         self.assertEqual(dock._stack.currentIndex(), 0)
+
+    def wait_for(self, predicate):
+        for _ in range(100):
+            QTest.qWait(20)
+            if predicate():
+                return True
+        return False
+
+    def test_provider_switch_clears_key_and_does_not_test(self):
+        dock = self.make_dock()
+        page = dock._onboarding_page
+        page._timer.setInterval(10)
+        calls = []
+        with patch.object(providers, "fetch_models", lambda *a: calls.append(a) or ([], None)):
+            page.key_edit.blockSignals(True)
+            page.key_edit.setText("typed-for-tinfoil")
+            page.key_edit.blockSignals(False)
+            page.provider_combo.setCurrentIndex(page.provider_combo.findData("openai"))
+            QTest.qWait(150)
+        self.assertEqual(page.key_edit.text(), "")
+        self.assertEqual(page.base_url_edit.text(), "https://api.openai.com/v1")
+        self.assertEqual(calls, [])
+        self.assertFalse(page._timer.isActive())
+
+    def test_stale_result_ignored(self):
+        dock = self.make_dock()
+        page = dock._onboarding_page
+        page._timer.setInterval(10)
+        def slow_fetch(fmt, base_url, key, provider_id=None):
+            QTest.qWait(150)
+            return ["m"], None
+
+        with patch.object(providers, "fetch_models", slow_fetch):
+            page.key_edit.setText("one")
+            QTest.qWait(60)  # test now in flight
+            page.key_edit.setText("")  # inputs change: result must be dropped
+            QTest.qWait(400)
+        self.assertFalse(page.start_btn.isEnabled())
+        self.assertEqual(page.model_combo.count(), 0)
+
+    def test_reload_with_saved_provider_and_override(self):
+        self.config.set("connection_mode", "api_key")
+        self.config.set("provider", "openai")
+        self.config.set("api_base_url", "https://proxy.example/v1")
+        self.config.set("api_key", "")
+        dock = self.make_dock()
+        page = dock._onboarding_page
+        page.reload()
+        self.assertEqual(page.provider_combo.currentData(), "openai")
+        self.assertEqual(page.base_url_edit.text(), "https://proxy.example/v1")
+
+    def test_env_key_allows_test_and_idle_status(self):
+        dock = self.make_dock()
+        page = dock._onboarding_page
+        self.assertEqual(page.status.text(), "Enter your API key to connect.")
+        page.base_url_edit.setText("")
+        self.assertEqual(page.status.text(), "Enter the provider base URL.")
+        page.base_url_edit.setText("https://inference.tinfoil.sh/v1")
+        with patch.dict("os.environ", {"TINFOIL_API_KEY": "envkey"}):
+            self.assertTrue(page._can_test())
+            self.assertEqual(page._effective_key(), "envkey")
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(page._can_test())
+
+    def test_shutdown_when_switching_to_chat(self):
+        dock = self.make_dock()
+        page = dock._onboarding_page
+        page.key_edit.setText("k")
+        self.assertTrue(page._timer.isActive())
+        self.config.set("api_key", "secret")
+        dock.refresh_configuration()
+        self.assertFalse(page._timer.isActive())
+
+    def test_settings_autotest_and_provider_switch(self):
+        from importlib import import_module as im
+
+        SettingsDialog = im(f"{pkg}.gui.settings_dialog").SettingsDialog
+        dialog = SettingsDialog(self.config, None)
+        self.addCleanup(self._dispose, dialog)
+        dialog._api_autotest_timer.setInterval(10)
+        calls = []
+
+        def fake_fetch(fmt, base_url, key, provider_id=None):
+            calls.append((base_url, key, provider_id))
+            return ["deepseek-v4-1-flash", "z"], None
+
+        with patch.object(providers, "fetch_models", fake_fetch):
+            dialog.provider_combo.setCurrentIndex(dialog.provider_combo.findData("tinfoil"))
+            dialog.api_key_edit.setText("tok")
+            self.assertTrue(self.wait_for(lambda: calls))
+            self.assertEqual(calls[0], ("https://inference.tinfoil.sh/v1", "tok", "tinfoil"))
+            self.assertTrue(self.wait_for(lambda: dialog.model_picker.currentText() == "deepseek-v4-1-flash"))
+            n = len(calls)
+            dialog.provider_combo.setCurrentIndex(dialog.provider_combo.findData("openai"))
+            QTest.qWait(150)
+        self.assertEqual(dialog.api_key_edit.text(), "")
+        self.assertEqual(len(calls), n)
 
     def test_page_reports_error(self):
         dock = self.make_dock()

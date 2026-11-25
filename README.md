@@ -47,7 +47,7 @@ QGIS session
 
 ## Connection modes (Settings → Connection)
 
-1. **API key** — a built-in provider (Anthropic, OpenAI, Groq, OpenRouter, Google Gemini, DeepSeek, Mistral, xAI, Ollama) using its key or the matching env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, …).
+1. **API key** — a built-in provider (Tinfoil, the default, Anthropic, OpenAI, Groq, OpenRouter, Google Gemini, DeepSeek, Mistral, xAI, Ollama) using its key or the matching env var (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GROQ_API_KEY`, …). **Tinfoil (private inference)** is the default provider: it runs models in secure enclaves so prompts stay private (`TINFOIL_API_KEY`, key from <https://tinfoil.sh>). Until a provider is connected, the chat dock shows a setup screen instead of the chat: paste your key and AwanaGIS tests the connection, lists the available models and preselects one. **More options** opens Settings for CLI agents and custom endpoints.
 2. **Custom endpoint** — any OpenAI-compatible or Anthropic-compatible base URL (self-hosted, proxy, or another provider).
 3. **CLI Agent** — use an installed local agent CLI as the model connection. AwanaGIS scans for supported CLIs, lets you test the selected agent, runs QGIS tools itself, and never reads or copies CLI-owned OAuth tokens.
 

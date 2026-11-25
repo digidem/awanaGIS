@@ -612,6 +612,7 @@ class ChatDock(QgsDockWidget):
         if self._onboarding_page is None:
             return
         if is_backend_configured(self._config):
+            self._onboarding_page.shutdown()
             self._stack.setCurrentIndex(0)
         else:
             if self._stack.currentIndex() != 1:

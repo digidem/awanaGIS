@@ -29,6 +29,7 @@ class AwanaGisPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.config = config_mod.Config()
+        self.config.migrate_legacy_defaults()
         self.executor = MainThreadExecutor(config=self.config)       # created on the main thread
         self.toolkit = QgisToolkit(iface, config=self.config)
         self._action = None

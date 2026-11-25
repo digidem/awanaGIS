@@ -67,6 +67,21 @@ class Config:
     def __init__(self):
         self._s = QSettings()
 
+    def migrate_legacy_defaults(self):
+        """Keep pre-1.0.1 users on Anthropic when they saved a key but no provider.
+
+        Before 1.0.1 the implicit default provider was Anthropic. Without this,
+        such a user would silently flip to the new Tinfoil default and send
+        their key to the wrong service. Returns True when it wrote anything.
+        """
+        key_name, provider_name, model_name = (self._key(n) for n in ("api_key", "provider", "model"))
+        if not str(self._s.value(key_name, "") or "").strip() or self._s.contains(provider_name):
+            return False
+        self._s.setValue(provider_name, "anthropic")
+        if not self._s.contains(model_name):
+            self._s.setValue(model_name, "claude-opus-4-8")
+        return True
+
     def _key(self, name):
         return f"{_GROUP}/{name}"
 

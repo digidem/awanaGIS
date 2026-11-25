@@ -256,25 +256,27 @@ class OpenAIHttpClient:
         return headers
 
     def check_key(self, model, timeout=20):
-        """Verify the key with a 1-token chat completion.
+        """Probe the key with a 1-token chat completion.
 
         For servers whose `/models` listing is public (so it cannot validate a
-        key). Returns None when accepted, else an error message (the server's
-        own message for HTTP errors).
+        key). Returns `(status, message)`: `(None, None)` when the request was
+        accepted, `(http_status, message)` for an HTTP error (the server's own
+        message when it sent one), `(None, message)` for other failures.
         """
+        parsed = self._parsed_base_url
+        url = f"{parsed.scheme}://{parsed.netloc}{self._chat_path()}"
         payload = json.dumps({
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 1,
         }).encode("utf-8")
         request = urllib.request.Request(
-            f"{self.base_url}/chat/completions", data=payload,
-            headers=self._headers(), method="POST",
+            url, data=payload, headers=self._headers(), method="POST",
         )
         try:
             response = _safe_urlopen(request, timeout=timeout)  # nosec B310
             response.read()
-            return None
+            return None, None
         except urllib.error.HTTPError as exc:
             try:
                 body = exc.read().decode("utf-8", "replace")
@@ -285,11 +287,11 @@ class OpenAIHttpClient:
                 message = err.get("message") if isinstance(err, dict) else err
             except Exception:
                 message = None
-            return str(message) if message else f"HTTP {exc.code}"
+            return exc.code, (str(message) if message else f"HTTP {exc.code}")
         except urllib.error.URLError as exc:
-            return BackendFeedback(QT_TRANSLATE_NOOP("BackendFeedback", "Connection error: {detail}"), detail=exc.reason)
+            return None, BackendFeedback(QT_TRANSLATE_NOOP("BackendFeedback", "Connection error: {detail}"), detail=exc.reason)
         except Exception as exc:  # noqa: BLE001
-            return f"{type(exc).__name__}: {exc}"
+            return None, f"{type(exc).__name__}: {exc}"
 
     def list_models(self, timeout=15):
         """GET ``{base_url}/models``. Doubles as a connection test.

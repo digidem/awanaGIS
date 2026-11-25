@@ -1878,6 +1878,10 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Conectado · {count} modelos disponíveis</translation>
         </message>
         <message>
+            <source>Enter the provider base URL.</source>
+            <translation>Informe a URL base do provedor.</translation>
+        </message>
+        <message>
             <source>Enter your API key to connect.</source>
             <translation>Informe sua chave de API para conectar.</translation>
         </message>

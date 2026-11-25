@@ -1305,7 +1305,15 @@ class SettingsDialog(QDialog):
         p = providers.get_provider(pid)
         if p:
             self.model_picker.setCurrentText(p["default_model"])
+            # Setting the URL here must not trigger an auto-test of its own.
+            self.api_base_url_edit.blockSignals(True)
             self.api_base_url_edit.setText(p["base_url"])
+            self.api_base_url_edit.blockSignals(False)
+            if getattr(self, "_loaded", False):
+                # Never carry a key typed for one provider over to another.
+                self.api_key_edit.blockSignals(True)
+                self.api_key_edit.clear()
+                self.api_key_edit.blockSignals(False)
             env = p.get("key_env", "")
             self.api_key_edit.setPlaceholderText(
                 QCoreApplication.translate("SettingsDialog", "Paste your key (or set {variable})").format(variable=env) if env else QCoreApplication.translate("SettingsDialog", "Paste your key")
@@ -1313,12 +1321,15 @@ class SettingsDialog(QDialog):
         # Changing provider invalidates any prior successful test.
         self._reset_model_group(config_mod.MODE_API_KEY)
         self._update_connection_tab_labels()
-        self._schedule_api_autotest()
+        # Invalidate any in-flight test; auto-test only on user URL/key edits.
+        self._api_test_gen = getattr(self, "_api_test_gen", 0) + 1
+        self._api_autotest_timer.stop()
 
     def _schedule_api_autotest(self, *_):
         """Debounce an automatic connection test once URL and key are both set."""
         if not getattr(self, "_loaded", False):
             return  # still populating the form from saved settings
+        self._api_test_gen = getattr(self, "_api_test_gen", 0) + 1
         _fmt, base_url, key = self._connection_params(config_mod.MODE_API_KEY)
         provider = providers.get_provider(self.provider_combo.currentData())
         if base_url and (key or (provider is not None and not provider.get("key_env"))):
@@ -1327,8 +1338,10 @@ class SettingsDialog(QDialog):
             self._api_autotest_timer.stop()
 
     def _run_api_autotest(self):
-        if self.api_test_btn.isEnabled():  # not already testing
+        if self.api_test_btn.isEnabled():
             self._test_connection(config_mod.MODE_API_KEY)
+        else:
+            self._api_autotest_timer.start()  # a test is in flight: retry after it
 
     # ── connection test / model discovery ───────────────────────────────────────
     def _panel_widgets(self, mode):
@@ -1388,7 +1401,13 @@ class SettingsDialog(QDialog):
         def fetch(fmt=fmt, base_url=base_url, key=key, provider_id=provider_id):
             return providers.fetch_models(fmt, base_url, key, provider_id)
 
+        gen = getattr(self, "_api_test_gen", 0)
+
         def done(result, err, m=mode):
+            if m == config_mod.MODE_API_KEY and gen != getattr(self, "_api_test_gen", 0):
+                if not self._api_autotest_timer.isActive():
+                    self._set_status(self.api_status, "", _TEXT_3)
+                return  # inputs changed while this test ran
             models, fetch_err = result if result else ([], "")
             self._on_models_fetched(m, list(models or []), err or fetch_err or "")
 
@@ -1511,6 +1530,7 @@ class SettingsDialog(QDialog):
 
         def finish(result, err):
             _LIVE_TASKS.discard(task)
+            task.wait()  # done is emitted at the end of run(); returns at once
             task.deleteLater()
             try:
                 timer.stop()
