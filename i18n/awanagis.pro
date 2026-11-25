@@ -18,6 +18,7 @@ SOURCES = ../plugin.py \
     ../gui/formatting.py \
     ../gui/gif_widget.py \
     ../gui/message_bubble.py \
+    ../gui/onboarding_page.py \
     ../gui/session_popup.py \
     ../gui/settings_dialog.py \
     ../gui/stats_widget.py

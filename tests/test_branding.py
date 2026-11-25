@@ -252,7 +252,7 @@ class MigrationTests(unittest.TestCase):
             # Fresh AwanaGIS config/store never reads legacy values automatically.
             cfg = config_mod.Config()
             cfg._s = settings
-            self.assertEqual(cfg.get("provider"), "anthropic")
+            self.assertEqual(cfg.get("provider"), "tinfoil")
             self.assertEqual(cfg.get("api_key"), "")
             self.assertEqual(cfg.get("mcp_port"), 7318)
             self.assertFalse(cfg.get("external_access_always_allowed"))
