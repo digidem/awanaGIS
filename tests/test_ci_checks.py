@@ -35,6 +35,8 @@ repository=https://example.invalid/repo
 icon=resources/icon.png
 """
 
+APPROVED_PEM = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca.pem"
+
 VALID_INIT = """def classFactory(iface):
     return None
 """
@@ -120,6 +122,52 @@ class ArchiveCheckTests(unittest.TestCase):
             plugin_root = extract_dir / "awanagis"
             for excluded in ("tests", "ci", "docs", ".github", ".flake8", ".gitattributes", ".gitignore"):
                 self.assertFalse((plugin_root / excluded).exists(), f"{excluded} must not ship")
+
+    def _pem_report(self, name: str, data: bytes):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            zip_path = _build_valid_zip(
+                tmp_dir / "pem.zip",
+                extra_entries=[(name, data, stat.S_IFREG | 0o644)],
+            )
+            return check_plugin.validate_and_extract_archive(zip_path, tmp_dir / "extracted")
+
+    def test_cert_only_pem_at_approved_path_is_allowed(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        report = self._pem_report(APPROVED_PEM, cert)
+        self.assertTrue(report["ok"], report["blocking_errors"])
+
+    def test_pem_with_private_key_at_approved_path_is_rejected(self):
+        for marker in ("PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"):
+            data = (
+                b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+                + f"-----BEGIN {marker}-----\nAAAA\n-----END {marker}-----\n".encode()
+            )
+            report = self._pem_report(APPROVED_PEM, data)
+            self.assertFalse(report["ok"], marker)
+            self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
+
+    def test_pem_without_certificate_block_is_rejected(self):
+        report = self._pem_report(APPROVED_PEM, b"not a certificate\n")
+        self.assertFalse(report["ok"])
+
+    def test_cert_only_pem_outside_approved_path_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for name in (
+            "awanagis/certs/ca.pem",
+            "awanagis/integrations/brazil/vendor/gisbr/core/ca.pem",
+            "awanagis/integrations/brazil/vendor/gisbr/core/certs/sub/ca.pem",
+        ):
+            report = self._pem_report(name, cert)
+            self.assertFalse(report["ok"], name)
+            self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
+
+    def test_key_file_at_approved_cert_path_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for suffix in (".key", ".p12", ".pfx", ".kdbx"):
+            name = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca" + suffix
+            report = self._pem_report(name, cert)
+            self.assertFalse(report["ok"], name)
 
     def test_missing_qm_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
