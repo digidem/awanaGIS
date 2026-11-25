@@ -49,11 +49,51 @@ class PlannerTests(unittest.TestCase):
         frozen, _ = planner.get_frozen_plan(res["plan_id"])
         self.assertIn("www.ipea.gov.br", frozen["hosts"])
 
-    def test_no_mask_hosts_with_wkt(self):
+    def test_mask_hosts_listed_with_wkt_because_loader_can_fall_back_remote(self):
+        # A nonempty WKT only avoids the remote mask when it parses into a usable polygon;
+        # loader._mask_layer_from_area otherwise falls back to the IPEA/GitHub boundary fetch
+        # for municipality/aggregate area types, so the hosts must stay disclosed.
+        area = {
+            "type": "municipality",
+            "id": "1100015",
+            "codes": ["1100015"],
+            "geometry_wkt": "POLYGON((0 0,1 0,1 1,0 0))",
+        }
+        res = _plan(area)
+        self.assertTrue(res["can_execute"], res)
+        self.assertIn("www.ipea.gov.br", res["hosts"])
+        self.assertIn("github.com", res["hosts"])
+        frozen, _ = planner.get_frozen_plan(res["plan_id"])
+        self.assertIn("www.ipea.gov.br", frozen["hosts"])
+
+    def test_no_remote_mask_hosts_for_wkt_only_area_type(self):
+        # project_layer areas have no Recorte, so the loader never fetches a remote mask.
         area = {"type": "project_layer", "id": "x", "geometry_wkt": "POLYGON((0 0,1 0,1 1,0 0))"}
         res = _plan(area)
         self.assertTrue(res["can_execute"], res)
         self.assertNotIn("www.ipea.gov.br", res["hosts"])
+
+    def test_frozen_plan_area_is_isolated_from_later_mutation(self):
+        area = {"type": "municipality", "id": "1100015", "codes": ["1100015"], "bbox": [-62.0, -12.0, -61.0, -11.0]}
+        res = _plan(area)
+        self.assertTrue(res["can_execute"], res)
+        original_payload = (list(area["bbox"]), list(area["codes"]))
+
+        # Mutating the caller's area after planning must not change the frozen plan.
+        area["bbox"][0] = -50.0
+        area["codes"].append("9999999")
+        frozen, err = planner.get_frozen_plan(res["plan_id"])
+        self.assertIsNone(err)
+        self.assertEqual(frozen["area"]["bbox"], original_payload[0])
+        self.assertEqual(frozen["area"]["codes"], original_payload[1])
+
+        # Mutating a returned plan must not leak back into the store.
+        frozen["area"]["bbox"][1] = 0.0
+        frozen["area"]["codes"].append("8888888")
+        again, err = planner.get_frozen_plan(res["plan_id"])
+        self.assertIsNone(err)
+        self.assertEqual(again["area"]["bbox"], original_payload[0])
+        self.assertEqual(again["area"]["codes"], original_payload[1])
 
 
 if __name__ == "__main__":

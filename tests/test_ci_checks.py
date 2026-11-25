@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -134,7 +135,8 @@ class ArchiveCheckTests(unittest.TestCase):
 
     def test_cert_only_pem_at_approved_path_is_allowed(self):
         cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
-        report = self._pem_report(APPROVED_PEM, cert)
+        with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(cert).hexdigest()}):
+            report = self._pem_report(APPROVED_PEM, cert)
         self.assertTrue(report["ok"], report["blocking_errors"])
 
     def test_pem_with_private_key_at_approved_path_is_rejected(self):
@@ -143,7 +145,8 @@ class ArchiveCheckTests(unittest.TestCase):
                 b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
                 + f"-----BEGIN {marker}-----\nAAAA\n-----END {marker}-----\n".encode()
             )
-            report = self._pem_report(APPROVED_PEM, data)
+            with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+                report = self._pem_report(APPROVED_PEM, data)
             self.assertFalse(report["ok"], marker)
             self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
 
@@ -178,8 +181,26 @@ class ArchiveCheckTests(unittest.TestCase):
 
     def test_multi_cert_pem_at_approved_path_is_allowed(self):
         cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
-        report = self._pem_report(APPROVED_PEM, b"# roots\n" + cert + b"\n# two\n" + cert)
+        data = b"# roots\n" + cert + b"\n# two\n" + cert
+        report = self._pem_report(APPROVED_PEM, data)
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("review and update the pin" in e for e in report["blocking_errors"]))
+        with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+            report = self._pem_report(APPROVED_PEM, data)
         self.assertTrue(report["ok"], report["blocking_errors"])
+
+    def test_pinned_pem_still_checks_markers_and_grammar(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for data in (b"# PRIVATE KEY\n" + cert, cert + b"junk\n"):
+            with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+                self.assertFalse(self._pem_report(APPROVED_PEM, data)["ok"])
+
+    def test_changed_pinned_pem_is_rejected(self):
+        name = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem"
+        data = (ROOT / name.removeprefix("awanagis/")).read_bytes() + b"# changed\n"
+        report = self._pem_report(name, data)
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("review and update the pin" in e for e in report["blocking_errors"]))
 
     def test_key_file_at_approved_cert_path_is_rejected(self):
         cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"

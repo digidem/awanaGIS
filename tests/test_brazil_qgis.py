@@ -444,6 +444,23 @@ class BrazilQgisTests(unittest.TestCase):
         self.assertIn("cannot inspect", msg_bk)
         self.assertEqual(broken.read_bytes(), b"not a sqlite database" * 64)
 
+        # Valid SQLite file without GeoPackage tables MUST be refused (not treated as absent)
+        import sqlite3
+        plain = self.tmp / "plain_sqlite.gpkg"
+        con = sqlite3.connect(str(plain))
+        con.execute("CREATE TABLE unrelated (id INTEGER)")
+        con.commit()
+        con.close()
+        plain_bytes = plain.read_bytes()
+        ok_pl, msg_pl, _ = loader._write_vector_atomically(
+            layer2, plain, "any_table", replace_existing=False
+        )
+        self.assertFalse(ok_pl)
+        self.assertIn("cannot inspect", msg_pl)
+        self.assertEqual(plain.read_bytes(), plain_bytes)
+        with self.assertRaises(RuntimeError):
+            loader._gpkg_has_layer(plain, "any_table")
+
         # Sidecar fallback MUST also refuse overwrite when replace_existing=False
         sidecar = gpkg.with_name(f"{gpkg.stem}_new_table.gpkg")
         sidecar.write_bytes(b"existing-sidecar-sentinel")

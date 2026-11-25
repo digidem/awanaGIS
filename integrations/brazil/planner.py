@@ -1,5 +1,6 @@
 """Deterministic, read-only load planner for AwanaGIS Brazilian data tools."""
 
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -40,6 +41,34 @@ def _mask_provider_hosts() -> set:
     out.add("objects.githubusercontent.com")
     out.discard("")
     return out
+
+
+# Area types whose loader mask can fall back to the remote municipality/aggregate
+# boundary fetch (``loader._build_recorte``) when no usable local polygon exists.
+_REMOTE_MASK_AREA_TYPES = frozenset({
+    "municipality",
+    "municipio",
+    "metropolitan_region",
+    "microregion",
+    "mesoregion",
+    "state",
+    "macroregion",
+})
+
+
+def _may_fetch_remote_mask(area: Dict[str, Any]) -> bool:
+    """True when the loader may download an area mask (IPEA geobr / GitHub mirrors).
+
+    ``loader._mask_layer_from_area`` only uses a local polygon for ``geometry_wkt``
+    when that WKT parses into a non-empty geometry; otherwise it falls back to the
+    municipality/aggregate Recorte path, which downloads boundary polygons. A truthy
+    WKT therefore does not prove the mask is local.
+    """
+    if not area.get("geometry_wkt"):
+        return True
+    atype = str(area.get("type") or "").lower()
+    return atype in _REMOTE_MASK_AREA_TYPES and bool(area.get("codes"))
+
 
 _SCALE_RANK = {
     "municipality": 0,
@@ -194,7 +223,9 @@ def get_frozen_plan(plan_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[st
         if (time.monotonic() - record["created_monotonic"]) > _PLAN_TTL_SECONDS:
             _PLAN_STORE.pop(plan_id.strip(), None)
             return None, f"Plan '{plan_id}' has expired. Re-run br_plan_load to create a fresh plan."
-        return dict(record), None
+        # Deep copy so callers cannot mutate the frozen record (or its nested area
+        # inputs such as bbox/codes) and change what the same plan_id executes.
+        return copy.deepcopy(record), None
 
 
 def clear_plans() -> None:
@@ -464,8 +495,8 @@ def plan_load(
         executable_ids.append(canonical_id)
 
     can_execute = len(executable_ids) > 0
-    if can_execute and not area.get("geometry_wkt"):
-        # Loader fetches an area mask from IPEA/GitHub mirrors when no polygon is supplied.
+    if can_execute and _may_fetch_remote_mask(area):
+        # Loader fetches an area mask from IPEA/GitHub mirrors when no usable polygon is supplied.
         hosts.update(_mask_provider_hosts())
     external_db_notice = (
         "External databases to contact: "
@@ -473,7 +504,9 @@ def plan_load(
         + ". External government/public geoportals may go offline intermittently."
     ) if external_databases else ""
     # Bind the ID to every execution input carried by the area (bbox, WKT, terrai_cod, ...).
-    area_fingerprint_payload = {k: area[k] for k in sorted(area)}
+    # Snapshot the area so later mutation of the caller's dict/lists cannot change this plan.
+    area_snapshot = copy.deepcopy(area)
+    area_fingerprint_payload = {k: area_snapshot[k] for k in sorted(area_snapshot)}
     plan_payload = {
         "catalog_version": CATALOG_VERSION,
         "executable_ids": executable_ids,
@@ -493,7 +526,7 @@ def plan_load(
             "catalog_version": CATALOG_VERSION,
             "executable_ids": executable_ids,
             "items": items,
-            "area": dict(area),
+            "area": area_snapshot,
             "output_gpkg": str(gpkg_path),
             "replace_existing": bool(replace_existing),
             "include_non_government": bool(include_non_government),

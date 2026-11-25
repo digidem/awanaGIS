@@ -228,18 +228,17 @@ def _gpkg_has_layer(gpkg_path: Path, layer_name: str) -> bool:
         return False
     wanted = layer_name.casefold()
     try:
-        from qgis.core import QgsVectorLayer
+        import sqlite3
 
-        vl = QgsVectorLayer(str(gpkg_path), "probe_existing", "ogr")
-        if not vl.isValid():
-            raise RuntimeError("GeoPackage probe reported an invalid source")
-        for sub in vl.dataProvider().subLayers():
-            parts = sub.split("!!::!!")
-            if len(parts) > 1 and parts[1].casefold() == wanted:
-                return True
+        conn = sqlite3.connect(Path(gpkg_path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            names = [r[0] for r in conn.execute("SELECT table_name FROM gpkg_contents")]
+            names += [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")]
+        finally:
+            conn.close()
     except Exception as exc:
         raise RuntimeError(f"cannot inspect layers in {gpkg_path.name}: {exc}") from exc
-    return False
+    return any(isinstance(n, str) and n.casefold() == wanted for n in names)
 
 
 @contextmanager
