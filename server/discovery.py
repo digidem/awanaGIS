@@ -3,11 +3,14 @@
 The in-QGIS bridge binds a localhost port and records it here so outside
 agent CLIs (Claude Code, Codex, OpenCode, …) can find the live QGIS
 session without hard-coding a port. The file lives at
-``~/.agenticgis/mcp.json`` (override with the ``AGENTICGIS_MCP_DISCOVERY``
+``~/.awanagis/mcp.json`` (override with the ``AWANAGIS_MCP_DISCOVERY``
 environment variable) and holds a list of entries:
 
-    {"servers": [{"url": "http://127.0.0.1:7317/mcp", "pid": 12345,
-                  "host": "127.0.0.1", "port": 7317}]}
+    {"servers": [{"url": "http://127.0.0.1:7318/mcp", "pid": 12345,
+                  "host": "127.0.0.1", "port": 7318}]}
+
+The recorded port is the one actually bound, which may be a fallback port
+rather than the preferred 7318.
 
 Entries are keyed by the QGIS process id: the plugin registers on startup
 and unregisters on unload, and dead-process entries are pruned on every
@@ -20,7 +23,7 @@ import json
 import os
 import tempfile
 
-ENV_VAR = "AGENTICGIS_MCP_DISCOVERY"
+ENV_VAR = "AWANAGIS_MCP_DISCOVERY"
 
 
 def discovery_path():
@@ -28,7 +31,7 @@ def discovery_path():
     override = os.environ.get(ENV_VAR)
     if override:
         return override
-    return os.path.join(os.path.expanduser("~"), ".agenticgis", "mcp.json")
+    return os.path.join(os.path.expanduser("~"), ".awanagis", "mcp.json")
 
 
 def pid_alive(pid):

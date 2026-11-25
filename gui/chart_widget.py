@@ -27,13 +27,13 @@ from .theme import (
     DOCK_TEXT as _TEXT,
     DOCK_TEXT_2 as _TEXT_2,
     DOCK_TEXT_3 as _TEXT_3,
+    DOCK_CHART_START,
+    DOCK_CHART_END,
 )
 
-# Design tokens — darker, softer (match chat_dock.py)
-
 # Default A-to-B palette for charts. Custom chart_data["colors"] still wins.
-GRADIENT_START = "#79a883"
-GRADIENT_END = "#d9a35f"
+GRADIENT_START = DOCK_CHART_START
+GRADIENT_END = DOCK_CHART_END
 
 
 def _font(size, weight=QFont.Weight.Normal):
@@ -49,6 +49,8 @@ class ChartWidget(QFrame):
 
     def __init__(self, chart_data, parent=None):
         super().__init__(parent)
+        if not isinstance(chart_data, dict):
+            chart_data = {}
         self.chart_data = chart_data
         self.chart_type = chart_data.get("chart_type", "bar")
         self.title = chart_data.get("title", "")
@@ -217,8 +219,8 @@ class ChartWidget(QFrame):
         box = QRect(int(x), int(y), int(w), h)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QPen(QColor("#383838"), 1))
-        painter.setBrush(QBrush(QColor("#202020")))
+        painter.setPen(QPen(QColor(_BORDER), 1))
+        painter.setBrush(QBrush(QColor(_INPUT_BG)))
         painter.drawRoundedRect(box, 6, 6)
         painter.setFont(font_label)
         painter.setPen(QColor(_TEXT_2))

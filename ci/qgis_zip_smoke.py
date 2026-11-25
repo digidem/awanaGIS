@@ -39,17 +39,17 @@ def _import_all_packaged_modules(plugin_dir: Path) -> int:
         if any(part in py_path.parts for part in ("__pycache__", "tests", "ci", "docs", ".git")):
             continue
         rel = py_path.relative_to(plugin_dir).with_suffix("")
-        parts = ["AgenticGIS"] + [part for part in rel.parts if part != "__init__"]
+        parts = ["awanagis"] + [part for part in rel.parts if part != "__init__"]
         importlib.import_module(".".join(parts))
         imported += 1
     return imported
 
 
 def _run_smoke() -> None:
-    result_path = os.environ.get("AGENTICGIS_SMOKE_RESULT")
-    zip_path = os.environ.get("AGENTICGIS_SMOKE_ZIP")
-    expect_qgis = os.environ.get("AGENTICGIS_EXPECT_QGIS_MAJOR")
-    expect_qt = os.environ.get("AGENTICGIS_EXPECT_QT_MAJOR")
+    result_path = os.environ.get("AWANAGIS_SMOKE_RESULT")
+    zip_path = os.environ.get("AWANAGIS_SMOKE_ZIP")
+    expect_qgis = os.environ.get("AWANAGIS_EXPECT_QGIS_MAJOR")
+    expect_qt = os.environ.get("AWANAGIS_EXPECT_QT_MAJOR")
 
     log_errors: list[dict[str, str]] = []
     critical_level = _message_level("Critical", 2)
@@ -66,7 +66,7 @@ def _run_smoke() -> None:
             "Python warning",
             QCoreApplication.translate("Python", "Python warning"),
         }
-        is_agentic_critical = level_int == critical_level and tag == "AgenticGIS"
+        is_agentic_critical = level_int == critical_level and tag in ("AwanaGIS", "AgenticGIS")
         is_python_diag = (
             level_int in (critical_level, warning_level)
             and (tag in python_error_tags or tag in python_warning_tags)
@@ -92,12 +92,12 @@ def _run_smoke() -> None:
             raise AssertionError(f"Expected Qt major {expect_qt}, got {qt_version}")
 
         if not zip_path or not Path(zip_path).is_file():
-            raise AssertionError(f"AGENTICGIS_SMOKE_ZIP missing or not a file: {zip_path!r}")
+            raise AssertionError(f"AWANAGIS_SMOKE_ZIP missing or not a file: {zip_path!r}")
 
         settings = QSettings()
         settings.setValue("locale/overrideFlag", True)
         settings.setValue("locale/userLocale", "pt_BR")
-        settings.setValue("AgenticGIS/mcp_enabled", False)
+        settings.setValue("AwanaGIS/mcp_enabled", False)
         settings.sync()
 
         import pyplugin_installer
@@ -116,19 +116,19 @@ def _run_smoke() -> None:
         if not installed:
             raise AssertionError(f"installFromZipFile returned falsy: {installed!r}")
 
-        if not qgis.utils.isPluginLoaded("AgenticGIS"):
-            raise AssertionError("AgenticGIS was not loaded after ZIP installation")
-        if "AgenticGIS" not in qgis.utils.active_plugins:
-            raise AssertionError("AgenticGIS missing from qgis.utils.active_plugins")
+        if not qgis.utils.isPluginLoaded("awanagis"):
+            raise AssertionError("awanagis was not loaded after ZIP installation")
+        if "awanagis" not in qgis.utils.active_plugins:
+            raise AssertionError("awanagis missing from qgis.utils.active_plugins")
 
-        plugin = qgis.utils.plugins["AgenticGIS"]
+        plugin = qgis.utils.plugins["awanagis"]
         if getattr(plugin, "_server", "missing") is not None:
             raise AssertionError("MCP server should remain stopped when mcp_enabled=False")
 
-        plugin_dir = Path(sys.modules["AgenticGIS"].__file__).resolve().parent
+        plugin_dir = Path(sys.modules["awanagis"].__file__).resolve().parent
         if "plugins" not in plugin_dir.parts or (plugin_dir / "tests").exists() or (plugin_dir / "ci").exists():
             raise AssertionError(
-                f"AgenticGIS loaded from unexpected directory instead of installed ZIP: {plugin_dir}"
+                f"awanagis loaded from unexpected directory instead of installed ZIP: {plugin_dir}"
             )
         meta_parser = configparser.ConfigParser(interpolation=None)
         meta_parser.read(plugin_dir / "metadata.txt", encoding="utf-8")
@@ -141,14 +141,14 @@ def _run_smoke() -> None:
             raise AssertionError("Declared plugin icon failed to load as non-null QIcon")
 
         all_plugins = installer_plugins.all()
-        if "AgenticGIS" not in all_plugins:
-            raise AssertionError("AgenticGIS missing from Plugin Manager metadata registry")
-        meta = all_plugins["AgenticGIS"]
-        if "Assistente de conversa com agente" not in meta.get("description", ""):
+        if "awanagis" not in all_plugins:
+            raise AssertionError("awanagis missing from Plugin Manager metadata registry")
+        meta = all_plugins["awanagis"]
+        if "Assistente geoespacial conversacional no QGIS" not in meta.get("description", ""):
             raise AssertionError(
                 f"Localized description missing in Plugin Manager: {meta.get('description')!r}"
             )
-        if "O AgenticGIS adiciona um painel de conversa ao QGIS" not in meta.get("about", ""):
+        if "O AwanaGIS adiciona um painel de conversa ao QGIS" not in meta.get("about", ""):
             raise AssertionError(
                 f"Localized about missing in Plugin Manager: {meta.get('about')!r}"
             )
@@ -157,11 +157,11 @@ def _run_smoke() -> None:
         if ready_pt != "Pronto":
             raise AssertionError(f"Expected Portuguese Ready='Pronto', got {ready_pt!r}")
 
-        from AgenticGIS.gui.settings_dialog import SettingsDialog
+        from awanagis.gui.settings_dialog import SettingsDialog
 
         dialog = SettingsDialog(plugin.config, qgis.utils.iface.mainWindow())
         try:
-            if dialog.windowTitle() != "AgenticGIS — Configurações":
+            if dialog.windowTitle() != "AwanaGIS — Configurações":
                 raise AssertionError(
                     f"Unexpected SettingsDialog title: {dialog.windowTitle()!r}"
                 )
@@ -182,10 +182,10 @@ def _run_smoke() -> None:
         if imported_modules <= 0:
             raise AssertionError("No packaged modules imported during smoke check")
 
-        if not qgis.utils.unloadPlugin("AgenticGIS"):
-            raise AssertionError("qgis.utils.unloadPlugin('AgenticGIS') returned False")
-        if qgis.utils.isPluginLoaded("AgenticGIS"):
-            raise AssertionError("AgenticGIS remained loaded after unloadPlugin")
+        if not qgis.utils.unloadPlugin("awanagis"):
+            raise AssertionError("qgis.utils.unloadPlugin('awanagis') returned False")
+        if qgis.utils.isPluginLoaded("awanagis"):
+            raise AssertionError("awanagis remained loaded after unloadPlugin")
 
         QCoreApplication.processEvents()
         ready_en = QCoreApplication.translate("ChatDock", "Ready")
@@ -202,27 +202,27 @@ def _run_smoke() -> None:
             result_path,
             {
                 "ok": True,
-                "marker": "AGENTICGIS_SMOKE_OK",
+                "marker": "AWANAGIS_SMOKE_OK",
                 "qgis_version": qgis_version,
                 "qt_version": qt_version,
                 "imported_modules": imported_modules,
                 "log_errors": log_errors,
             },
         )
-        print("AGENTICGIS_SMOKE_OK", flush=True)
+        print("AWANAGIS_SMOKE_OK", flush=True)
         QCoreApplication.quit()
         QTimer.singleShot(5000, lambda: os._exit(0))
     except BaseException as exc:
         QTimer.singleShot(100, lambda: os._exit(1))
         tb = traceback.format_exc()
-        sys.stderr.write(tb + "\nAGENTICGIS_SMOKE_FAIL\n")
+        sys.stderr.write(tb + "\nAWANAGIS_SMOKE_FAIL\n")
         sys.stderr.flush()
         try:
             _write_result(
                 result_path,
                 {
                     "ok": False,
-                    "marker": "AGENTICGIS_SMOKE_FAIL",
+                    "marker": "AWANAGIS_SMOKE_FAIL",
                     "error": str(exc),
                     "log_errors": log_errors,
                 },

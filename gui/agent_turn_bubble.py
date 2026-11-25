@@ -35,6 +35,7 @@ from .theme import (
     MONO_STACK,
     ui_font,
     sans_family,
+    curved_scrollbar_qss,
     DOCK_CANVAS as _CANVAS,
     DOCK_SURFACE as _SURFACE,
     DOCK_BLUE as _BLUE,
@@ -96,7 +97,8 @@ class MarkdownTable(QTableWidget):
         self.resizeColumnsToContents()
         header.setStretchLastSection(True)
 
-        self.setStyleSheet(f"""
+        self.setStyleSheet(
+            f"""
             QTableWidget {{
                 background:{_SURFACE}; alternate-background-color:{_BORDER_SOFT};
                 color:{_TEXT_2}; border:1px solid {_BORDER}; border-radius:8px;
@@ -109,13 +111,9 @@ class MarkdownTable(QTableWidget):
                 padding:6px 10px; border:none; border-bottom:1px solid {_BORDER};
             }}
             QTableCornerButton::section {{ background:{_SURFACE_2}; border:none; }}
-            QScrollBar:horizontal {{ background:transparent; height:8px; margin:0 4px 2px 4px; }}
-            QScrollBar:vertical {{ background:transparent; width:8px; margin:4px 2px 4px 0; }}
-            QScrollBar::handle {{ background:{_BORDER}; border-radius:3px; min-width:24px; min-height:24px; }}
-            QScrollBar::handle:hover {{ background:{_TEXT_4}; }}
-            QScrollBar::add-line, QScrollBar::sub-line {{ width:0; height:0; }}
-            QScrollBar::add-page, QScrollBar::sub-page {{ background:transparent; }}
-        """)
+            """
+            + curved_scrollbar_qss(thickness=8, handle_radius=3, include_horizontal=True)
+        )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         visible = min(self.rowCount(), self._MAX_VISIBLE_ROWS)
         # Reserve the scrollbar's strip so a wide table doesn't hide its last row.

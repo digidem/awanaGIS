@@ -1,12 +1,12 @@
-"""Persistent configuration for AgenticGIS, backed by ``QSettings``.
+"""Persistent configuration for AwanaGIS, backed by ``QSettings``.
 
-All settings live under the ``AgenticGIS/`` group so they survive QGIS
+All settings live under the ``AwanaGIS/`` group so they survive QGIS
 restarts and are scoped to the plugin.
 """
 
 from qgis.PyQt.QtCore import QSettings
 
-_GROUP = "AgenticGIS"
+_GROUP = "AwanaGIS"
 
 # Connection modes the user can pick in the Settings dialog.
 MODE_CLI_TOOL = "cli_tool"          # use an installed, already-logged-in agent CLI
@@ -48,7 +48,7 @@ DEFAULTS = {
     # "External agent access (MCP)".
     "mcp_enabled": True,
     "mcp_host": "127.0.0.1",
-    "mcp_port": 7317,              # fixed default so client configs stay valid; 0 => random port
+    "mcp_port": 7318,              # fixed default so client configs stay valid; distinct from AgenticGIS 7317; 0 => random port
     # Performance
     "main_thread_timeout": 60.0,      # seconds for main-thread operations
     "processing_timeout": 0.0,        # 0 or less => unlimited processing task setup wait

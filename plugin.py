@@ -1,4 +1,4 @@
-"""AgenticGIS plugin entry point.
+"""AwanaGIS plugin entry point.
 
 Owns the long-lived pieces (config, main-thread executor, toolkit, optional MCP
 bridge) and the chat dock, and rebuilds the active backend whenever settings
@@ -7,9 +7,11 @@ change.
 
 import hashlib
 import json
+from pathlib import Path
 import threading
 
 from qgis.PyQt.QtCore import QCoreApplication
+from qgis.PyQt.QtGui import QIcon
 
 try:
     from qgis.PyQt.QtGui import QAction  # Qt 6
@@ -23,7 +25,7 @@ from .core.toolkit import QgisToolkit
 from .i18n import load_plugin_translator, resolve_qgis_locale
 
 
-class AgenticGisPlugin:
+class AwanaGisPlugin:
     def __init__(self, iface):
         self.iface = iface
         self.config = config_mod.Config()
@@ -45,11 +47,13 @@ class AgenticGisPlugin:
         translator = load_plugin_translator(resolve_qgis_locale())
         if translator is not None and QCoreApplication.installTranslator(translator):
             self._translator = translator
-        self._action = QAction("AgenticGIS", self.iface.mainWindow())
+        icon_path = Path(__file__).resolve().parent / "resources" / "icon.png"
+        icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
+        self._action = QAction(icon, "AwanaGIS", self.iface.mainWindow())
         self._action.setCheckable(True)
         self._action.triggered.connect(self._toggle_dock)
         self.iface.addToolBarIcon(self._action)
-        self.iface.addPluginToMenu("AgenticGIS", self._action)
+        self.iface.addPluginToMenu("AwanaGIS", self._action)
         try:
             from .core.network_cache import (
                 maybe_enable_default_cache,
@@ -98,7 +102,8 @@ class AgenticGisPlugin:
         self._close_cached_backend()
         if self._action is not None:
             self.iface.removeToolBarIcon(self._action)
-            self.iface.removePluginMenu("AgenticGIS", self._action)
+            self.iface.removePluginMenu("AwanaGIS", self._action)
+            self._action.deleteLater()
             self._action = None
 
     # ------------------------------------------------------------------ #
@@ -241,13 +246,20 @@ class AgenticGisPlugin:
     def _open_settings(self):
         from .gui.settings_dialog import SettingsDialog
 
-        dialog = SettingsDialog(self.config, self.iface.mainWindow())
+        session_store = self._dock._session_store if self._dock is not None else None
+        dialog = SettingsDialog(
+            self.config,
+            self.iface.mainWindow(),
+            session_store=session_store,
+        )
         dialog.exec()
         # Backend is rebuilt lazily on the next send via _get_backend().
         # Eagerly warm the new connection now so the first post-settings
         # message is fast.
         if self._dock is not None:
             try:
+                if dialog.sessions_imported:
+                    self._dock.refresh_sessions()
                 self._dock.refresh_composer()
                 self._dock._maybe_prewarm()
             except Exception:  # nosec B110

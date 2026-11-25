@@ -36,6 +36,9 @@ from .theme import (
     DOCK_TEXT_2 as _TEXT_2,
     DOCK_TEXT_3 as _TEXT_3,
     DOCK_DANGER as _DANGER,
+    DOCK_DANGER_BG as _DANGER_BG,
+    DOCK_DANGER_BORDER as _DANGER_BORDER,
+    DOCK_DANGER_TEXT as _DANGER_TEXT,
 )
 
 # ── One Dark palette (carbon.sh default theme) ─────────────────────────
@@ -87,7 +90,7 @@ _GENERIC_KW = frozenset({
 
 _CODE_MENU_STYLE = f"""
     QMenu {{
-        background-color: #202020;
+        background-color: {_SURFACE};
         color: {_TEXT};
         border: 1px solid {_BORDER};
         border-radius: 6px;
@@ -537,9 +540,9 @@ class MessageBubble(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         if self.is_error:
-            bg_color = "#2a1c1f"
-            text_color = _DANGER
-            border_color = "#4a2a30"
+            bg_color = _DANGER_BG
+            text_color = _DANGER_TEXT
+            border_color = _DANGER_BORDER
             border_radius = "10px"
         elif self.is_tool:
             bg_color = _SURFACE

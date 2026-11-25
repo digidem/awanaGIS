@@ -1,4 +1,4 @@
-"""Per-CLI adapter layer for AgenticGIS CLI Agent mode.
+"""Per-CLI adapter layer for AwanaGIS CLI Agent mode.
 
 Every supported CLI is described by one ``Adapter`` class. The adapter
 owns the command-line invocation (``build_command``) and the wire-format
@@ -140,11 +140,11 @@ class CliAdapter:
         return None
 
     def parse_protocol_text(self, text: str) -> Optional[NormalizedEvent]:
-        """Parse the AgenticGIS tool_calls protocol embedded in text.
+        """Parse the AwanaGIS tool_calls protocol embedded in text.
 
         The system prompt instructs the CLI to emit a single JSON object
         of the form ``{"type":"tool_calls","calls":[...]}`` when
-        it needs to call one or more AgenticGIS tools, and to use plain
+        it needs to call one or more AwanaGIS tools, and to use plain
         text/markdown for final answers. When the LLM follows the
         protocol, the JSON often appears inside the assistant's text
         payload (e.g. as the ``text`` field of a Claude stream event).
@@ -154,7 +154,7 @@ class CliAdapter:
 
         Subclasses normally inherit this implementation. Override only
         if a CLI has its own wire-level tool call format that should win
-        over the AgenticGIS protocol (the native format will already
+        over the AwanaGIS protocol (the native format will already
         have been handled by ``parse_event`` before this is called).
         """
         if not text:
@@ -241,7 +241,7 @@ class CliAdapter:
 
 
 def _empty_runtime_dir(name: str) -> str:
-    path = os.path.join(tempfile.gettempdir(), "AgenticGIS", name)
+    path = os.path.join(tempfile.gettempdir(), "AwanaGIS", name)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -289,21 +289,22 @@ def _devin_config_json() -> str:
 # ----------------------------------------------------------------------- #
 # Native MCP tool registration                                            #
 # ----------------------------------------------------------------------- #
-# When the in-QGIS bridge is running, CLI agents get the AgenticGIS tools
+# When the in-QGIS bridge is running, CLI agents get the AwanaGIS tools
 # registered as native MCP tools so they can call them directly (instead of
 # emitting the JSON text protocol). Clients name MCP tools with the server
 # prefix, so parsed names are normalized back to the plain tool name.
 
-MCP_SERVER_NAME = "agenticgis"
+MCP_SERVER_NAME = "awanagis"
 
 
 def normalize_tool_name(name):
-    """Map an MCP-registered tool name back to the plain AgenticGIS name.
+    """Map an MCP-registered tool name back to the plain AwanaGIS tool name.
 
-    Claude Code uses ``mcp__agenticgis__list_layers``; Codex/OpenCode use
-    ``agenticgis__list_layers``, ``agenticgis.list_layers`` or
-    ``agenticgis_list_layers``; Antigravity may report ``agenticgis/list_layers``
-    or ``mcp(agenticgis/list_layers)``. Anything else (plain names, the text
+    Claude Code uses ``mcp__awanagis__list_layers``; Codex/OpenCode use
+    ``awanagis__list_layers``, ``awanagis.list_layers`` or
+    ``awanagis_list_layers``; Antigravity may report ``awanagis/list_layers``
+    or ``mcp(awanagis/list_layers)``. Legacy ``agenticgis`` prefixes are also
+    stripped for backwards compatibility. Anything else (plain names, the text
     protocol, shell commands) passes through.
     """
     if not isinstance(name, str):
@@ -312,6 +313,7 @@ def normalize_tool_name(name):
         name = name[4:-1]
     lowered = name.lower()
     for prefix in (
+        "mcp__awanagis__", "awanagis__", "awanagis.", "awanagis_", "awanagis/",
         "mcp__agenticgis__", "agenticgis__", "agenticgis.", "agenticgis_", "agenticgis/",
     ):
         if lowered.startswith(prefix):
@@ -404,7 +406,7 @@ class ClaudeAdapter(CliAdapter):
 
     @staticmethod
     def _mcp_flags(runtime_dir, mcp_url):
-        """Register the AgenticGIS bridge as a native MCP server.
+        """Register the AwanaGIS bridge as a native MCP server.
 
         Claude Code speaks streamable HTTP directly (no stdio proxy needed)
         and headless ``-p`` mode needs the server's tools pre-allowed.
@@ -413,7 +415,7 @@ class ClaudeAdapter(CliAdapter):
             return []
         directory = runtime_dir or tempfile.gettempdir()
         os.makedirs(directory, exist_ok=True)
-        config_path = os.path.join(directory, "agenticgis-mcp.json")
+        config_path = os.path.join(directory, "awanagis-mcp.json")
         with open(config_path, "w", encoding="utf-8") as fh:
             json.dump(
                 {"mcpServers": {MCP_SERVER_NAME: {"type": "http", "url": mcp_url}}},
@@ -573,7 +575,7 @@ class CodexAdapter(CliAdapter):
 
     @staticmethod
     def _mcp_flags(mcp_url):
-        """Register the AgenticGIS bridge via ``-c`` TOML overrides.
+        """Register the AwanaGIS bridge via ``-c`` TOML overrides.
 
         Codex ignores the user config here, so CLI overrides are the only
         channel. Codex only speaks stdio MCP, hence the bundled proxy.
@@ -714,7 +716,7 @@ class OpenCodeAdapter(CliAdapter):
     def env(self, mcp_url=None):
         config = json.loads(_opencode_config_json())
         if mcp_url:
-            # Register the AgenticGIS bridge as a native remote MCP server
+            # Register the AwanaGIS bridge as a native remote MCP server
             # (streamable HTTP — opencode connects directly, no proxy).
             config["mcp"] = {
                 MCP_SERVER_NAME: {"type": "remote", "url": mcp_url},
@@ -930,11 +932,12 @@ _AGY_MCP_REGISTERED = set()
 
 
 def _ensure_agy_mcp(binary, mcp_url):
-    """Register the AgenticGIS bridge in agy's user-level MCP config (once per URL).
+    """Register the AwanaGIS bridge in agy's user-level MCP config (once per URL).
 
     agy has no per-run MCP flag, so this writes ``~/.gemini/config/mcp_config.json``
-    via ``agy mcp add`` (add-or-update). The bridge port is fixed, so the entry
-    stays valid between QGIS sessions. Best-effort: failure leaves the text protocol.
+    via ``agy mcp add`` (add-or-update). The default bridge port is fixed, so the
+    entry stays valid between QGIS sessions. Best-effort: failure leaves the text
+    protocol.
     """
     key = (binary, mcp_url)
     if key in _AGY_MCP_REGISTERED:
@@ -944,7 +947,8 @@ def _ensure_agy_mcp(binary, mcp_url):
             [binary, "mcp", "list"], capture_output=True, text=True, timeout=10, check=False,
         ).stdout or ""
         if not any(
-            line.split()[:1] == [MCP_SERVER_NAME] and mcp_url in line and "enabled" in line
+            line.split()[:1] == [MCP_SERVER_NAME]
+            and mcp_url in line.split() and "enabled" in line.split()
             for line in listing.splitlines()
         ):
             subprocess.run(  # nosec B603

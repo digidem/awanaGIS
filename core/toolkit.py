@@ -72,6 +72,14 @@ _WEB_FETCH_CHUNK_BYTES = 1024 * 1024
 _WEB_FETCH_MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB
 
 
+def _is_analysis_layer(layer):
+    """True if the layer carries the (current or legacy) analysis marker."""
+    return bool(
+        layer.customProperty("awanagis/analysis")
+        or layer.customProperty("agenticgis/analysis")
+    )
+
+
 def _on_main_thread():
     """True when the caller is on the Qt main (GUI) thread.
 
@@ -798,7 +806,7 @@ class QgisToolkit:
         self._gee_gif_sources = []   # list of file_path
         self._gee_tiff_cleanup_connected = False
         self._gee_manifest_path = os.path.join(
-            tempfile.gettempdir(), "agenticgis_gee_manifest.json"
+            tempfile.gettempdir(), "awanagis_gee_manifest.json"
         )
         self._clean_orphan_gee_tiffs()
         # Logical-name -> layer_id map of agent-created analysis/result layers.
@@ -852,7 +860,7 @@ class QgisToolkit:
                     feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
                     fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
                     source=layer.publicSource(),
-                    is_analysis=bool(layer.customProperty("agenticgis/analysis")),
+                    is_analysis=_is_analysis_layer(layer),
                 )
             except Exception:  # nosec B110
                 pass
@@ -1254,11 +1262,11 @@ class QgisToolkit:
             })
 
         answer = self._ask_user(
-            f"Allow AgenticGIS to {reason}?",
+            f"Allow AwanaGIS to {reason}?",
             options,
             allow_free_text=False,
             display_question=QCoreApplication.translate(
-                "ExternalAccess", "Allow AgenticGIS to {reason}?"
+                "ExternalAccess", "Allow AwanaGIS to {reason}?"
             ).format(reason=display_reason),
         )
         if isinstance(answer, str):
@@ -1711,7 +1719,7 @@ class QgisToolkit:
                 pump_events=False,
             )
 
-        result = self._run_qgs_task(executor, f"AgenticGIS {name}", worker)
+        result = self._run_qgs_task(executor, f"AwanaGIS {name}", worker)
         log_event(
             "background_tool.end",
             tool=name,
@@ -1926,7 +1934,7 @@ class QgisToolkit:
                 return self._run_pyqgis_inner(code, event, owner, pump_events=False)
 
         result = self._run_qgs_task(
-            executor, "AgenticGIS run_pyqgis (background)", worker
+            executor, "AwanaGIS run_pyqgis (background)", worker
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         log_event(
@@ -1953,7 +1961,7 @@ class QgisToolkit:
             if not path:
                 # Unsaved project — nothing to snapshot.
                 return None
-            fd, tmp_path = tempfile.mkstemp(suffix=".qgz", prefix="agenticgis_snapshot_")
+            fd, tmp_path = tempfile.mkstemp(suffix=".qgz", prefix="awanagis_snapshot_")
             os.close(fd)
             if project.write(tmp_path):
                 log_event("toolkit.project_snapshot", path=tmp_path)
@@ -1974,7 +1982,7 @@ class QgisToolkit:
         # namespace is built once per toolkit and copied per call.
         if self._ns_template is None:
             ns = {
-                "__name__": "__agenticgis__",
+                "__name__": "__awanagis__",
                 "iface": self.iface,
                 "QgsProject": QgsProject,
                 "QgsApplication": QgsApplication,
@@ -2160,7 +2168,7 @@ class QgisToolkit:
             with redirect_stdout(out), redirect_stderr(err):
                 # Intentional user-code execution (PyQGIS escape hatch).
                 # Guarded by _dangerous_calls_blocked() above.
-                exec(compile(code, "<agenticgis>", "exec"), ns)  # nosec B102
+                exec(compile(code, "<awanagis>", "exec"), ns)  # nosec B102
             if _cancel_check():
                 result["ok"] = False
                 result["error"] = "run_pyqgis: cancelled by user"
@@ -2840,7 +2848,7 @@ class QgisToolkit:
             pass
         if is_analysis:
             try:
-                layer.setCustomProperty("agenticgis/analysis", True)
+                layer.setCustomProperty("awanagis/analysis", True)
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
@@ -2936,7 +2944,7 @@ class QgisToolkit:
             import urllib.request
 
             req = urllib.request.Request(
-                url, method="GET", headers={"User-Agent": "AgenticGIS"}
+                url, method="GET", headers={"User-Agent": "AwanaGIS"}
             )
             try:
                 with _safe_urlopen(req, timeout=20) as resp:  # nosec B310
@@ -4341,7 +4349,7 @@ class QgisToolkit:
     def _maybe_delete_layer_file(self, layer):
         """Delete the source file for an is_analysis temp layer."""
         try:
-            is_analysis = bool(layer.customProperty("agenticgis/analysis"))
+            is_analysis = _is_analysis_layer(layer)
         except Exception:
             is_analysis = False
         if not is_analysis:
@@ -5117,7 +5125,7 @@ class QgisToolkit:
         user cancellation.
         """
         name = safe_filename_from_url(url)
-        download_dir = tempfile.mkdtemp(prefix="agenticgis_fetch_")
+        download_dir = tempfile.mkdtemp(prefix="awanagis_fetch_")
         file_path = os.path.join(download_dir, name)
         try:
             total_bytes = int(resp.headers.get("Content-Length") or 0) or None

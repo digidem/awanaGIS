@@ -24,14 +24,25 @@ AgentTurnBubble = import_module(f"{ROOT.name}.gui.agent_turn_bubble").AgentTurnB
 GifWidget = import_module(f"{ROOT.name}.gui.gif_widget").GifWidget
 SessionPopup = import_module(f"{ROOT.name}.gui.session_popup").SessionPopup
 StatsWidget = import_module(f"{ROOT.name}.gui.stats_widget").StatsWidget
+ChartWidget = import_module(f"{ROOT.name}.gui.chart_widget").ChartWidget
 
 
 class PresentationTests(unittest.TestCase):
+    def test_chart_with_non_dict_data_renders_empty(self):
+        for data in ([1], {}, None):
+            with self.subTest(data=data):
+                widget = ChartWidget(data)
+                widget.resize(400, 260)
+                widget.show()
+                self.app.processEvents()
+                self.assertEqual(widget.data, [])
+                widget.close()
+
     def test_generated_chart_titles_preserve_wire_values(self):
         import json
 
-        from AgenticGIS.core.toolkit import _chart_from_data, _chart_title
-        from AgenticGIS.gui.backend_feedback import display_backend_feedback
+        from awanagis.core.toolkit import _chart_from_data, _chart_title
+        from awanagis.gui.backend_feedback import display_backend_feedback
 
         generated = _chart_from_data([{"label": "A", "value": 1}], "bar", [], None)
         custom = _chart_from_data([{"label": "A", "value": 1}], "bar", [], "Chart")
@@ -48,7 +59,7 @@ class PresentationTests(unittest.TestCase):
 
     def setUp(self):
         translator = QTranslator()
-        self.assertTrue(translator.load(str(ROOT / "i18n" / "AgenticGIS_pt_BR.qm")))
+        self.assertTrue(translator.load(str(ROOT / "i18n" / "awanagis_pt_BR.qm")))
         self.assertTrue(QCoreApplication.installTranslator(translator))
         self.addCleanup(QCoreApplication.removeTranslator, translator)
 
@@ -68,6 +79,7 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(formatting.summarize_tool_result("[]"), "0 itens")
         self.assertEqual(formatting.summarize_tool_result("[1]"), "1 item")
         self.assertEqual(formatting.summarize_tool_result("[1, 2]"), "2 itens")
+        self.assertEqual(formatting.humanize_tool_name("mcp__awanagis__list_layers"), "Listar camadas")
         self.assertEqual(formatting.humanize_tool_name("mcp__agenticgis__list_layers"), "Listar camadas")
         self.assertEqual(formatting.humanize_tool_name("mcp__external__list_layers"), "List layers")
         self.assertEqual(formatting.summarize_tool_result('{"ok":false,"error":"Custom error"}'), "Custom error")

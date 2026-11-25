@@ -126,7 +126,7 @@ def run_processing_algorithm_task(
         return _error_result("alg_id must be a non-empty string", 0.0)
 
     start = time.perf_counter()
-    task_description = description or f"AgenticGIS processing {alg_id}"
+    task_description = description or f"AwanaGIS processing {alg_id}"
     params = dict(parameters or {})
     slot = {
         "done": threading.Event(),
@@ -226,9 +226,9 @@ def run_processing_algorithm_task(
         task = QgsProcessingAlgRunnerTask(algorithm, params, context, feedback, flags)
 
         # PyQGIS callers must keep these alive for the whole task lifetime.
-        task._agenticgis_algorithm = algorithm
-        task._agenticgis_context = context
-        task._agenticgis_feedback = feedback
+        task._awanagis_algorithm = algorithm
+        task._awanagis_context = context
+        task._awanagis_feedback = feedback
 
         slot["task"] = task
         slot["context"] = context

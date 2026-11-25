@@ -1,4 +1,5 @@
-SOURCES = ../backends/adapters.py \
+SOURCES = ../plugin.py \
+    ../backends/adapters.py \
     ../backends/anthropic_http.py \
     ../backends/api_backend.py \
     ../backends/base.py \
@@ -9,6 +10,7 @@ SOURCES = ../backends/adapters.py \
     ../core/toolkit.py \
     ../gui/agent_turn_bubble.py \
     ../gui/ask_user_card.py \
+    ../gui/backend_feedback.py \
     ../gui/chart_widget.py \
     ../gui/chat_dock.py \
     ../gui/download_card.py \
@@ -20,4 +22,4 @@ SOURCES = ../backends/adapters.py \
     ../gui/settings_dialog.py \
     ../gui/stats_widget.py
 
-TRANSLATIONS = AgenticGIS_pt_BR.ts
+TRANSLATIONS = awanagis_pt_BR.ts
