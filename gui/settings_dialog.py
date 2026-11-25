@@ -1119,6 +1119,12 @@ class SettingsDialog(QDialog):
         card.add_row(QCoreApplication.translate("SettingsDialog", "API key"), QCoreApplication.translate("SettingsDialog", "Stored in your QGIS settings on this machine."), self.api_key_edit)
 
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        self.api_base_url_edit.textChanged.connect(self._schedule_api_autotest)
+        self.api_key_edit.textChanged.connect(self._schedule_api_autotest)
+        self._api_autotest_timer = QTimer(self)
+        self._api_autotest_timer.setSingleShot(True)
+        self._api_autotest_timer.setInterval(600)
+        self._api_autotest_timer.timeout.connect(self._run_api_autotest)
         self._test_row(card, "api_test_btn", "api_status", config_mod.MODE_API_KEY, use_btn_attr="api_use_btn")
         self.api_model_group = self._model_group(card, "model_picker")
         col.addWidget(card)
@@ -1307,6 +1313,22 @@ class SettingsDialog(QDialog):
         # Changing provider invalidates any prior successful test.
         self._reset_model_group(config_mod.MODE_API_KEY)
         self._update_connection_tab_labels()
+        self._schedule_api_autotest()
+
+    def _schedule_api_autotest(self, *_):
+        """Debounce an automatic connection test once URL and key are both set."""
+        if not getattr(self, "_loaded", False):
+            return  # still populating the form from saved settings
+        _fmt, base_url, key = self._connection_params(config_mod.MODE_API_KEY)
+        provider = providers.get_provider(self.provider_combo.currentData())
+        if base_url and (key or (provider is not None and not provider.get("key_env"))):
+            self._api_autotest_timer.start()
+        else:
+            self._api_autotest_timer.stop()
+
+    def _run_api_autotest(self):
+        if self.api_test_btn.isEnabled():  # not already testing
+            self._test_connection(config_mod.MODE_API_KEY)
 
     # ── connection test / model discovery ───────────────────────────────────────
     def _panel_widgets(self, mode):
@@ -1362,17 +1384,7 @@ class SettingsDialog(QDialog):
             return
 
         def fetch(fmt=fmt, base_url=base_url, key=key):
-            if fmt == "anthropic":
-                from ..backends.anthropic_http import AnthropicHttpClient
-                client = AnthropicHttpClient(
-                    api_key=key or None, base_url=base_url or None
-                )
-            else:
-                from ..backends.openai_http import OpenAIHttpClient
-                client = OpenAIHttpClient(
-                    api_key=key or None, base_url=base_url or None
-                )
-            return client.list_models()
+            return providers.fetch_models(fmt, base_url, key)
 
         def done(result, err, m=mode):
             models, fetch_err = result if result else ([], "")
@@ -1403,6 +1415,12 @@ class SettingsDialog(QDialog):
             saved = self.config.get("model") or ""
             picker.setActive(saved)
             self._fill_models(picker, models)
+            if mode == config_mod.MODE_API_KEY:
+                picker.setCurrentText(
+                    providers.pick_default_model(
+                        self.provider_combo.currentData(), models, picker.currentText()
+                    )
+                )
         else:
             self._set_status(
                 status,

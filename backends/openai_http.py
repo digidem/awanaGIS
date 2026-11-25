@@ -105,6 +105,30 @@ def _looks_like_openrouter_claude(base_url, model):
     return "claude" in m or "anthropic" in m
 
 
+_CHAT_ENDPOINT = "/v1/chat/completions"
+
+
+def extract_chat_model_ids(items):
+    """Sorted unique model ids from a `/models` payload's `data` list.
+
+    Entries that declare an `endpoints` list (Tinfoil does, and also lists
+    embedding, speech and PII models) are kept only when they serve chat
+    completions. Entries without that field (other providers) are kept.
+    """
+    models = set()
+    for it in items or []:
+        if isinstance(it, dict):
+            if not it.get("id"):
+                continue
+            endpoints = it.get("endpoints")
+            if isinstance(endpoints, list) and _CHAT_ENDPOINT not in endpoints:
+                continue
+            models.add(it["id"])
+        elif isinstance(it, str):
+            models.add(it)
+    return sorted(models)
+
+
 class OpenAIHttpClient:
     def __init__(self, api_key=None, base_url=None, extra_headers=None, org=None,
                  timeout=DEFAULT_TIMEOUT):
@@ -247,13 +271,7 @@ class OpenAIHttpClient:
             body = response.read().decode("utf-8", "replace")
             data = json.loads(body)
             items = data.get("data") if isinstance(data, dict) else data
-            models = []
-            for it in items or []:
-                if isinstance(it, dict) and it.get("id"):
-                    models.append(it["id"])
-                elif isinstance(it, str):
-                    models.append(it)
-            return sorted(set(models)), None
+            return extract_chat_model_ids(items), None
         except urllib.error.HTTPError as exc:
             try:
                 detail = exc.read().decode("utf-8", "replace")

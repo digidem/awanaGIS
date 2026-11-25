@@ -8,6 +8,14 @@ the user set their own base URL and format.
 
 BUILT_INS = [
     {
+        "id": "tinfoil",
+        "label": "Tinfoil (private inference)",
+        "base_url": "https://inference.tinfoil.sh/v1",
+        "format": "openai",
+        "default_model": "deepseek-v4-1-flash",
+        "key_env": "TINFOIL_API_KEY",
+    },
+    {
         "id": "anthropic",
         "label": "Anthropic",
         "base_url": "https://api.anthropic.com/v1",
@@ -92,3 +100,41 @@ def get_provider(provider_id):
 def all_providers():
     """Return the built-in provider list (for UI dropdowns)."""
     return list(BUILT_INS)
+
+
+def pick_default_model(provider_id, models, current=""):
+    """Choose the model to preselect once a provider's model list arrives.
+
+    Keeps ``current`` when the provider lists it; otherwise falls back to the
+    provider's default model when listed, else the first listed model. With an
+    empty list there is nothing to choose from, so ``current`` (or the
+    provider default) is returned unchanged.
+    """
+    models = list(models or [])
+    current = (current or "").strip()
+    provider = get_provider(provider_id) or {}
+    default = provider.get("default_model", "")
+    if not models:
+        return current or default
+    if current and current in models:
+        return current
+    if default and default in models:
+        return default
+    return models[0]
+
+
+def fetch_models(fmt, base_url, key):
+    """List models from a provider endpoint; ``(models, error)``.
+
+    Blocking network call: run it off the UI thread. Doubles as a connection
+    test (a bad key or URL comes back as the error).
+    """
+    if fmt == "anthropic":
+        from .anthropic_http import AnthropicHttpClient
+
+        client = AnthropicHttpClient(api_key=key or None, base_url=base_url or None)
+    else:
+        from .openai_http import OpenAIHttpClient
+
+        client = OpenAIHttpClient(api_key=key or None, base_url=base_url or None)
+    return client.list_models()

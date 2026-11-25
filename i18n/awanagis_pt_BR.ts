@@ -1847,4 +1847,83 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Ferramenta</translation>
         </message>
     </context>
+    <context>
+        <name>OnboardingPage</name>
+        <message>
+            <source>API key</source>
+            <translation>Chave de API</translation>
+        </message>
+        <message>
+            <source>Base URL</source>
+            <translation>URL base</translation>
+        </message>
+        <message>
+            <source>Checking connection…</source>
+            <translation>Verificando conexão…</translation>
+        </message>
+        <message>
+            <source>Connect an AI provider to start</source>
+            <translation>Conecte um provedor de IA para começar</translation>
+        </message>
+        <message>
+            <source>Connected · 1 model available</source>
+            <translation>Conectado · 1 modelo disponível</translation>
+        </message>
+        <message>
+            <source>Connected · no models listed — type a model name below</source>
+            <translation>Conectado · nenhum modelo listado — digite o nome de um modelo abaixo</translation>
+        </message>
+        <message>
+            <source>Connected · {count} models available</source>
+            <translation>Conectado · {count} modelos disponíveis</translation>
+        </message>
+        <message>
+            <source>Enter your API key to connect.</source>
+            <translation>Informe sua chave de API para conectar.</translation>
+        </message>
+        <message>
+            <source>Failed — {error}</source>
+            <translation>Falhou — {error}</translation>
+        </message>
+        <message>
+            <source>Get a Tinfoil API key</source>
+            <translation>Obter uma chave de API da Tinfoil</translation>
+        </message>
+        <message>
+            <source>Model</source>
+            <translation>Modelo</translation>
+        </message>
+        <message>
+            <source>More options (CLI agents, custom endpoint)…</source>
+            <translation>Mais opções (agentes CLI, endpoint personalizado)…</translation>
+        </message>
+        <message>
+            <source>No key needed for local servers</source>
+            <translation>Servidores locais não precisam de chave</translation>
+        </message>
+        <message>
+            <source>Paste your API key here</source>
+            <translation>Cole sua chave de API aqui</translation>
+        </message>
+        <message>
+            <source>Paste your key (or set {variable})</source>
+            <translation>Cole sua chave (ou defina {variable})</translation>
+        </message>
+        <message>
+            <source>Provider</source>
+            <translation>Provedor</translation>
+        </message>
+        <message>
+            <source>Provider API base URL</source>
+            <translation>URL base da API do provedor</translation>
+        </message>
+        <message>
+            <source>Start chatting</source>
+            <translation>Começar a conversar</translation>
+        </message>
+        <message>
+            <source>Tinfoil is the default provider because it runs models in secure enclaves, so your prompts stay private. Paste your API key below to connect. You can pick another provider at any time.</source>
+            <translation>A Tinfoil é o provedor padrão porque executa os modelos em enclaves seguros, mantendo seus prompts privados. Cole sua chave de API abaixo para conectar. Você pode escolher outro provedor a qualquer momento.</translation>
+        </message>
+    </context>
 </TS>

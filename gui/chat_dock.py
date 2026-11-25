@@ -25,6 +25,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -37,6 +38,7 @@ from .backend_feedback import display_backend_feedback
 from ..backends.base import AgentEvent, EventType, should_compact
 from ..core.dev_logging import log_ttft_event, new_trace_id
 from ..core.input_metrics import input_box_metrics
+from ..core.onboarding import is_backend_configured
 from ..core.qt_compat import QUEUED_CONNECTION
 from ..core.session_store import SessionStore
 from .agent_turn_bubble import AgentTurnBubble, _SPINNER_FRAMES
@@ -245,11 +247,14 @@ class ChatDock(QgsDockWidget):
         parent=None,
         session_store=None,
         show_startup_picker=True,
+        config=None,
     ):
         super().__init__("AwanaGIS", parent)
         self.setObjectName("AwanaGisDock")
         self._get_backend = get_backend
         self._open_settings = open_settings
+        # Without a config the onboarding gate is disabled (chat always shown).
+        self._config = config
         self._request_cancel = request_cancel
         self._toolkit = toolkit
         self._default_session_title = QCoreApplication.translate("ChatDock", "New session")
@@ -408,7 +413,11 @@ class ChatDock(QgsDockWidget):
         self.transcript_layout.addStretch(1)
 
         self.scroll.setWidget(self.transcript_widget)
-        layout.addWidget(self.scroll, 1)
+        chat_page = QWidget()
+        chat_layout = QVBoxLayout(chat_page)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(0)
+        chat_layout.addWidget(self.scroll, 1)
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
         # Clamp transcript width to viewport — prevents any child widget from
         # forcing horizontal overflow and unwanted sideways scrolling.
@@ -530,9 +539,22 @@ class ChatDock(QgsDockWidget):
         composer_layout.addLayout(chip_row)
 
         input_bar.addWidget(composer)
-        layout.addWidget(input_wrap)
+        chat_layout.addWidget(input_wrap)
+
+        # Page 0: chat. Page 1: provider setup, shown until a backend is configured.
+        self._stack = QStackedWidget()
+        self._stack.addWidget(chat_page)
+        self._onboarding_page = None
+        if self._config is not None:
+            from .onboarding_page import OnboardingPage
+
+            self._onboarding_page = OnboardingPage(self._config, self._open_settings)
+            self._onboarding_page.configured.connect(self._on_onboarding_configured)
+            self._stack.addWidget(self._onboarding_page)
+        layout.addWidget(self._stack, 1)
 
         self.setWidget(container)
+        self._apply_onboarding_state()
 
         # Install event filter on the input widget so Enter-to-send works
         self.input.installEventFilter(self)
@@ -584,6 +606,27 @@ class ChatDock(QgsDockWidget):
         else:
             self._status_session_name = current.get("name") or self._default_session_title
         self._render_status()
+
+    def _apply_onboarding_state(self):
+        """Show the chat page when a backend is configured, else provider setup."""
+        if self._onboarding_page is None:
+            return
+        if is_backend_configured(self._config):
+            self._stack.setCurrentIndex(0)
+        else:
+            if self._stack.currentIndex() != 1:
+                self._onboarding_page.reload()
+            self._stack.setCurrentIndex(1)
+
+    def _on_onboarding_configured(self):
+        self._apply_onboarding_state()
+        self.refresh_composer()
+        self._maybe_prewarm()
+
+    def refresh_configuration(self):
+        """Re-check the saved settings (e.g. after Settings closes) and pick the page."""
+        self.refresh_composer()
+        self._apply_onboarding_state()
 
     def refresh_composer(self):
         """Re-read the connection settings into the composer chips."""

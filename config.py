@@ -22,8 +22,8 @@ DEFAULTS = {
     "cli_args": "",                # optional extra CLI flags for advanced users
     "cli_model": "",               # model to pass to the CLI agent (--model)
     # API-key mode
-    "provider": "anthropic",
-    "model": "claude-opus-4-8",
+    "provider": "tinfoil",
+    "model": "deepseek-v4-1-flash",
     "api_key": "",
     "api_base_url": "",          # override built-in provider base URL in API-key mode
     # Custom endpoint (when provider == "custom")

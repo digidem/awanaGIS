@@ -117,6 +117,7 @@ class AwanaGisPlugin:
             self._dock = ChatDock(self._get_backend, self._open_settings,
                                   self.request_cancel,
                                   toolkit=self.toolkit,
+                                  config=self.config,
                                   parent=self.iface.mainWindow())
             self.iface.addDockWidget(RIGHT_DOCK_WIDGET_AREA, self._dock)
             self._dock.visibilityChanged.connect(
@@ -260,7 +261,7 @@ class AwanaGisPlugin:
             try:
                 if dialog.sessions_imported:
                     self._dock.refresh_sessions()
-                self._dock.refresh_composer()
+                self._dock.refresh_configuration()
                 self._dock._maybe_prewarm()
             except Exception:  # nosec B110
                 pass
