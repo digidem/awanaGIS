@@ -67,9 +67,15 @@ PRIVATE_KEY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx")
 # approved .pem files; they must be certificate-only (no key material).
 APPROVED_CERT_PREFIX = ("integrations", "brazil", "vendor", "gisbr", "core", "certs")
 APPROVED_CERT_SHA256 = {
-    "integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem": "5550ede9fcfb90e63bdc6d5d1c3b5d46681f5708eeb8bb1f671b7b3e5b2d4a0d",
-    "integrations/brazil/vendor/gisbr/core/certs/funai_sectigo_ov_r36.pem": "505ca50c3930cedca888c4e1ebb0747cb485498547b60ea6bcd23cf78766aeeb",
-    "integrations/brazil/vendor/gisbr/core/certs/ipea_chain.pem": "d1ceb02b0c390afc7aeaf94e499a2079db68fad0bd2cfa1506940b6fe06d2429",
+    "integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem": (
+        "5550ede9fcfb90e63bdc6d5d1c3b5d46681f5708eeb8bb1f671b7b3e5b2d4a0d"
+    ),
+    "integrations/brazil/vendor/gisbr/core/certs/funai_sectigo_ov_r36.pem": (
+        "505ca50c3930cedca888c4e1ebb0747cb485498547b60ea6bcd23cf78766aeeb"
+    ),
+    "integrations/brazil/vendor/gisbr/core/certs/ipea_chain.pem": (
+        "d1ceb02b0c390afc7aeaf94e499a2079db68fad0bd2cfa1506940b6fe06d2429"
+    ),
 }
 PRIVATE_KEY_MARKERS = (
     b"PRIVATE KEY",
