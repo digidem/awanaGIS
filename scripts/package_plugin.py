@@ -29,6 +29,7 @@ APPROVED_RUNTIME_DIRS = frozenset({
     "resources",
     "i18n",
     "integrations",
+    "LICENSES",
 })
 
 EXCLUDED_DIR_NAMES = frozenset({

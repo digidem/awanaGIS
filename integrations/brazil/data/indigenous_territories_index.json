@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.0",
+  "source": "FUNAI / CGGEO public TI reference metadata (terrai_cod, legal stage, UF/municipality coverage)",
+  "note": "Index metadata only; full legal polygon geometry is obtained from a loaded FUNAI/geobr layer or an explicitly planned/approved load of funai_ti_boundaries / geobr_terras_indigenas. Cross-municipal and cross-UF TIs cannot be approximated by a single-municipality Recorte.",
+  "territories": [
+    {
+      "terrai_cod": "51901",
+      "name": "Yanomami",
+      "ufs": ["AM", "RR"],
+      "municipalities": ["1300409", "1303809", "1303601", "1400050", "1400159", "1400233", "1400308"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Yanomami, Ye'kwana",
+      "area_ha_approx": 9664975
+    },
+    {
+      "terrai_cod": "39901",
+      "name": "Raposa Serra do Sol",
+      "ufs": ["RR"],
+      "municipalities": ["1400407", "1400456", "1400704"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Ingarikó, Makuxi, Patamona, Taurepang, Wapichana",
+      "area_ha_approx": 1747464
+    },
+    {
+      "terrai_cod": "21901",
+      "name": "Kayapó",
+      "ufs": ["PA"],
+      "municipalities": ["1500859", "1502764", "1505437", "1507300"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Mebêngôkre (Kayapó)",
+      "area_ha_approx": 3284005
+    },
+    {
+      "terrai_cod": "01901",
+      "name": "Apyterewa",
+      "ufs": ["PA"],
+      "municipalities": ["1507300"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Parakanã",
+      "area_ha_approx": 773470
+    },
+    {
+      "terrai_cod": "52001",
+      "name": "Badjônkôre",
+      "ufs": ["PA"],
+      "municipalities": ["1502764", "1507300"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Kayapó",
+      "area_ha_approx": 221982
+    },
+    {
+      "terrai_cod": "07601",
+      "name": "Cachoeira Seca",
+      "ufs": ["PA"],
+      "municipalities": ["1500602", "1505650", "1508159"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Arara",
+      "area_ha_approx": 733688
+    },
+    {
+      "terrai_cod": "28201",
+      "name": "Munduruku",
+      "ufs": ["PA"],
+      "municipalities": ["1503754", "1503606"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Munduruku",
+      "area_ha_approx": 2381795
+    },
+    {
+      "terrai_cod": "49201",
+      "name": "Vale do Javari",
+      "ufs": ["AM"],
+      "municipalities": ["1300201", "1300607", "1301951", "1302108", "1303908"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Korubo, Kulina Pano, Marubo, Matis, Matsés, Kanamari, Tsohom-Djapá",
+      "area_ha_approx": 8544482
+    },
+    {
+      "terrai_cod": "50701",
+      "name": "Xingu",
+      "ufs": ["MT"],
+      "municipalities": ["5102678", "5103957", "5105606", "5106224", "5106802", "5107354"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Aweti, Ikpeng, Kaiabi, Kalapalo, Kamaiurá, Kisêdjê, Kuikuro, Matipu, Mehinako, Nahukuá, Naruvotu, Tapayuna, Trumai, Waujá, Yawalapiti, Yudjá",
+      "area_ha_approx": 2642003
+    },
+    {
+      "terrai_cod": "02201",
+      "name": "Araribóia",
+      "ufs": ["MA"],
+      "municipalities": ["2100550", "2100907", "2101400", "2102036", "2104800", "2111201"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Guajajara, Awá-Guajá",
+      "area_ha_approx": 413288
+    },
+    {
+      "terrai_cod": "01001",
+      "name": "Alto Rio Negro",
+      "ufs": ["AM"],
+      "municipalities": ["1302108", "1303809"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Tukano, Baniwa, Desana, Tariana, Hupda, Piratapuya, Wanano",
+      "area_ha_approx": 7999380
+    },
+    {
+      "terrai_cod": "01101",
+      "name": "Alto Rio Guamá",
+      "ufs": ["PA"],
+      "municipalities": ["1505064", "1505502", "1506583"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Tembé, Timbira, Ka'apor",
+      "area_ha_approx": 279897
+    },
+    {
+      "terrai_cod": "44201",
+      "name": "Tenharim Marmelos",
+      "ufs": ["AM"],
+      "municipalities": ["1301704", "1302504"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Tenharim",
+      "area_ha_approx": 497521
+    },
+    {
+      "terrai_cod": "14801",
+      "name": "Guarani do Aguapeú",
+      "ufs": ["SP"],
+      "municipalities": ["3531100"],
+      "legal_stage": "Regularizada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Guarani Mbya",
+      "area_ha_approx": 4369
+    },
+    {
+      "terrai_cod": "14901",
+      "name": "Guarani de Itariri",
+      "ufs": ["SP"],
+      "municipalities": ["3522802"],
+      "legal_stage": "Declarada",
+      "modality": "Tradicionalmente ocupada",
+      "etnia": "Guarani Mbya",
+      "area_ha_approx": 1212
+    }
+  ]
+}

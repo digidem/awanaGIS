@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -34,6 +35,8 @@ tracker=https://example.invalid/issues
 repository=https://example.invalid/repo
 icon=resources/icon.png
 """
+
+APPROVED_PEM = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca.pem"
 
 VALID_INIT = """def classFactory(iface):
     return None
@@ -120,6 +123,91 @@ class ArchiveCheckTests(unittest.TestCase):
             plugin_root = extract_dir / "awanagis"
             for excluded in ("tests", "ci", "docs", ".github", ".flake8", ".gitattributes", ".gitignore"):
                 self.assertFalse((plugin_root / excluded).exists(), f"{excluded} must not ship")
+
+    def _pem_report(self, name: str, data: bytes):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            zip_path = _build_valid_zip(
+                tmp_dir / "pem.zip",
+                extra_entries=[(name, data, stat.S_IFREG | 0o644)],
+            )
+            return check_plugin.validate_and_extract_archive(zip_path, tmp_dir / "extracted")
+
+    def test_cert_only_pem_at_approved_path_is_allowed(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(cert).hexdigest()}):
+            report = self._pem_report(APPROVED_PEM, cert)
+        self.assertTrue(report["ok"], report["blocking_errors"])
+
+    def test_pem_with_private_key_at_approved_path_is_rejected(self):
+        for marker in ("PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY"):
+            data = (
+                b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+                + f"-----BEGIN {marker}-----\nAAAA\n-----END {marker}-----\n".encode()
+            )
+            with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+                report = self._pem_report(APPROVED_PEM, data)
+            self.assertFalse(report["ok"], marker)
+            self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
+
+    def test_pem_without_certificate_block_is_rejected(self):
+        report = self._pem_report(APPROVED_PEM, b"not a certificate\n")
+        self.assertFalse(report["ok"])
+
+    def test_cert_only_pem_outside_approved_path_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for name in (
+            "awanagis/certs/ca.pem",
+            "awanagis/integrations/brazil/vendor/gisbr/core/ca.pem",
+            "awanagis/integrations/brazil/vendor/gisbr/core/certs/sub/ca.pem",
+        ):
+            report = self._pem_report(name, cert)
+            self.assertFalse(report["ok"], name)
+            self.assertTrue(any("key/certificate" in e for e in report["blocking_errors"]))
+
+    def test_pem_with_trailing_junk_or_secret_filename_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        base = "awanagis/integrations/brazil/vendor/gisbr/core/certs/"
+        for name, data in (
+            (base + "ca.pem", cert + b"password=hunter2\n"),
+            (base + "ca.pem", b"token=abc\n" + cert),
+            (base + "ca.pem", b"# note\n" + cert + b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"),
+            (base + "ca.pem", cert.replace(b"MIIB", b"MI!B")),
+            (base + "id_rsa.pem", cert),
+            (base + "id_ed25519.pem", cert),
+        ):
+            report = self._pem_report(name, data)
+            self.assertFalse(report["ok"], name)
+
+    def test_multi_cert_pem_at_approved_path_is_allowed(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        data = b"# roots\n" + cert + b"\n# two\n" + cert
+        report = self._pem_report(APPROVED_PEM, data)
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("review and update the pin" in e for e in report["blocking_errors"]))
+        with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+            report = self._pem_report(APPROVED_PEM, data)
+        self.assertTrue(report["ok"], report["blocking_errors"])
+
+    def test_pinned_pem_still_checks_markers_and_grammar(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for data in (b"# PRIVATE KEY\n" + cert, cert + b"junk\n"):
+            with patch.dict(check_plugin.APPROVED_CERT_SHA256, {APPROVED_PEM.removeprefix("awanagis/"): hashlib.sha256(data).hexdigest()}):
+                self.assertFalse(self._pem_report(APPROVED_PEM, data)["ok"])
+
+    def test_changed_pinned_pem_is_rejected(self):
+        name = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem"
+        data = (ROOT / name.removeprefix("awanagis/")).read_bytes() + b"# changed\n"
+        report = self._pem_report(name, data)
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("review and update the pin" in e for e in report["blocking_errors"]))
+
+    def test_key_file_at_approved_cert_path_is_rejected(self):
+        cert = b"-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+        for suffix in (".key", ".p12", ".pfx", ".kdbx"):
+            name = "awanagis/integrations/brazil/vendor/gisbr/core/certs/ca" + suffix
+            report = self._pem_report(name, cert)
+            self.assertFalse(report["ok"], name)
 
     def test_missing_qm_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

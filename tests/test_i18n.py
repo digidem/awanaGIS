@@ -109,10 +109,13 @@ class CatalogTests(unittest.TestCase):
             (context.findtext("name"), message.findtext("source"))
             for context in tree.findall("context")
             for message in context.findall("message")
+            # Vendored GISBR strings use self.tr() wrappers, which this
+            # literal-call scan cannot see; check_plugin.py i18n covers them.
+            if "integrations/brazil/vendor/" not in (message.find("location").get("filename") or "")
         }
         literals = set()
         sources = [ROOT / "plugin.py"]
-        for folder in ("gui", "core", "backends"):
+        for folder in ("gui", "core", "backends", "integrations/brazil"):
             sources.extend((ROOT / folder).glob("*.py"))
         for source in sources:
             for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):

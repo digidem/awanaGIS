@@ -21,6 +21,14 @@ SOURCES = ../plugin.py \
     ../gui/onboarding_page.py \
     ../gui/session_popup.py \
     ../gui/settings_dialog.py \
-    ../gui/stats_widget.py
+    ../gui/stats_widget.py \
+    ../integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py \
+    ../integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py \
+    ../integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py \
+    ../integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py \
+    ../integrations/brazil/vendor/gisbr/algorithms/join_censo.py \
+    ../integrations/brazil/vendor/gisbr/core/catalog.py \
+    ../integrations/brazil/vendor/gisbr/core/diagnostico.py \
+    ../integrations/brazil/vendor/gisbr/provider.py
 
 TRANSLATIONS = awanagis_pt_BR.ts

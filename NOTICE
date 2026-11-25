@@ -1,6 +1,6 @@
 AwanaGIS
 Copyright (C) 2026 Awana Digital
-Licensed under the GNU General Public License, version 2 or (at your option) any later version (GPL-2.0-or-later).
+Combined distribution licensed under the GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later).
 
 This product is an independent derivative of AgenticGIS:
   Copyright (C) 2026 Muhammad Alichamdan <malichamdan@gmail.com>
@@ -13,10 +13,13 @@ namespaces, opt-in migration helpers, draft icon proposal, and packaging are
 maintained under Awana Digital while preserving upstream authorship and license
 obligations.
 
-Note on planned integrations:
-  Future integrations from GISBR (GPL-3.0, https://github.com/d-camargo/gisbr)
-  and CoMapeo SMP Plugin (MIT, https://github.com/digidem/qgis-smp-plugin) are
-  NOT bundled in this branding-only baseline. When GPL-3.0 code is later
-  combined into a distributable artifact, the combined distribution must comply
-  with GPL-3.0 (compatible with AgenticGIS's GPL-2.0-or-later grant) and
-  preserve all upstream notices.
+Bundled third-party work:
+  GISBR (Brazilian geospatial data catalog and Processing algorithms, adapted in
+  integrations/brazil/vendor/gisbr/)
+    Repository: https://github.com/d-camargo/gisbr
+    Pinned SHA: 06d84dfab9942e4e840637bb8d8f96af173330ad
+    License: GPL-3.0 (see LICENSES/GPL-3.0.txt and integrations/brazil/VENDOR_ATTRIBUTION.md)
+  AgenticGIS is GPL-2.0-or-later (see LICENSES/GPL-2.0.txt), which permits the
+  combined distribution under GPL-3.0-or-later.
+
+See LICENSE, THIRD_PARTY_LICENSES.md, and resources/ASSET_PROVENANCE.md for complete notices and asset provenance.

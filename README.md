@@ -14,6 +14,7 @@
 - **Edit fields** — `field_calculator` adds calculated fields from QGIS expressions (permanent or virtual).
 - **Layouts & export** — `create_layout` builds a print layout with map items; `export_layout` exports to PDF or PNG.
 - **Remote sensing** — drive Google Earth Engine for satellite imagery, spectral indices, cloud-masked mosaics, and land-cover work (requires the optional `ee_plugin` installed and authenticated separately).
+- **Brazilian & Indigenous public datasets (`br_*`, `awanagis_brazil`)** — search 90+ GISBR and curated Indigenous/environmental sources (`br_search_sources`, `br_source_details`), resolve IBGE municipalities and named Indigenous territories (`br_resolve_area`), plan bounded polygon/bbox clips (`br_plan_load`), and load layers with provenance (`br_execute_load`). Strictly enforces CARE/governance restrictions: blocks `mapi_isolated_peoples` isolated-peoples records and holds exact village/locality points as discovery-only.
 - **Fetch** — pull a public URL or API endpoint with `web_fetch` when a task needs outside reference data (gated behind explicit user permission).
 
 ## How it works
@@ -41,6 +42,11 @@ QGIS session
       field_calculator          add calculated fields from QGIS expressions
       create_layout             print layout with map items
       export_layout             export layout to PDF / PNG
+      br_search_sources         search GISBR + curated Indigenous catalog
+      br_source_details         inspect source metadata, constraints & provenance
+      br_resolve_area           resolve IBGE municipality, named TI, or project layer
+      br_plan_load              build deterministic bounded load plan
+      br_execute_load           cancellable download/clip & layer registration
       web_fetch                 pull a public URL or API response
       ask_user                  ask the user a clarifying question
 ```
@@ -206,12 +212,12 @@ AWANAGIS_REQUIRE_REAL_SCANNERS=1 python3 -m unittest tests/test_ci_checks.py -v
 3. The workflow validates tag/metadata parity (`ci/check_plugin.py release-meta`), calls `qgis-ci.yml` once to package and test the commit, verifies the downloaded artifact matches the tested SHA-256 and commit SHA, attaches `awanagis-<version>.zip` (containing the single `awanagis/` root folder), `SHA256SUMS.txt`, `package-manifest.json`, and a GitHub build provenance attestation (`gh attestation verify awanagis-<version>.zip -R digidem/awanaGIS`). Keep a repository tag ruleset on `v*` blocking tag updates and deletions (and a `release` environment approval/branch rule) so a release tag cannot be moved to another commit during publishing.
 4. Upload `awanagis-<version>.zip` from the GitHub Release to `plugins.qgis.org` manually (AwanaGIS is published under its own plugins.qgis.org listing).
 
-## Roadmap & Planned Integrations
+## Roadmap & Integrated Capabilities
 
-This branding-only baseline preserves all core QGIS, Processing, PyQGIS, GEE, CLI, MCP, and PT-BR features. Dedicated feature lanes (such as Brazilian/Indigenous public-data discovery `br_*` and CoMapeo offline map `.smp` export `smp_*`) are developed separately and are **not** bundled in this baseline release candidate.
+Brazilian/Indigenous public-data discovery (`br_*`) is now included, bundling adapted [GISBR](https://github.com/d-camargo/gisbr) (`GPL-3.0`, pinned `06d84dfab9942e4e840637bb8d8f96af173330ad`) under the namespaced Processing provider `awanagis_brazil`, merged with curated FUNAI/DSEI/INPE/IBGE/ISA/Mapi/RAISG/MapBiomas governance adapters. CoMapeo offline map `.smp` export (`smp_*`) is developed separately and is not bundled here.
 
 ## Attribution & License
 
-- **License:** GNU General Public License v2.0 or later (`GPL-2.0-or-later`), see [`LICENSE`](LICENSE).
-- **Upstream attribution:** Derived from [AgenticGIS](https://github.com/ultramenid/AgenticGIS) by Muhammad Alichamdan (`1e4f70b` / `v0.4.6` + PT-BR localization `51c8a79`). See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
+- **License:** GNU General Public License v3.0 or later (`GPL-3.0-or-later`), see [`LICENSE`](LICENSE) and [`LICENSES/`](LICENSES/). Derived GPL-2.0-or-later code from AgenticGIS is combined with GPL-3.0 GISBR modules.
+- **Upstream attribution:** Derived from [AgenticGIS](https://github.com/ultramenid/AgenticGIS) by Muhammad Alichamdan (`1e4f70b` / `v0.4.6` + PT-BR localization `51c8a79`). Adapted [GISBR](https://github.com/d-camargo/gisbr) (`06d84df`, `GPL-3.0`). See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md).
 - **Brand & visual identity:** Uses Awana Digital's official color palette, typography roles (`gui/brand.py`, `gui/theme.py`), and resized/compressed official AwanaGIS icon (`resources/icon.png`, `resources/icon.svg`; see [`resources/ASSET_PROVENANCE.md`](resources/ASSET_PROVENANCE.md)).

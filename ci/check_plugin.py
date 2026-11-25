@@ -63,6 +63,26 @@ PRIVATE_KEY_NAMES = frozenset({
     "id_ecdsa",
 })
 PRIVATE_KEY_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx")
+# Public CA bundles shipped with the bundled GISBR integration are the only
+# approved .pem files; they must be certificate-only (no key material).
+APPROVED_CERT_PREFIX = ("integrations", "brazil", "vendor", "gisbr", "core", "certs")
+APPROVED_CERT_SHA256 = {
+    "integrations/brazil/vendor/gisbr/core/certs/ca_roots.pem": (
+        "5550ede9fcfb90e63bdc6d5d1c3b5d46681f5708eeb8bb1f671b7b3e5b2d4a0d"
+    ),
+    "integrations/brazil/vendor/gisbr/core/certs/funai_sectigo_ov_r36.pem": (
+        "505ca50c3930cedca888c4e1ebb0747cb485498547b60ea6bcd23cf78766aeeb"
+    ),
+    "integrations/brazil/vendor/gisbr/core/certs/ipea_chain.pem": (
+        "d1ceb02b0c390afc7aeaf94e499a2079db68fad0bd2cfa1506940b6fe06d2429"
+    ),
+}
+PRIVATE_KEY_MARKERS = (
+    b"PRIVATE KEY",
+    b"BEGIN ENCRYPTED",
+    b"BEGIN RSA",
+    b"BEGIN EC",
+)
 FORBIDDEN_PATH_COMPONENTS = frozenset({
     ".git",
     ".github",
@@ -101,10 +121,16 @@ OPTIONAL_GUARDED_IMPORTS = frozenset({
     "PIL",
     "ee",
     "ee_plugin",
+    "pyarrow",
 })
 CALLER_GUARDED_OPTIONAL_IMPORTS = frozenset({
     ("core/toolkit.py", "_ensure_gee_initialized", "ee"),
     ("core/toolkit.py", "_burn_labels_into_gif", "PIL"),
+    # Bundled GISBR: only reached after capabilities.parquet_available()
+    # confirmed pyarrow imports, or with a pyarrow table already in hand.
+    ("integrations/brazil/vendor/gisbr/core/loader_v2.py", "_arrow_type_to_qvariant", "pyarrow"),
+    ("integrations/brazil/vendor/gisbr/core/loader_v2.py", "_load_with_pyarrow", "pyarrow"),
+    ("integrations/brazil/vendor/gisbr/core/parquet_filtro.py", "mascara", "pyarrow"),
 })
 POST_PY39_STDLIB_MODULES = frozenset({
     "_android_support",
@@ -179,8 +205,34 @@ def _validate_member_path(raw_name: str, is_dir: bool) -> tuple[str | None, str 
     return trimmed, None
 
 
-def _check_forbidden_member(rel_parts: list[str], raw_name: str) -> str | None:
-    """Return a blocking reason if rel_parts under awanagis/ is a forbidden leak."""
+# Whole-file grammar: CERTIFICATE blocks (base64 body), whitespace, and
+# whole-line "#" comments (the shipped ca_roots.pem documents each root).
+_CERT_BLOCK = (
+    rb"-----BEGIN CERTIFICATE-----[ \t]*\r?\n"
+    rb"(?:[A-Za-z0-9+/=]+[ \t]*\r?\n)+"
+    rb"-----END CERTIFICATE-----[ \t]*(?:\r?\n|\Z)"
+)
+_CERT_ONLY_RE = re.compile(
+    rb"(?:\s|#[^\r\n]*(?:\r?\n|\Z))*(?:" + _CERT_BLOCK
+    + rb"(?:\s|#[^\r\n]*(?:\r?\n|\Z))*)+"
+)
+
+
+def _is_cert_only_bundle(data: bytes) -> bool:
+    """True when *data* holds certificates and no private-key material."""
+    return not any(marker in data for marker in PRIVATE_KEY_MARKERS) and _CERT_ONLY_RE.fullmatch(data) is not None
+
+
+def _check_forbidden_member(
+    rel_parts: list[str],
+    raw_name: str,
+    member_bytes: bytes | None = None,
+) -> str | None:
+    """Return a blocking reason if rel_parts under awanagis/ is a forbidden leak.
+
+    A ``.pem`` is allowed only under the approved GISBR certs directory and
+    only when *member_bytes* is a certificate-only bundle.
+    """
     basename = rel_parts[-1]
     lower_name = basename.lower()
     if any(part in FORBIDDEN_PATH_COMPONENTS for part in rel_parts):
@@ -191,11 +243,22 @@ def _check_forbidden_member(rel_parts: list[str], raw_name: str) -> str | None:
         return f"Forbidden test artifact in archive: {raw_name}"
     if lower_name.endswith(FORBIDDEN_SUFFIXES):
         return f"Forbidden compiled/database artifact in archive: {raw_name}"
-    if (
+    secret_name = (
         lower_name in PRIVATE_KEY_NAMES
-        or lower_name.startswith("id_rsa.")
-        or lower_name.endswith(PRIVATE_KEY_SUFFIXES)
+        or any(lower_name.startswith(n + ".") for n in PRIVATE_KEY_NAMES)
+    )
+    if (
+        not secret_name
+        and lower_name.endswith(".pem")
+        and tuple(rel_parts[:-1]) == APPROVED_CERT_PREFIX
+        and member_bytes is not None
     ):
+        expected_hash = APPROVED_CERT_SHA256.get("/".join(rel_parts))
+        if expected_hash != hashlib.sha256(member_bytes).hexdigest():
+            return f"Unrecognized or changed certificate bundle: {raw_name}; review and update the pin"
+        if _is_cert_only_bundle(member_bytes):
+            return None
+    if secret_name or lower_name.endswith(PRIVATE_KEY_SUFFIXES):
         return f"Forbidden key/certificate file in archive: {raw_name}"
     if lower_name.endswith(NESTED_ARCHIVE_SUFFIXES):
         return f"Forbidden nested archive in package: {raw_name}"
@@ -459,7 +522,14 @@ def validate_and_extract_archive(zip_path: Path, extract_to: Path) -> dict:
 
             rel_parts = norm_path.split("/")[1:]
             if rel_parts:
-                leak_err = _check_forbidden_member(rel_parts, info.filename)
+                pem_bytes = None
+                if (
+                    not is_dir
+                    and info.filename.lower().endswith(".pem")
+                    and tuple(rel_parts[:-1]) == APPROVED_CERT_PREFIX
+                ):
+                    pem_bytes = zf.read(info)
+                leak_err = _check_forbidden_member(rel_parts, info.filename, pem_bytes)
                 if leak_err:
                     report["blocking_errors"].append(leak_err)
                     continue

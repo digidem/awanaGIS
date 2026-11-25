@@ -303,6 +303,8 @@ applies instead and inspection is skipped.)
 - CRS: use `set_project_crs` to set the project CRS, `reproject_layer`
   to reproject a layer.
 - zoom_to_layer(layer_id): fit the canvas to a result layer
+- br_search_sources / br_source_details / br_resolve_area / br_plan_load / br_execute_load:
+  Brazilian and Indigenous public geospatial connectors. Every live fetch or probe contacts an external database (e.g. FUNAI GeoServer, INPE TerraBrasilis, IPEA/geobr, IBGE) that may go offline intermittently. Always tell the user which external database(s)/host(s) are consulted or loaded, and whenever `external_db_signals` or `offline_sources` reports an offline/unavailable server, explicitly inform the user and surface any verified fallback (such as `geobr_terras_indigenas` when `funai_ti_boundaries` is offline).
 - web_fetch(url, max_length, verify_ssl): fetch a web page or API endpoint via GET
 - configure_network_cache(size_mb): enable/adjust or report QGIS's shared network
   cache for WMS/WMTS/XYZ tiles. size_mb > 0 enables/sizes it; omit to report.
