@@ -4,7 +4,7 @@ qgisMinimumVersion=3.22
 qgisMaximumVersion=4.99
 description=An in-QGIS conversational geospatial assistant by Awana Digital that operates QGIS via PyQGIS and Processing, with Brazilian/Indigenous public data discovery tools. Connect with an API key, compatible endpoint, or local CLI agent.
 about=AwanaGIS adds a chat dock to QGIS. Type a request in natural language and an LLM agent carries it out by generating and running PyQGIS code, giving it access to QGIS, Processing, project layers, installed plugins, and Brazilian/Indigenous public spatial data tools (br_*, bundled GISBR GPL-3.0 plus curated FUNAI/DSEI/INPE adapters). Requirements: QGIS 3.22 or newer (including QGIS 4) and an LLM connection using a provider API key, compatible custom endpoint, or installed local CLI agent. Google Earth Engine features are optional and require the Google Earth Engine QGIS plugin to be installed and authenticated separately. Derived from AgenticGIS by Muhammad Alichamdan (GPL-2.0-or-later), bundling adapted GISBR modules (GPL-3.0); combined distribution under GPL-3.0-or-later.
-version=1.0.1
+version=1.1.0
 author=Awana Digital (derived from AgenticGIS by Muhammad Alichamdan)
 email=luandro@digital-democracy.org
 tracker=https://github.com/digidem/awanaGIS/issues
@@ -12,7 +12,8 @@ repository=https://github.com/digidem/awanaGIS
 homepage=https://github.com/digidem/awanaGIS#readme
 license=GPL-3.0-or-later
 tags=ai,agent,chat,llm,automation,pyqgis,assistant,awanagis,brazil,indigenous,gisbr
-changelog=1.0.1 - Onboarding: explicit provider setup screen when no AI provider is connected; Tinfoil (private inference) is the default provider; automatic connection test and model selection.
+changelog=1.1.0 - Brazilian and Indigenous public spatial data tools (br_*): bundled GISBR runtime, curated FUNAI/DSEI/INPE sources with strict TLS, offline-source signalling and a Processing provider; combined work now under GPL-3.0-or-later.
+    1.0.1 - Onboarding: explicit provider setup screen when no AI provider is connected; Tinfoil (private inference) is the default provider; automatic connection test and model selection.
     1.0.0 - First AwanaGIS release by Awana Digital, derived from AgenticGIS 0.4.6: Awana Digital brand, isolated AwanaGIS settings, sessions and MCP bridge (default port 7318), opt-in import from AgenticGIS, Brazilian Portuguese translation, QGIS 3 and QGIS 4 (Qt 6) support.
 experimental=False
 deprecated=False
