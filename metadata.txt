@@ -12,6 +12,7 @@ repository=https://github.com/digidem/awanaGIS
 homepage=https://github.com/digidem/awanaGIS#readme
 license=GPL-2.0-or-later
 tags=ai,agent,chat,llm,automation,pyqgis,assistant,awanagis
+changelog=1.0.0 - First AwanaGIS release by Awana Digital, derived from AgenticGIS 0.4.6: Awana Digital brand, isolated AwanaGIS settings, sessions and MCP bridge (default port 7318), opt-in import from AgenticGIS, Brazilian Portuguese translation, QGIS 3 and QGIS 4 (Qt 6) support.
 experimental=False
 deprecated=False
 hasProcessingProvider=no
