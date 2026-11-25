@@ -819,6 +819,21 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>executar uma expressão do Earth Engine e gerar um GIF animado da sequência temporal</translation>
         </message>
         <message>
+            <location filename="../core/toolkit.py" line="1215" />
+            <source>download Brazilian geospatial data ({sources}) from external database(s) [{hosts}] and write to {dest}</source>
+            <translation>baixar dados geoespaciais brasileiros ({sources}) de banco(s) de dados externo(s) [{hosts}] e gravar em {dest}</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1245" />
+            <source>probe external database metadata ({sources}) at [{hosts}]</source>
+            <translation>verificar metadados de banco(s) de dados externo(s) ({sources}) em [{hosts}]</translation>
+        </message>
+        <message>
+            <location filename="../core/toolkit.py" line="1251" />
+            <source>query IBGE Localidades API for municipality disambiguation</source>
+            <translation>consultar a API de Localidades do IBGE para desambiguação de município</translation>
+        </message>
+        <message>
             <location filename="../core/toolkit.py" line="1226" />
             <source>Allow once</source>
             <translation>Permitir uma vez</translation>
@@ -1842,6 +1857,31 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>Exportar layout</translation>
         </message>
         <message>
+            <location filename="../gui/formatting.py" line="104" />
+            <source>Search Brazilian sources</source>
+            <translation>Buscar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="105" />
+            <source>Inspect Brazilian sources</source>
+            <translation>Inspecionar fontes brasileiras</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="106" />
+            <source>Resolve Brazilian area</source>
+            <translation>Resolver área brasileira</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="107" />
+            <source>Plan Brazilian data load</source>
+            <translation>Planejar carga de dados brasileiros</translation>
+        </message>
+        <message>
+            <location filename="../gui/formatting.py" line="108" />
+            <source>Load Brazilian data</source>
+            <translation>Carregar dados brasileiros</translation>
+        </message>
+        <message>
             <location filename="../gui/formatting.py" line="114" />
             <source>Tool</source>
             <translation>Ferramenta</translation>
@@ -1928,6 +1968,732 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
         <message>
             <source>Tinfoil is the default provider because it runs models in secure enclaves, so your prompts stay private. Paste your API key below to connect. You can pick another provider at any time.</source>
             <translation>A Tinfoil é o provedor padrão porque executa os modelos em enclaves seguros, mantendo seus prompts privados. Cole sua chave de API abaixo para conectar. Você pode escolher outro provedor a qualquer momento.</translation>
+        </message>
+    </context>
+    <context>
+        <name>BaseReadAlgorithm</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="126" />
+            <source>(catalog unavailable)</source>
+            <translation>(catálogo indisponível)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="129" />
+            <source>Year</source>
+            <translation>Ano</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="138" />
+            <source>Code / abbreviation ("all", "MG", 31, 3106200)</source>
+            <translation>Código / sigla ("all", "MG", 31, 3106200)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="146" />
+            <source>Simplified geometry (faster rendering)</source>
+            <translation>Geometria simplificada (renderização mais rápida)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="153" />
+            <source>Output</source>
+            <translation>Saída</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="161" />
+            <source>geobr catalog unavailable. Verify your internet connection (IPEA metadata / GitHub mirror).</source>
+            <translation>Catálogo do geobr indisponível. Verifique sua conexão com a internet (metadados do IPEA / espelho no GitHub).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="187" />
+            <source>{geo} {year} | simplified={simplified} | {count} file(s) to download</source>
+            <translation>{geo} {year} | simplificado={simplified} | {count} arquivo(s) para baixar</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="203" />
+            <source>Download failed for {url}: {error}</source>
+            <translation>Falha ao baixar {url}: {error}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="212" />
+            <source>No layers loaded.</source>
+            <translation>Nenhuma camada carregada.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="239" />
+            <source>Could not create output.</source>
+            <translation>Não foi possível criar a saída.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="250" />
+            <source>Completed: {count} feature(s).</source>
+            <translation>Concluído: {count} feição(ões).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="261" />
+            <source>Geographies (GPKG / v1.7.0)</source>
+            <translation>Geografias (GPKG / v1.7.0)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="267" />
+            <source>Downloads official spatial data of Brazil via geobr (IPEA), legacy GPKG backend (v1.7.0), in SIRGAS 2000 / EPSG:4674.
+
+</source>
+            <translation>Baixa dados espaciais oficiais do Brasil via geobr (IPEA), backend GPKG legado (v1.7.0), em SIRGAS 2000 / EPSG:4674.
+
+</translation>
+        </message>
+    </context>
+    <context>
+        <name>BaseReadV2Algorithm</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="65" />
+            <source>(catalog v2 unavailable)</source>
+            <translation>(catálogo v2 indisponível)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="66" />
+            <source>Year</source>
+            <translation>Ano</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="73" />
+            <source>Code / abbreviation ("all", "MG", 31, 3106200)</source>
+            <translation>Código / sigla ("all", "MG", 31, 3106200)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="79" />
+            <source>Simplified geometry</source>
+            <translation>Geometria simplificada</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="84" />
+            <source>Output</source>
+            <translation>Saída</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="126" />
+            <source>Parquet backend: {backend}</source>
+            <translation>Backend Parquet: {backend}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="130" />
+            <source>v2 catalog unavailable (geobr_prep_data releases on GitHub).</source>
+            <translation>Catálogo v2 indisponível (releases do geobr_prep_data no GitHub).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="146" />
+            <source>{geo} {year} | simplified={simplified} | {count} file(s)</source>
+            <translation>{geo} {year} | simplificado={simplified} | {count} arquivo(s)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="162" />
+            <source>Download failed for {url}: {error}</source>
+            <translation>Falha ao baixar {url}: {error}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="171" />
+            <source>No layers loaded.</source>
+            <translation>Nenhuma camada carregada.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="184" />
+            <source>Filter: {expr}</source>
+            <translation>Filtro: {expr}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="195" />
+            <source>Could not create output.</source>
+            <translation>Não foi possível criar a saída.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="211" />
+            <source>Completed: {count} feature(s).</source>
+            <translation>Concluído: {count} feição(ões).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="224" />
+            <source>Geographies (Parquet / v2.0.0)</source>
+            <translation>Geografias (Parquet / v2.0.0)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_v2_algorithm.py" line="230" />
+            <source>Parquet backend (v2.0.0): newer geobr catalog (ipea/geobr_prep_data), in SIRGAS 2000 / EPSG:4674. Reads via native GDAL Parquet driver OR pyarrow. National files (filtered by code and post-download).
+
+</source>
+            <translation>Backend Parquet (v2.0.0): catálogo geobr mais recente (ipea/geobr_prep_data), em SIRGAS 2000 / EPSG:4674. Lê pelo driver Parquet nativo do GDAL OU pelo pyarrow. Arquivos nacionais (filtrados por código após o download).
+
+</translation>
+        </message>
+    </context>
+    <context>
+        <name>Catalog</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/catalog.py" line="51" />
+            <source>Could not remove the cached metadata file {path}: {error}</source>
+            <translation>Não foi possível remover o arquivo de metadados em cache {path}: {error}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/catalog.py" line="66" />
+            <source>Offline metadata copy used as fallback. Data might be outdated. (Error: {error})</source>
+            <translation>Cópia offline dos metadados usada como alternativa. Os dados podem estar desatualizados. (Erro: {error})</translation>
+        </message>
+    </context>
+    <context>
+        <name>ExportPoiGmns</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="42" />
+            <source>Export POIs to GMNS / grid2demand poi.csv</source>
+            <translation>Exportar POIs para GMNS / poi.csv do grid2demand</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="45" />
+            <source>Diagnóstico</source>
+            <translation>Diagnóstico</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="51" />
+            <source>Exports an osm_pois_* layer to a poi.csv file with the exact column layout produced by osm2gmns, which grid2demand reads via load_network(). Columns: name, poi_id, osm_way_id, osm_relation_id, building, amenity, way, geometry, centroid, area, area_ft2 (area in m2, area_ft2 in square feet).</source>
+            <translation>Exporta uma camada osm_pois_* para um arquivo poi.csv com o mesmo layout de colunas produzido pelo osm2gmns, que o grid2demand lê via load_network(). Colunas: name, poi_id, osm_way_id, osm_relation_id, building, amenity, way, geometry, centroid, area, area_ft2 (area em m², area_ft2 em pés quadrados).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="60" />
+            <source>POI layer (osm_pois)</source>
+            <translation>Camada de POIs (osm_pois)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="66" />
+            <source>poi.csv (GMNS)</source>
+            <translation>poi.csv (GMNS)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="81" />
+            <source>Invalid output file path.</source>
+            <translation>Caminho do arquivo de saída inválido.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="86" />
+            <source>Missing required field(s): {}. The input must be an osm_pois_* layer from the GisBR diagnostic.</source>
+            <translation>Campo(s) obrigatório(s) ausente(s): {}. A entrada deve ser uma camada osm_pois_* do diagnóstico do GisBR.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="92" />
+            <source>Exporting {} POIs to {}...</source>
+            <translation>Exportando {} POIs para {}...</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/export_poi_gmns.py" line="111" />
+            <source>Done: {} rows written to {}.</source>
+            <translation>Concluído: {} linhas gravadas em {}.</translation>
+        </message>
+    </context>
+    <context>
+        <name>GeobrProvider</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/provider.py" line="23" />
+            <source>AwanaGIS Brazil — Brazilian spatial data (derived from GISBR, IBGE/IPEA)</source>
+            <translation>AwanaGIS Brasil — dados espaciais brasileiros (derivado do GISBR, IBGE/IPEA)</translation>
+        </message>
+    </context>
+    <context>
+        <name>GisBR</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="24" />
+            <source>Country (Brazil)</source>
+            <translation>País (Brasil)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="25" />
+            <source>Large regions</source>
+            <translation>Grandes regiões</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="26" />
+            <source>States (UF)</source>
+            <translation>Estados (UF)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="27" />
+            <source>Mesoregions</source>
+            <translation>Mesorregiões</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="28" />
+            <source>Microregions</source>
+            <translation>Microrregiões</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="29" />
+            <source>Immediate regions</source>
+            <translation>Regiões imediatas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="30" />
+            <source>Intermediate regions</source>
+            <translation>Regiões intermediárias</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="31" />
+            <source>Municipalities</source>
+            <translation>Municípios</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="32" />
+            <source>Municipal seats</source>
+            <translation>Sedes municipais</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="33" />
+            <source>Census tracts</source>
+            <translation>Setores censitários</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="34" />
+            <source>Weighting areas</source>
+            <translation>Áreas de ponderação</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="35" />
+            <source>Statistical grid</source>
+            <translation>Grade estatística</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="36" />
+            <source>Neighborhoods</source>
+            <translation>Bairros</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="37" />
+            <source>Metropolitan areas</source>
+            <translation>Áreas metropolitanas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="38" />
+            <source>Urbanized areas</source>
+            <translation>Áreas urbanizadas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="39" />
+            <source>Population arrangements</source>
+            <translation>Arranjos populacionais</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="40" />
+            <source>Biomes</source>
+            <translation>Biomas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="41" />
+            <source>Legal Amazon</source>
+            <translation>Amazônia Legal</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="42" />
+            <source>Semiarid</source>
+            <translation>Semiárido</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="43" />
+            <source>Conservation units</source>
+            <translation>Unidades de conservação</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="44" />
+            <source>Indigenous lands</source>
+            <translation>Terras indígenas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="45" />
+            <source>Disaster risk areas</source>
+            <translation>Áreas de risco de desastre</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="46" />
+            <source>Health regions</source>
+            <translation>Regiões de saúde</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="47" />
+            <source>Health facilities</source>
+            <translation>Estabelecimentos de saúde</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="48" />
+            <source>Schools</source>
+            <translation>Escolas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="50" />
+            <source>Favelas / communities</source>
+            <translation>Favelas / comunidades</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="51" />
+            <source>Polling places</source>
+            <translation>Locais de votação</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="52" />
+            <source>Quilombola lands</source>
+            <translation>Terras quilombolas</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="56" />
+            <source>National boundary.</source>
+            <translation>Limite nacional.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="57" />
+            <source>5 large regions of Brazil.</source>
+            <translation>As 5 grandes regiões do Brasil.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="58" />
+            <source>States / Federative Units. Filter by abbreviation ("MG"), code (31) or "all".</source>
+            <translation>Estados / Unidades da Federação. Filtre por sigla ("MG"), código (31) ou "all".</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="59" />
+            <source>Mesoregions. Filter by state (abbreviation/code) or mesoregion code.</source>
+            <translation>Mesorregiões. Filtre por estado (sigla/código) ou código da mesorregião.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="60" />
+            <source>Microregions. Filter by state (abbreviation/code) or microregion code.</source>
+            <translation>Microrregiões. Filtre por estado (sigla/código) ou código da microrregião.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="61" />
+            <source>Immediate geographic regions (IBGE).</source>
+            <translation>Regiões geográficas imediatas (IBGE).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="62" />
+            <source>Intermediate geographic regions (IBGE).</source>
+            <translation>Regiões geográficas intermediárias (IBGE).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="63" />
+            <source>Brazilian municipalities. Filter by state (abbreviation/code) or 7-digit municipality code.</source>
+            <translation>Municípios brasileiros. Filtre por estado (sigla/código) ou código de município de 7 dígitos.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="64" />
+            <source>Municipal seats (points).</source>
+            <translation>Sedes municipais (pontos).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="65" />
+            <source>Census tracts. Filter by state (abbreviation/code) or 7-digit municipality code.</source>
+            <translation>Setores censitários. Filtre por estado (sigla/código) ou código de município de 7 dígitos.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="66" />
+            <source>Weighting areas of the Census.</source>
+            <translation>Áreas de ponderação do Censo.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="67" />
+            <source>Statistical grid (IBGE).</source>
+            <translation>Grade estatística (IBGE).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="68" />
+            <source>Neighborhoods. Filter by 7-digit municipality code.</source>
+            <translation>Bairros. Filtre por código de município de 7 dígitos.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="69" />
+            <source>Metropolitan areas.</source>
+            <translation>Áreas metropolitanas.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="70" />
+            <source>Urbanized areas (IBGE).</source>
+            <translation>Áreas urbanizadas (IBGE).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="71" />
+            <source>Population arrangements (IBGE).</source>
+            <translation>Arranjos populacionais (IBGE).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="72" />
+            <source>Brazilian biomes.</source>
+            <translation>Biomas brasileiros.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="73" />
+            <source>Legal Amazon boundary.</source>
+            <translation>Limite da Amazônia Legal.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="74" />
+            <source>Semiarid boundary.</source>
+            <translation>Limite do Semiárido.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="75" />
+            <source>Conservation units (MMA).</source>
+            <translation>Unidades de conservação (MMA).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="76" />
+            <source>Indigenous lands (FUNAI).</source>
+            <translation>Terras indígenas (FUNAI).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="77" />
+            <source>Disaster risk areas.</source>
+            <translation>Áreas de risco de desastre.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="78" />
+            <source>Health regions (DataSUS).</source>
+            <translation>Regiões de saúde (DataSUS).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="79" />
+            <source>Health facilities (CNES, points).</source>
+            <translation>Estabelecimentos de saúde (CNES, pontos).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="80" />
+            <source>Schools (INEP, points). Filter by 7-digit municipality code.</source>
+            <translation>Escolas (INEP, pontos). Filtre por código de município de 7 dígitos.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="82" />
+            <source>Favelas and urban communities (IBGE 2022). v2 only.</source>
+            <translation>Favelas e comunidades urbanas (IBGE 2022). Somente v2.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="83" />
+            <source>Polling places (TSE, points). v2 only.</source>
+            <translation>Locais de votação (TSE, pontos). Somente v2.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/base_read_algorithm.py" line="84" />
+            <source>Quilombola territories (INCRA). v2 only.</source>
+            <translation>Territórios quilombolas (INCRA). Somente v2.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="249" />
+            <source>file not found in the manual downloads folder ({folder}); this dataset requires a gov.br login, so download it from {url} and save it in that folder</source>
+            <translation>arquivo não encontrado na pasta de downloads manuais ({folder}); este conjunto de dados exige login no gov.br, então baixe-o em {url} e salve-o nessa pasta</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="255" />
+            <source>file not found in the manual downloads folder ({folder}); download the dataset from its official portal and save it in that folder</source>
+            <translation>arquivo não encontrado na pasta de downloads manuais ({folder}); baixe o conjunto de dados em seu portal oficial e salve-o nessa pasta</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="270" />
+            <source>source unavailable ({reason}); see official portal at {url}</source>
+            <translation>fonte indisponível ({reason}); consulte o portal oficial em {url}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="274" />
+            <source>source unavailable ({reason})</source>
+            <translation>fonte indisponível ({reason})</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="361" />
+            <source>the pre-built OSM base for metropolitan regions ({tag}) has only the road network, no POIs; choose the Municipality extent to load POIs</source>
+            <translation>a base OSM pré-construída para regiões metropolitanas ({tag}) tem apenas a rede viária, sem POIs; escolha o recorte Município para carregar os POIs</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="366" />
+            <source>a rede viária e os POIs do OpenStreetMap rodam por município; escolha o recorte Município para carregá-los</source>
+            <translation>a rede viária e os POIs do OpenStreetMap rodam por município; escolha o recorte Município para carregá-los</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="369" />
+            <source>unavailable at the {scale} scale (too heavy); choose a smaller area</source>
+            <translation>indisponível na escala {scale} (muito pesado); escolha uma área menor</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/core/diagnostico.py" line="374" />
+            <source>state source ({ufs}); not available for this area</source>
+            <translation>fonte estadual ({ufs}); não disponível para esta área</translation>
+        </message>
+    </context>
+    <context>
+        <name>JoinCenso</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="61" />
+            <source>(censobr unavailable)</source>
+            <translation>(censobr indisponível)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="63" />
+            <source>Census tracts (geobr)</source>
+            <translation>Setores censitários (geobr)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="68" />
+            <source>Census year</source>
+            <translation>Ano do Censo</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="74" />
+            <source>censobr dataset</source>
+            <translation>Conjunto de dados do censobr</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="81" />
+            <source>Join field (tract)</source>
+            <translation>Campo de junção (setor)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="87" />
+            <source>Prefix for census fields</source>
+            <translation>Prefixo para os campos do censo</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="93" />
+            <source>Tracts + census</source>
+            <translation>Setores + censo</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="103" />
+            <source>censobr catalog unavailable.</source>
+            <translation>Catálogo do censobr indisponível.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="111" />
+            <source>Invalid tracts layer.</source>
+            <translation>Camada de setores inválida.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="136" />
+            <source>Census data could not be joined.</source>
+            <translation>Não foi possível unir os dados do censo.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="142" />
+            <source>Tracts with census: {joined} | without match: {unjoin}</source>
+            <translation>Setores com censo: {joined} | sem correspondência: {unjoin}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="147" />
+            <source>No tracts matched with the census even after normalizing the key — check if the join field is the correct code_tract.</source>
+            <translation>Nenhum setor correspondeu ao censo mesmo após normalizar a chave — verifique se o campo de junção é o code_tract correto.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="157" />
+            <source>Failed to join census data.</source>
+            <translation>Falha ao unir os dados do censo.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="171" />
+            <source>Could not create output.</source>
+            <translation>Não foi possível criar a saída.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="183" />
+            <source>Join census data (censobr) to tracts</source>
+            <translation>Unir dados do censo (censobr) aos setores</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="186" />
+            <source>Census (censobr)</source>
+            <translation>Censo (censobr)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/join_censo.py" line="192" />
+            <source>Joins Census variables (censobr) to a census tracts layer from geobr, using the 'code_tract' key.
+
+Typical workflow: read_census_tract (geobr) -&gt; this tool with the desired table (e.g. DomicilioRenda).</source>
+            <translation>Une variáveis do Censo (censobr) a uma camada de setores censitários do geobr, usando a chave 'code_tract'.
+
+Fluxo típico: read_census_tract (geobr) -&gt; esta ferramenta com a tabela desejada (p. ex. DomicilioRenda).</translation>
+        </message>
+    </context>
+    <context>
+        <name>OsmNetwork</name>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="65" />
+            <source>OSM road network (municipality)</source>
+            <translation>Rede viária do OSM (município)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="68" />
+            <source>Diagnóstico</source>
+            <translation>Diagnóstico</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="74" />
+            <source>Downloads the OSM road network of a Brazilian municipality via Overpass and builds the links/nodes/problems layers with the real OSM topology (same core as the diagnostic panel, gisbr/core/osm_pipeline.py), without writing to a GeoPackage. Links carry cost attributes (maxspeed, velocidade_kmh, comprimento_m) for routing consumers such as the logis plugin. REDE selects the vehicle or pedestrian network (default: vehicle); PONTAS_SOLTAS includes dead-end nodes (ponta_solta) in the problems layer (default: off, since a dead end is normal, not an error).</source>
+            <translation>Baixa a rede viária do OSM de um município brasileiro via Overpass e constrói as camadas de links/nós/problemas com a topologia real do OSM (mesmo núcleo do painel de diagnóstico, gisbr/core/osm_pipeline.py), sem gravar em um GeoPackage. Os links carregam atributos de custo (maxspeed, velocidade_kmh, comprimento_m) para consumidores de roteamento, como o plugin logis. REDE seleciona a rede veicular ou de pedestres (padrão: veicular); PONTAS_SOLTAS inclui nós de fim de via (ponta_solta) na camada de problemas (padrão: desligado, pois um fim de via é normal, não um erro).</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="96" />
+            <source>Municipality IBGE code (7 digits)</source>
+            <translation>Código IBGE do município (7 dígitos)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="102" />
+            <source>Force refresh (ignore Overpass cache)</source>
+            <translation>Forçar atualização (ignorar cache do Overpass)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="109" />
+            <source>Overpass cache folder (optional; default: ~/.cache/gisbr-diagnostico)</source>
+            <translation>Pasta de cache do Overpass (opcional; padrão: ~/.cache/gisbr-diagnostico)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="117" />
+            <source>Network</source>
+            <translation>Rede</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="125" />
+            <source>Include dead ends (ponta_solta)</source>
+            <translation>Incluir fins de via (ponta_solta)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="132" />
+            <source>Links (osm_links)</source>
+            <translation>Links (osm_links)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="135" />
+            <source>Nodes (osm_nodes)</source>
+            <translation>Nós (osm_nodes)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="138" />
+            <source>Problems (osm_problemas)</source>
+            <translation>Problemas (osm_problemas)</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="165" />
+            <source>Municipality IBGE code is required.</source>
+            <translation>O código IBGE do município é obrigatório.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="185" />
+            <source>No ways found for this municipality.</source>
+            <translation>Nenhuma via encontrada para este município.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="187" />
+            <source>Cancelled by the user.</source>
+            <translation>Cancelado pelo usuário.</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="202" />
+            <source>Verification ({rede}) — {resumo}</source>
+            <translation>Verificação ({rede}) — {resumo}</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="206" />
+            <source>Verification ({rede}) — no issues found</source>
+            <translation>Verificação ({rede}) — nenhum problema encontrado</translation>
+        </message>
+        <message>
+            <location filename="../../../../../../home/luandro/Dev/digidem/worktrees/awanagis-gisbr-main/awanagis/integrations/brazil/vendor/gisbr/algorithms/diagnostico/osm_network.py" line="208" />
+            <source>Done: {links} link(s), {nodes} node(s), {problemas} problem(s).</source>
+            <translation>Concluído: {links} link(s), {nodes} nó(s), {problemas} problema(s).</translation>
         </message>
     </context>
 </TS>
