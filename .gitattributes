@@ -4,6 +4,8 @@
 .github/ export-ignore
 .gitignore export-ignore
 .secrets.baseline export-ignore
+AGENTS.md export-ignore
+CLAUDE.md export-ignore
 QGIS_COMPATIBILITY_RULES.md export-ignore
 ci/ export-ignore
 docs/ export-ignore
