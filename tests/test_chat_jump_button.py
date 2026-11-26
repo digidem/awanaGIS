@@ -225,8 +225,10 @@ class ChatJumpButtonTests(unittest.TestCase):
 
     def test_name_is_translated(self):
         dock = self.make_dock()
-        self.assertEqual(dock._jump_button.toolTip(), "Jump to latest message",
-                         "the name of the button without a translator")
+        # The CI image may run under another locale, so compare with the catalog in the current one.
+        self.assertEqual(dock._jump_button.toolTip(),
+                         QCoreApplication.translate("ChatDock", "Jump to latest message"),
+                         "the name of the button is the catalogued string in the current locale")
         translator = load_plugin_translator("pt_BR")
         self.assertIsNotNone(translator, "the Brazilian catalog loads")
         self.assertTrue(QCoreApplication.installTranslator(translator), "the catalog installs")
