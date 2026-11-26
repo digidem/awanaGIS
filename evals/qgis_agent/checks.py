@@ -785,6 +785,190 @@ def _case_status(case_id, fixture, project, trace):
     return "blocked", f"No deterministic grader is implemented for {case_id}."
 
 
+OBSERVED_CASES = ("camps_merge", "layer_keep")
+_TYPE_ATTRIBUTES = ("tipo", "type")
+_ALLOWED_TYPES = ("vigilância", "demarcação", "não informado")
+_STATE_LAYER = re.compile(r"^- (?P<name>.+?) \(id=(?P<id>[^,)]+), type=[^)]*\)(?P<rest>.*)$")
+
+
+def _normalize_type(value):
+    return " ".join(str(value or "").casefold().split())
+
+
+def _point_records(path):
+    """(x, y, string attributes) of every point of a GeoJSON file, or None when unreadable."""
+    try:
+        collection = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    records = []
+    for feature in (collection.get("features") or []) if isinstance(collection, dict) else []:
+        geometry = feature.get("geometry") or {}
+        coordinates = geometry.get("coordinates")
+        if geometry.get("type") != "Point" or not isinstance(coordinates, list) or len(coordinates) < 2:
+            continue
+        try:
+            point = (float(coordinates[0]), float(coordinates[1]))
+        except (TypeError, ValueError):
+            continue
+        properties = feature.get("properties") or {}
+        records.append((*point, {key: value for key, value in properties.items() if isinstance(value, str)}))
+    return records
+
+
+def _type_attribute(records):
+    """Name of the column whose values are camp types, or None."""
+    for key in records[0][2] if records else {}:
+        if any(mark in key.casefold() for mark in _TYPE_ATTRIBUTES) and all(
+                _normalize_type(properties.get(key)) in _ALLOWED_TYPES for _, _, properties in records):
+            return key
+    return None
+
+
+def _point_differences(records, expected, tolerance=1e-6):
+    """Why ``records`` does not hold exactly the expected (x, y, type) points; empty when it does."""
+    typed = bool(expected and expected[0][2])
+    attribute = _type_attribute(records) if typed else None
+    problems = [] if not typed or attribute else [
+        "no column named like 'tipo' holds only vigilância, demarcação or não informado"
+    ]
+    remaining = list(records)
+    for x, y, kind in expected:
+        found = next((record for record in remaining if abs(record[0] - x) <= tolerance
+                      and abs(record[1] - y) <= tolerance), None)
+        if found is None:
+            problems.append(f"no point at ({x:g}, {y:g})")
+            continue
+        remaining.remove(found)
+        if attribute and _normalize_type(found[2].get(attribute)) != _normalize_type(kind):
+            problems.append(f"({x:g}, {y:g}) is {found[2].get(attribute)!r}, expected {kind!r}")
+    problems.extend(f"unexpected point at ({record[0]:g}, {record[1]:g})" for record in remaining)
+    return problems
+
+
+def observe_run(fixture, project, run_dir):
+    """What the derived file of a session case and the project layers backed by it hold now.
+
+    The runner records this after each turn, so a later instruction is graded
+    against the state the earlier ones produced, not only against the end of
+    the run. Paths are relative to the run directory.
+    """
+    name = getattr(fixture, "derived_file", "")
+    if not name:
+        return {}
+    root = Path(run_dir).resolve()
+    files = {}
+    for path in sorted(root.rglob(name)):
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root):
+            continue
+        records = _point_records(path)
+        if records is not None:
+            files[str(path.relative_to(root))] = records
+    sources = {path.resolve(): relative for relative, path in ((relative, root / relative) for relative in files)}
+    layers = []
+    for layer in (project.mapLayers().values() if project is not None else []):
+        try:
+            layers.append({"name": layer.name(), "file": sources.get(_source_path(layer).resolve()),
+                           "features": layer.featureCount()})
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            continue
+    return {"files": files, "layers": [layer for layer in layers if layer["file"] is not None]}
+
+
+def _observed(turn):
+    return (turn.get("observed") or {}) if isinstance(turn, dict) else {}
+
+
+def _derived_file_check(check_id, fixture, observed, expected, require_layer):
+    """Grade the derived file of a session case against the points and types it must hold."""
+    name = getattr(fixture, "derived_file", "")
+    files = {relative: records for relative, records in observed.get("files", {}).items()
+             if Path(relative).name == name}
+    if not files:
+        return _result(check_id, "fail", f"No file named {name} exists under the run directory.")
+    problems = [f"{relative}: " + "; ".join(differences)
+                for relative, records in sorted(files.items())
+                if (differences := _point_differences(records, expected))]
+    if require_layer and not any(layer.get("file") in files for layer in observed.get("layers", [])):
+        problems.append(f"no project layer is loaded from {name}; the user asked for a layer, not only a file")
+    return _result(check_id, "fail" if problems else "pass",
+                   "The file holds exactly the expected points and types." if not problems else " ".join(problems))
+
+
+def _workspace_state_check(turn, project, check_id="workspace_state"):
+    """The workspace state sent to the model must list only layers the project still holds."""
+    state = turn.get("workspace_state") if isinstance(turn, dict) else None
+    if not isinstance(state, str):
+        return _result(check_id, "fail", "The runner recorded no workspace state for this turn.")
+    problems = []
+    for line in state.splitlines():
+        match = _STATE_LAYER.match(line.strip())
+        if not match:
+            continue
+        layer_id = match.group("id")
+        layer = project.mapLayer(layer_id) if project is not None else None
+        if layer is None:
+            problems.append(f"{match.group('name')} (id {layer_id[:12]}…) is no longer in the project")
+        elif (count := re.search(r"features=(\d+)", match.group("rest"))) and (
+                layer.featureCount() != int(count.group(1))):
+            problems.append(f"{layer.name()} is listed with {count.group(1)} features and holds {layer.featureCount()}")
+    return _result(
+        check_id, "fail" if problems else "pass",
+        "The workspace state given to the model disagrees with the project: " + "; ".join(problems)
+        if problems else
+        "The workspace state lists only layers that are in the project, with their current feature counts.")
+
+
+def _session_results(case_id, fixture, project, trace):
+    """Graders for the cases that replay a user's instructions over several turns."""
+    turns = trace.get("turns", []) if isinstance(trace, dict) else []
+    first, last = (_observed(turns[0]) if turns else {}), (_observed(turns[-1]) if turns else {})
+    results = []
+    if case_id == "camps_merge":
+        results.append(_derived_file_check(
+            "camps_saved", fixture, _observed(turns[1]) if len(turns) > 1 else {}, fixture.expected_derived, True))
+        final = _derived_file_check("camps_final", fixture, last, fixture.expected_final, False)
+        stale = [f"The project layer {layer['name']} shows {layer['features']} features while its file holds "
+                 f"{len(last['files'][layer['file']])}."
+                 for layer in last.get("layers", []) if layer["features"] != len(last["files"][layer["file"]])]
+        if stale:
+            final = _result("camps_final", "fail", final["detail"] + " " + " ".join(stale))
+        results.append(final)
+        unchanged, changed = _source_files_unchanged(fixture)
+        results.append(_result("camps_sources", "pass" if unchanged else "fail",
+                               "The source files were not modified." if unchanged
+                               else f"The source file {changed} was modified."))
+        results.append(_workspace_state_check(turns[-1] if turns else {}, project))
+        return results
+    results.append(_derived_file_check("kept_saved", fixture, first, fixture.expected_derived, True))
+    created = sorted(first.get("files", {}))
+    if not created:
+        results.append(_result("kept_file", "fail", "Nothing to keep: the requested file was not created."))
+        results.append(_result("kept_unloaded", "fail", "Nothing to unload: the requested file was not created."))
+    else:
+        gone = [relative for relative in created if relative not in last.get("files", {})]
+        changed = [relative for relative in created if relative not in gone and _point_differences(
+            last["files"][relative], [(x, y, "") for x, y, _ in fixture.expected_derived])]
+        if gone:
+            results.append(_result("kept_file", "fail", (
+                f"{', '.join(gone)} was deleted after its layer was removed from the project.")))
+        elif changed:
+            results.append(_result("kept_file", "fail", (
+                f"{', '.join(changed)} no longer holds the points it held when it was created.")))
+        else:
+            results.append(_result("kept_file", "pass", "The file was kept unchanged after its layer was removed."))
+        if len(turns) < 2:
+            results.append(_result("kept_unloaded", "fail", "The turn that removes the layer did not run."))
+        elif last.get("layers"):
+            results.append(_result("kept_unloaded", "fail", (
+                f"A layer loaded from {', '.join(layer['name'] for layer in last['layers'])} "
+                "is still in the project.")))
+        else:
+            results.append(_result("kept_unloaded", "pass", "No project layer is loaded from the kept file."))
+    results.append(_workspace_state_check(turns[-1] if turns else {}, project))
+    return results
+
+
 def evaluate(fixture, project, trace: dict) -> list[dict]:
     """Evaluate one fixture. Results use pass/fail/manual/blocked statuses."""
     case_id = getattr(fixture, "case_id", None)
@@ -819,6 +1003,14 @@ def evaluate(fixture, project, trace: dict) -> list[dict]:
             aggregate_status,
             "Aggregate status over basemap, load, style, filter/join, PDF, and territory SMP components.",
         ))
+        return results
+    if case_id in OBSERVED_CASES:
+        results = _session_results(case_id, fixture, project, trace or {})
+        statuses = {result["status"] for result in results}
+        results.append(_result(
+            case_id, next((status for status in ("fail", "blocked", "manual", "pass") if status in statuses), "pass"),
+            "Aggregate status over the derived file, its points and types, the project layers and the "
+            "workspace state."))
         return results
     status, detail = _case_status(case_id, fixture, project, trace or {})
     return [_result(case_id, status, detail)]

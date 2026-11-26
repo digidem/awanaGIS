@@ -9,6 +9,8 @@ class Case:
     turns: tuple[str, ...]
     expected_layers: tuple[str, ...] = ()
     assistant_checkpoints: tuple[str, ...] = ()
+    # Prompts for the held-out fixture, when it names other layers or files.
+    heldout_turns: tuple[str, ...] = ()
 
 
 CASES = {
@@ -89,5 +91,43 @@ CASES = {
             "Quero só o território inteiro, sem uma área com mais detalhe.",
         ),
         ("Aldeias", "Territórios", "Dados das aldeias"),
+    ),
+    # The two cases below keep the shape of prompts people sent in a real
+    # session: a derived layer the user wants kept on disk, a rule the user
+    # states and then corrects, and a removal by the name of an area.
+    "camps_merge": Case(
+        "camps_merge",
+        (
+            "Analisa as camadas Pontos de campo e Observações e me diz quantos acampamentos há em cada uma "
+            "e como você sugere classificar o tipo. Não salve nada ainda.",
+            "Pode aplicar assim: junta os acampamentos das duas numa camada nova, sem alterar as originais. "
+            "O tipo é vigilância quando o registro for de acampamento de vigilância, e não informado nos "
+            "outros casos, por enquanto. Salve a camada como geojson, com o nome acampamentos.geojson, "
+            "no mesmo local dos outros arquivos. Não é uma camada temporária.",
+            "Tira da camada nova os pontos que estão dentro da Terra Indígena Rio Claro.",
+            "Só a TI Rio Claro. E os pontos que sobraram que vieram de Pontos de campo passam a ser "
+            "do tipo demarcação.",
+        ),
+        heldout_turns=(
+            "Olha as camadas Registros de campo (teste) e Observações (teste) e me diz quantos acampamentos "
+            "há em cada uma e como você sugere classificar o tipo. Não salve nada ainda.",
+            "Aplica desta forma: reúne os acampamentos das duas numa camada nova, sem alterar as originais. "
+            "O tipo é vigilância quando a categoria ou a nota falar em vigilância, e não informado nos "
+            "outros casos, por enquanto. Salva a camada como geojson, com o nome base_campo.geojson, "
+            "na mesma pasta dos outros arquivos. Não é uma camada temporária.",
+            "Remove da camada nova os pontos dentro da Terra Indígena Uraricoera.",
+            "Somente a TI Uraricoera. E os pontos que restaram que vieram de Observações (teste) passam a ser "
+            "do tipo demarcação.",
+        ),
+    ),
+    "layer_keep": Case(
+        "layer_keep",
+        (
+            "Salva em um geojson só as aldeias com escola. Coloque o arquivo junto dos outros, com o nome "
+            "aldeias_com_escola.geojson, e adicione como camada no projeto. Esse arquivo fica guardado, "
+            "não é temporário.",
+            "Tira essa camada do projeto, mas não apaga o arquivo.",
+            "A camada aldeias_com_escola ainda está no projeto? Quantos pontos tem o arquivo?",
+        ),
     ),
 }

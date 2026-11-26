@@ -248,7 +248,7 @@ def visible_reply_check(turn, index):
 def run_case(case_id, run_dir, provider, model, variant='baseline', backend_factory=None, plugin_path=None):
     """Execute one case; backend_factory(config, toolkit, executor) permits offline tests."""
     from .fixtures import build_fixture
-    from .checks import evaluate, evaluate_step
+    from .checks import OBSERVED_CASES, evaluate, evaluate_step, observe_run
 
     app = QgsApplication.instance()
     if app is None:
@@ -341,6 +341,11 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
             if case_id == 'smp_region' and index == 0:
                 turn['artifacts'] = artifacts_under(fixture.output_dir)
             trace['turns'].append(turn)
+            if case_id in OBSERVED_CASES:
+                # A session case is graded turn by turn: keep what the derived
+                # file, its project layers and the workspace state held now.
+                turn['observed'] = observe_run(fixture, project, run_dir)
+                turn['workspace_state'] = redact(toolkit.agent_state_summary())
             if case_id in ('crs_view', 'selection'):
                 bounds = iface.canvas.extent()
                 trace['canvas_state_after_turn'] = {

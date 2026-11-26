@@ -34,6 +34,13 @@ class Fixture:
     expected_village_records: tuple[tuple[str, str, str, float, float], ...]
     preselected_codes: tuple[str, ...]
     pdf_requires_local_basemap: bool
+    # The derived file a session case asks the agent to keep on disk, and
+    # what it must hold once created and after the user's later instructions:
+    # (x, y, type) for every point, sorted.
+    derived_file: str = ""
+    expected_derived: tuple[tuple[float, float, str], ...] = ()
+    expected_final: tuple[tuple[float, float, str], ...] = ()
+    area_names: tuple[str, ...] = ()
 
 
 def _feature_collection(features):
@@ -44,6 +51,197 @@ def _write_geojson(path: Path, geometry_name: str, features):
     path.write_text(
         json.dumps(_feature_collection(features), ensure_ascii=False, indent=2),
         encoding="utf-8",
+    )
+
+
+def _inside(bounds, x, y):
+    xmin, ymin, xmax, ymax = bounds
+    return xmin <= x <= xmax and ymin <= y <= ymax
+
+
+def _camps_plan(variant):
+    """Three synthetic layers for the camps case, and the rules the user gives.
+
+    Records are (first attribute, notes, x, y). Every camp lies clearly
+    inside or outside the named areas; the second area's name extends the
+    first, so an agent that matches names loosely also removes its camps.
+    """
+    if variant == "heldout":
+        return {
+            "layer_names": ("Registros de campo (teste)", "Observações (teste)", "Áreas (teste)"),
+            "areas": (
+                ("TI Uraricoera", (-60.74, -2.74, -60.50, -2.54)),
+                ("TI Uraricoera Sul", (-60.46, -2.42, -60.26, -2.22)),
+            ),
+            "field_records": (
+                ("acampamento", "Acampamento da trilha", -60.72, -2.68),
+                ("acampamento", "Primeira noite", -60.56, -2.33),
+                ("maloca", "Maloca antiga", -60.64, -2.58),
+                ("acampamento", "Acampamento do lago", -60.47, -2.47),
+                ("cachoeira", "Cachoeira pequena", -60.77, -2.39),
+            ),
+            "observation_records": (
+                ("Acampamento de vigilância", "Ronda", -60.68, -2.66),
+                ("Acampamento", "Vigilante da estrada", -60.62, -2.60),
+                ("Acampamento", "Acampamento 07", -60.48, -2.61),
+                ("Acampamento", "Acampamento 02", -60.42, -2.34),
+                ("Pesca", "Lugar de pesca", -60.79, -2.49),
+                ("Acampamento", "Sem informação", -60.57, -2.27),
+            ),
+            "is_vigilance": lambda category, notes: "vigil" in f"{category} {notes}".casefold(),
+            "relabelled": "observations",
+            "file": "base_campo.geojson",
+        }
+    return {
+        "layer_names": ("Pontos de campo", "Observações", "Áreas"),
+        "areas": (
+            ("TI Rio Claro", (-60.72, -2.72, -60.52, -2.56)),
+            ("TI Rio Claro Norte", (-60.44, -2.40, -60.28, -2.24)),
+        ),
+        "field_records": (
+            ("acampamento", "Acampamento da picada", -60.70, -2.70),
+            ("acampamento", "Base da equipe", -60.55, -2.35),
+            ("roça", "Roça nova", -60.62, -2.60),
+            ("acampamento", "Acampamento do igarapé", -60.47, -2.46),
+            ("cachoeira", "Cachoeira grande", -60.75, -2.40),
+            ("acampamento", "Segunda noite", -60.32, -2.30),
+        ),
+        "observation_records": (
+            ("Acampamento de vigilância", "Ronda do limite", -60.66, -2.66),
+            ("Pesca", "Pesca do dia", -60.78, -2.50),
+            ("Acampamento", "Acampamento 03", -60.50, -2.62),
+            ("Acampamento de vigilância", "Vigilante na boca", -60.40, -2.32),
+            ("Acampamento", "Sem nota", -60.58, -2.28),
+            ("Caça", "Caça", -60.36, -2.52),
+        ),
+        "is_vigilance": lambda category, notes: "vigil" in category.casefold(),
+        "relabelled": "field",
+        "file": "acampamentos.geojson",
+    }
+
+
+def _camps_expectations(plan, shift):
+    """What the derived file must hold after the merge and after the later instructions."""
+    target = tuple(value + shift for value in plan["areas"][0][1])
+    decoy = tuple(value + shift for value in plan["areas"][1][1])
+
+    def place(record):
+        return record[2] + shift, record[3] + shift
+
+    field_camps = [record for record in plan["field_records"] if record[0] == "acampamento"]
+    observation_camps = [record for record in plan["observation_records"] if "acampamento" in record[0].casefold()]
+    if not (any(_inside(target, *place(record)) for record in field_camps + observation_camps)
+            and any(_inside(decoy, *place(record)) for record in field_camps + observation_camps)):
+        raise RuntimeError("Camps fixture must place camps inside the named area and inside the similar one")
+
+    derived = []
+    final = []
+    for source, camps in (("field", field_camps), ("observations", observation_camps)):
+        for record in camps:
+            x, y = place(record)
+            vigilance = source == "observations" and plan["is_vigilance"](record[0], record[1])
+            derived.append((x, y, "vigilância" if vigilance else "não informado"))
+            if _inside(target, x, y):
+                continue
+            if source == plan["relabelled"]:
+                final.append((x, y, "demarcação"))
+            else:
+                final.append((x, y, "vigilância" if vigilance else "não informado"))
+    return tuple(sorted(derived)), tuple(sorted(final))
+
+
+def _build_camps_fixture(root: Path, variant: str) -> Fixture:
+    """Build the camps case: two point layers of mixed records and a layer of named areas."""
+    from qgis.core import (
+        QgsCoordinateReferenceSystem,
+        QgsProject,
+        QgsReferencedRectangle,
+        QgsRectangle,
+        QgsVectorLayer,
+    )
+
+    plan = _camps_plan(variant)
+    shift = 0.04 if variant == "heldout" else 0.0
+    input_dir = root / "inputs"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = root / "outputs"
+    output_dir.mkdir(exist_ok=True)
+
+    def point_files(records, first, path):
+        _write_geojson(path, "Point", [
+            {"type": "Feature",
+             "properties": {first: record[0], "notas": record[1]},
+             "geometry": {"type": "Point", "coordinates": [record[2] + shift, record[3] + shift]}}
+            for record in records
+        ])
+
+    pontos_path = input_dir / "pontos_campo.geojson"
+    point_files(plan["field_records"], "tipo", pontos_path)
+    observacoes_path = input_dir / "observacoes.geojson"
+    point_files(plan["observation_records"], "categoria", observacoes_path)
+    areas_path = input_dir / "areas.geojson"
+    areas = []
+    for name, bounds in plan["areas"]:
+        xmin, ymin, xmax, ymax = (value + shift for value in bounds)
+        areas.append((name, (xmin, ymin, xmax, ymax)))
+    _write_geojson(areas_path, "Polygon", [
+        {"type": "Feature",
+         "properties": {"nome": name},
+         "geometry": {"type": "Polygon",
+                      "coordinates": [[[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax], [xmin, ymin]]]}}
+        for name, (xmin, ymin, xmax, ymax) in areas
+    ])
+    paths = (pontos_path, observacoes_path, areas_path)
+
+    project = QgsProject()
+    project.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+    layers = []
+    for path, name in zip(paths, plan["layer_names"]):
+        layer = QgsVectorLayer(str(path), name, "ogr")
+        if not layer.isValid():
+            raise RuntimeError(f"Could not load synthetic fixture layer {name}: {path}")
+        project.addMapLayer(layer)
+        layers.append(layer)
+    union = QgsRectangle(layers[0].extent())
+    for layer in layers[1:]:
+        union.combineExtentWith(layer.extent())
+    project.viewSettings().setDefaultViewExtent(QgsReferencedRectangle(union, project.crs()))
+    project_path = root / "fixture.qgz"
+    if not project.write(str(project_path)):
+        raise RuntimeError(f"Could not write fixture project: {project_path}")
+    derived, final = _camps_expectations(plan, shift)
+    case = CASES["camps_merge"]
+    return Fixture(
+        case_id="camps_merge",
+        project_path=project_path,
+        turns=case.heldout_turns if variant == "heldout" else case.turns,
+        output_dir=output_dir,
+        territory_names=tuple(name for name, _ in areas),
+        layer_names=plan["layer_names"],
+        raster_path=root / "unused.tif",
+        region_extent=(0.0, 0.0, 0.0, 0.0),
+        territory_bounds=areas[0][1],
+        village_join_values=(),
+        villages_path=pontos_path,
+        input_files=paths,
+        source_hashes=tuple(
+            (path.name, hashlib.sha256(path.read_bytes()).hexdigest()) for path in paths
+        ),
+        project_crs="EPSG:4326",
+        expected_view_bounds=(union.xMinimum(), union.yMinimum(), union.xMaximum(), union.yMaximum()),
+        initial_view_bounds=(union.xMinimum(), union.yMinimum(), union.xMaximum(), union.yMaximum()),
+        expected_visible_layer_ids=(),
+        expected_selected_codes=(),
+        expected_category_values=(),
+        expected_unique_codes=(),
+        expected_village_names=(),
+        expected_village_records=(),
+        preselected_codes=(),
+        pdf_requires_local_basemap=False,
+        derived_file=plan["file"],
+        expected_derived=derived,
+        expected_final=final,
+        area_names=tuple(name for name, _ in areas),
     )
 
 
@@ -77,6 +275,10 @@ def build_fixture(case_id: str, run_dir: Path, variant: str = "baseline") -> Fix
         raise ValueError(f"Unknown evaluation case: {case_id}")
     if variant not in ("baseline", "heldout"):
         raise ValueError(f"Unknown fixture variant: {variant}")
+
+    root = Path(run_dir)
+    if case_id == "camps_merge":
+        return _build_camps_fixture(root, variant)
 
     from qgis.core import (
         QgsCoordinateReferenceSystem,
@@ -222,7 +424,8 @@ def build_fixture(case_id: str, run_dir: Path, variant: str = "baseline") -> Fix
     return Fixture(
         case_id=case_id,
         project_path=project_path,
-        turns=CASES[case_id].turns,
+        turns=(CASES[case_id].heldout_turns if variant == "heldout" and CASES[case_id].heldout_turns
+               else CASES[case_id].turns),
         output_dir=output_dir,
         territory_names=tuple(name for name, _ in territories),
         layer_names=tuple(layer.name() for layer in layers) + (raster.name(),),
@@ -255,4 +458,9 @@ def build_fixture(case_id: str, run_dir: Path, variant: str = "baseline") -> Fix
         ),
         preselected_codes=(codes[0], codes[2]) if case_id == "selection" else (),
         pdf_requires_local_basemap=case_id == "pdf_basemap",
+        derived_file="aldeias_com_escola.geojson" if case_id == "layer_keep" else "",
+        expected_derived=tuple(sorted(
+            (feature["geometry"]["coordinates"][0], feature["geometry"]["coordinates"][1], "")
+            for feature in village_features[:3] if feature["properties"]["escola"] == "sim"
+        )) if case_id == "layer_keep" else (),
     )
