@@ -1,7 +1,7 @@
 """Widgets that keep transcript rows inside the dock and their height current."""
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QLabel, QSizePolicy
+from qgis.PyQt.QtWidgets import QLabel
 
 
 class WrapLabel(QLabel):
