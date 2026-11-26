@@ -24,6 +24,7 @@ from .base import (
     elide_stale_tool_results,
     max_tokens_for,
     unlimited_iterations,
+    TOOL_LIMIT_PROMPT,
 )
 from .openai_backend import DEFAULT_SYSTEM_PROMPT  # noqa: F401 — re-export for tests
 from .openai_backend import build_system_prompt
@@ -305,13 +306,39 @@ class ApiBackend(AgentBackend):
         else:
             if is_unlimited:
                 return messages
-            emit(
-                AgentEvent(
-                    EventType.THINKING, {"text": BackendFeedback(QT_TRANSLATE_NOOP("BackendFeedback", "Reached max {count} iterations."), count=max_iters)}
-                )
+            limit_msg = BackendFeedback(
+                QT_TRANSLATE_NOOP("BackendFeedback", "Reached max {count} iterations."), count=max_iters
             )
+            emit(AgentEvent(EventType.THINKING, {"text": limit_msg}))
+            # A turn that ends after a tool result shows nothing in the chat.
+            messages.extend(self._tool_limit_reply(client, model, messages, emit, should_stop, limit_msg))
             emit(AgentEvent(EventType.DONE))
         return messages
+
+    def _request_closing_text(self, client, model, messages, emit, on_text, should_stop):
+        """One request without tools, for the text that ends a turn at the tool limit."""
+        # The last message carries the tool results: add the request to it
+        # instead of a second user message in a row.
+        closing = [dict(message) for message in messages]
+        last = closing[-1] if closing else {"role": "user", "content": []}
+        if last.get("role") == "user" and isinstance(last.get("content"), list):
+            last["content"] = list(last["content"]) + [{"type": "text", "text": TOOL_LIMIT_PROMPT}]
+        else:
+            closing.append({"role": "user", "content": [{"type": "text", "text": TOOL_LIMIT_PROMPT}]})
+        content, _stop_reason = client.stream_message(
+            model=model,
+            max_tokens=max_tokens_for(model),
+            system=self._system_blocks(),
+            tools=None,
+            messages=append_transient_state_anthropic(
+                _messages_with_cache_breakpoint(closing), self._state_text()
+            ),
+            on_text=on_text,
+            should_stop=should_stop,
+            on_connecting=lambda: emit(AgentEvent(EventType.CONNECTING)),
+        )
+        return "".join(block.get("text", "") for block in content
+                       if isinstance(block, dict) and block.get("type") == "text")
 
     # ------------------------------------------------------------------ #
     @staticmethod

@@ -192,10 +192,12 @@ class AnthropicHttpClient:
             "model": model,
             "max_tokens": max_tokens,
             "system": system,
-            "tools": tools,
             "messages": messages,
             "stream": True,
         }
+        if tools:
+            # No tools asks for a plain answer.
+            base_payload["tools"] = tools
         # Omit "thinking" entirely unless the user opted in — that's already
         # Anthropic's own default (non-extended-thinking) behavior, and
         # third-party Anthropic-compatible servers (LM Studio, etc.) may not

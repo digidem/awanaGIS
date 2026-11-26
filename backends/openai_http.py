@@ -340,11 +340,13 @@ class OpenAIHttpClient:
             "model": model,
             "messages": self._build_messages(system, messages,
                                              cache_system=cache_system),
-            "tools": tools,
-            "tool_choice": "auto",
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if tools:
+            # No tools asks for a plain answer; some servers reject an empty list.
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
         if reasoning:
             # o1/o3/o4 reasoning models reject ``max_tokens`` (and
             # ``temperature``/``top_p``) with a hard HTTP 400; they require
