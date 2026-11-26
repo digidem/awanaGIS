@@ -81,7 +81,7 @@ from .theme import (
     DOCK_DANGER_BORDER as _DANGER_BORDER,
     DOCK_DANGER_TEXT as _DANGER_TEXT,
 )
-from .wrap_label import WrapLabel
+from .wrap_label import WrapLabel, add_left_aligned
 _STREAM_COALESCE_INTERVAL_S = 0.008   # ~120fps — tight enough to feel instant
 _STREAM_COALESCE_MAX_CHARS = 4096     # smaller burst ceiling for finer granularity
 _STREAM_RENDER_INTERVAL_S = 0.016     # ~60fps base — perceptually "realtime smooth"
@@ -1216,7 +1216,7 @@ class ChatDock(QgsDockWidget):
         vl = QVBoxLayout(container)
         vl.setContentsMargins(16, 0, 16, 0)
         vl.setSpacing(0)
-        vl.addWidget(widget)
+        add_left_aligned(vl, widget)
         return container
 
     def _add_file(self, data):

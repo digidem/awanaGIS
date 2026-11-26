@@ -50,7 +50,7 @@ from .theme import (
     DOCK_SUCCESS as _SUCCESS,
     DOCK_DANGER as _DANGER,
 )
-from .wrap_label import WrapLabel, elide_button
+from .wrap_label import WrapLabel, add_left_aligned, elide_button
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -646,13 +646,13 @@ class AgentTurnBubble(QFrame):
 
     def add_file(self, widget) -> None:
         """Embed a file/download card inside this turn (below tools, above text)."""
-        self._files_layout.addWidget(widget)
+        add_left_aligned(self._files_layout, widget)
         self._files_area.setVisible(True)
         self.updateGeometry()
 
     def add_visual(self, widget) -> None:
         """Embed a chart/stats/gif widget inside this turn (below the answer)."""
-        self._visuals_layout.addWidget(widget)
+        add_left_aligned(self._visuals_layout, widget)
         self._visuals_area.setVisible(True)
         self.updateGeometry()
 

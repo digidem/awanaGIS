@@ -1,7 +1,7 @@
 """Widgets that keep transcript rows inside the dock and their height current."""
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QLabel
+from qgis.PyQt.QtWidgets import QHBoxLayout, QLabel
 
 
 class WrapLabel(QLabel):
@@ -26,6 +26,20 @@ class WrapLabel(QLabel):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.updateGeometry()
+
+
+def add_left_aligned(layout, widget):
+    """Add ``widget`` to a vertical ``layout``, left-aligned, with the height of the width it gets.
+
+    A vertical layout asks an item for its height at the full layout width, even when it then lays the
+    item out narrower, as for an item capped with ``setMaximumWidth``. Wrapped text inside the item
+    then loses lines. A horizontal row sizes each item first, so the item gets the height of the width
+    it really has.
+    """
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(widget, 1)
+    layout.addLayout(row)
 
 
 def elide_button(button, text_width=96):
