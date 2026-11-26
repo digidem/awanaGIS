@@ -4670,14 +4670,19 @@ class QgisToolkit:
                     if lerr is not None:
                         return lerr
                     resolved.append(layer)
+                # ``layers`` selects what the map shows, not how it stacks. A
+                # model that names the basemap first would otherwise draw it
+                # over everything else.
+                resolved = self._stack_like_canvas(resolved)
             else:
                 # Fall back to all currently visible layers.
                 canvas = self.iface.mapCanvas() if self.iface is not None else None
                 if canvas is not None:
                     resolved = [lyr for lyr in canvas.layers() if lyr is not None]
                 else:
-                    # Drawing order is bottom first; a map item lists top first.
-                    resolved = list(reversed(project.layerTreeRoot().layerOrder()))
+                    # The layer tree lists top first, as a map item does.
+                    resolved = [node.layer() for node in project.layerTreeRoot().findLayers()
+                                if node.isVisible() and node.layer() is not None]
             if not resolved:
                 # QGIS falls back to the whole project behind an empty layer list,
                 # which would print layers the user has turned off.
@@ -4728,6 +4733,23 @@ class QgisToolkit:
     _LAYOUT_TITLE_BAND_MM = 20.0
     _LAYOUT_BOTTOM_BAND_MM = 34.0
     _LAYOUT_MAX_BAND_SHARE = 0.45
+
+    def _stack_like_canvas(self, layers):
+        """Order ``layers`` as the canvas stacks them, top first.
+
+        A layer the canvas does not show keeps its place among the others
+        and goes below them.
+        """
+        from qgis.core import QgsProject
+
+        canvas = self.iface.mapCanvas() if self.iface is not None else None
+        if canvas is not None:
+            shown = [layer for layer in canvas.layers() if layer is not None]
+        else:
+            shown = [node.layer() for node in QgsProject.instance().layerTreeRoot().findLayers()
+                     if node.layer() is not None]
+        rank = {layer.id(): index for index, layer in enumerate(shown)}
+        return sorted(layers, key=lambda layer: rank.get(layer.id(), len(rank)))
 
     def _layout_view(self, project, layers):
         """Return ``(crs, extent)`` for a new layout map.

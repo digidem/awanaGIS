@@ -235,6 +235,22 @@ class LayoutToolsTests(unittest.TestCase):
         self.assertEqual(names, ["Aldeias", "Territórios"])
         self.assertNotIn(table.id(), [layer.id() for layer in page_items(layout, QgsLayoutItemMap)[0].layers()])
 
+    def test_requested_layers_keep_the_order_of_the_canvas(self):
+        # The territory is named first, as a model names a basemap first.
+        result = self.toolkit.create_layout("Ordem do mapa", layers=["Territórios", "Aldeias"])
+        self.assertTrue(result["ok"], result)
+        maps = page_items(self.project.layoutManager().layoutByName("Ordem do mapa"), QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Aldeias", "Territórios"],
+                         "the villages stay above the territory, as on the canvas")
+
+        # Without a canvas the project's stacking order is used.
+        self.project.viewSettings().setDefaultViewExtent(QgsReferencedRectangle(VIEW, self.project.crs()))
+        result = QgisToolkit(iface=None, config=self.config).create_layout("Sem tela", layers=["Territórios", "Aldeias"])
+        self.assertTrue(result["ok"], result)
+        maps = page_items(self.project.layoutManager().layoutByName("Sem tela"), QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Aldeias", "Territórios"])
+        self.assertEqual(result["layers"], ["Aldeias", "Territórios"])
+
     def test_a_repeated_name_is_refused_and_leaves_one_layout(self):
         self.assertTrue(self.toolkit.create_layout("Mapa")["ok"])
         second = self.toolkit.create_layout("Mapa")
