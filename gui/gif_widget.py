@@ -5,11 +5,9 @@ Matches ChartWidget styling and design tokens.
 """
 
 import os
-from qgis.PyQt.QtCore import QCoreApplication, Qt
+from qgis.PyQt.QtCore import QCoreApplication, QEvent, Qt
 from qgis.PyQt.QtGui import QMovie
-from qgis.PyQt.QtWidgets import (
-    QFrame, QVBoxLayout, QLabel
-)
+from qgis.PyQt.QtWidgets import QFrame, QLabel, QVBoxLayout, QWIDGETSIZE_MAX
 
 from .downloadable import HoverDownloadButton, save_file_copy, _safe_name
 from .theme import (
@@ -19,8 +17,13 @@ from .theme import (
     DOCK_TEXT as _TEXT,
     DOCK_TEXT_2 as _TEXT_2,
 )
+from .wrap_label import WrapLabel
 
 # Design tokens — match ChartWidget
+
+_CAPTION_MARGIN = 8                         # between the caption and each side of its host
+_CAPTION_FIT_STEPS = 32                     # the caption fit is bounded
+_CAPTION_MIN_LIMIT = 24                     # below this the caption is hidden rather than squeezed
 
 
 class GifWidget(QFrame):
@@ -51,6 +54,7 @@ class GifWidget(QFrame):
         # Optional per-frame captions (e.g. ["2020","2021",...]), one per frame
         # in playback order. Overlaid on the animation, synced to the frame.
         self._frame_labels = [str(x) for x in (data.get("frame_labels") or [])]
+        self._caption_text = self._frame_labels[0] if self._frame_labels else ""   # shown caption
         self._label_overlay = None
 
         # Layout: title label + animation label
@@ -59,7 +63,7 @@ class GifWidget(QFrame):
         layout.setSpacing(8)
 
         # Title label (muted)
-        title_label = QLabel(data.get("name") or QCoreApplication.translate("GifWidget", "Animation"))
+        title_label = WrapLabel(data.get("name") or QCoreApplication.translate("GifWidget", "Animation"))
         title_label.setTextFormat(Qt.TextFormat.PlainText)
         title_label.setStyleSheet(f"color: {_TEXT_2}; font-size: {fs(12)}px;")
 
@@ -101,6 +105,12 @@ class GifWidget(QFrame):
         # Hover-to-download: save the animated GIF to disk.
         HoverDownloadButton(self, self._save, tooltip=QCoreApplication.translate("GifWidget", "Save GIF"))
 
+        if self._label_overlay is not None:
+            # The host label is sized by the layout after this widget's own resizeEvent, so the
+            # overlay is fitted and placed when the host itself is resized.
+            self._animation_label.installEventFilter(self)
+            self._position_label_overlay()
+
     def _build_label_overlay(self, host):
         """Create the per-frame caption overlaid on the animation."""
         overlay = QLabel(host)
@@ -110,8 +120,6 @@ class GifWidget(QFrame):
             " font-size: 14px; font-weight: 600; padding: 2px 8px;"
             " border-radius: 4px;"
         )
-        overlay.setText(self._frame_labels[0])
-        overlay.adjustSize()
         overlay.show()
         self._label_overlay = overlay
         self._position_label_overlay()
@@ -119,23 +127,67 @@ class GifWidget(QFrame):
     def _on_frame_changed(self, idx):
         if not self._label_overlay or not self._frame_labels:
             return
-        if idx < 0:
-            idx = 0
-        elif idx >= len(self._frame_labels):
-            idx = len(self._frame_labels) - 1
-        self._label_overlay.setText(self._frame_labels[idx])
-        self._label_overlay.adjustSize()
+        idx = max(0, min(idx, len(self._frame_labels) - 1))
+        self._caption_text = self._frame_labels[idx]
         self._position_label_overlay()
 
     def _position_label_overlay(self):
+        """Fit the caption to its host, then place it in the host's bottom-right corner.
+
+        Returns the number of steps the fit took.
+        """
         overlay = self._label_overlay
         host = getattr(self, "_animation_label", None)
         if overlay is None or host is None:
-            return
-        margin = 8
-        x = max(0, host.width() - overlay.width() - margin)
-        y = max(0, host.height() - overlay.height() - margin)
+            return 0
+        steps = self._reflow_caption()
+        x = max(0, host.width() - overlay.width() - _CAPTION_MARGIN)
+        y = max(0, host.height() - overlay.height() - _CAPTION_MARGIN)
         overlay.move(x, y)
+        return steps
+
+    def _reflow_caption(self):
+        """Make the caption one elided line inside its host; returns the number of fit steps.
+
+        The whole caption becomes the tooltip when what is shown differs from it.
+        """
+        overlay, host = self._label_overlay, self._animation_label
+        overlay.ensurePolished()
+        text = str(self._caption_text)
+        line = " ".join(text.split())        # hard breaks would render as several lines
+        overlay.setWordWrap(False)
+        limit = host.width() - 2 * _CAPTION_MARGIN
+        # A host too narrow for the padding, an ellipsis and both margins shows no caption.
+        overlay.setVisible(limit >= _CAPTION_MIN_LIMIT)
+        if limit < _CAPTION_MIN_LIMIT:
+            overlay.setToolTip("")
+            return 0
+        overlay.setMinimumWidth(0)           # the fallback of an earlier fit does not persist
+        overlay.setMaximumWidth(QWIDGETSIZE_MAX)
+        metrics = overlay.fontMetrics()
+        overlay.setText(line)
+        overlay.adjustSize()
+        padding = overlay.width() - metrics.horizontalAdvance(line)     # the style-sheet padding, measured
+        budget = max(0, limit - padding)    # what the text itself may occupy
+        steps = 0
+        while overlay.width() > limit and steps < _CAPTION_FIT_STEPS:
+            steps += 1
+            shown = metrics.elidedText(line, Qt.TextElideMode.ElideRight, budget)
+            overlay.setText(shown)
+            overlay.adjustSize()
+            # The next budget is always smaller: by the overflow, and at least by a visible step.
+            # Fonts whose painted width disagrees with their metrics cannot stall the fit.
+            budget = max(0, min(budget, metrics.horizontalAdvance(shown)) - max(8, overlay.width() - limit))
+        clipped = overlay.width() > limit
+        if clipped:
+            overlay.setFixedWidth(limit)    # last resort, for this fit only: clip
+        overlay.setToolTip(text if overlay.text() != text or clipped else "")
+        return steps
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "_animation_label", None) and event.type() == QEvent.Type.Resize:
+            self._position_label_overlay()
+        return False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

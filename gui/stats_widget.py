@@ -25,6 +25,7 @@ from .theme import (
     DOCK_TEXT_2 as _TEXT_2,
     DOCK_TEXT_3 as _TEXT_3,
 )
+from .wrap_label import WrapLabel
 
 # Design tokens — darker, softer (match chat_dock.py)
 
@@ -50,14 +51,16 @@ class StatsWidget(QFrame):
                 border-radius: 12px;
             }}
         """)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        # Preferred, not Minimum: Minimum takes max(sizeHint, minimumSizeHint) as
+        # the card's least height, which is more than its wrapped cells need.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(14, 12, 14, 12)
 
         layer_name = self.stats_data.get("layer_name", QCoreApplication.translate("StatsWidget", "Layer"))
-        title = QLabel(layer_name)
+        title = WrapLabel(layer_name)    # a long layer name wraps instead of widening the card
         title.setTextFormat(Qt.TextFormat.PlainText)
         title.setFont(ui_font(13, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {_TEXT}; background: transparent;")
@@ -92,9 +95,8 @@ class StatsWidget(QFrame):
             }
             value = type_names.get(geometry_type, f"Type {geometry_type}")
             self._stats_rows.append(("Geometry", value))
-            display_value = display_types.get(geometry_type) or QCoreApplication.translate("StatsWidget", "Type {number}").format(
-                number=geometry_type
-            )
+            unknown_type = QCoreApplication.translate("StatsWidget", "Type {number}")
+            display_value = display_types.get(geometry_type) or unknown_type.format(number=geometry_type)
             stats_list.append((QCoreApplication.translate("StatsWidget", "Geometry"), display_value))
         distinct = self.stats_data.get("distinct_count")
         if distinct is not None:

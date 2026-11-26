@@ -15,7 +15,6 @@ from qgis.PyQt.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
-    QLabel,
     QMenu,
     QSizePolicy,
     QVBoxLayout,
@@ -40,6 +39,7 @@ from .theme import (
     DOCK_DANGER_BORDER as _DANGER_BORDER,
     DOCK_DANGER_TEXT as _DANGER_TEXT,
 )
+from .wrap_label import WrapLabel
 
 # ── One Dark palette (carbon.sh default theme) ─────────────────────────
 
@@ -575,9 +575,7 @@ class MessageBubble(QFrame):
 
         initial_html = html.escape(self.text).replace("\n", "<br>") if self.text else ""
 
-        self.text_label = QLabel(initial_html)
-        self.text_label.setWordWrap(True)
-        self.text_label.setMinimumWidth(0)  # allow label to shrink to viewport width
+        self.text_label = WrapLabel(initial_html)
         self.text_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.text_label.setTextFormat(Qt.TextFormat.RichText)
         self.text_label.setTextInteractionFlags(
@@ -633,29 +631,6 @@ class MessageBubble(QFrame):
         self._entrance_anim.setEndValue(1.0)
         self._entrance_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._entrance_anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        if hasattr(self, "text_label") and self.layout():
-            m = self.layout().contentsMargins()
-            inner_w = width - m.left() - m.right()
-            if inner_w > 0:
-                lh = self.text_label.heightForWidth(inner_w)
-                if lh > 0:
-                    return lh + m.top() + m.bottom()
-        return -1
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # Fix label render width so word-wrap displays correctly.
-        # No updateGeometry() here — hasHeightForWidth handles layout sizing.
-        if hasattr(self, "text_label") and self.layout():
-            m = self.layout().contentsMargins()
-            w = event.size().width() - m.left() - m.right()
-            if w > 0:
-                self.text_label.setFixedWidth(w)
 
     def set_text(self, text: str):
         self.text = text
@@ -756,7 +731,9 @@ class MessageContainer(QWidget):
         parent=None,
     ):
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Preferred, not Maximum: Qt caps a Maximum item at sizeHint().height(),
+        # the height of its wrapped text at the ideal width rather than the real one.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 0, 16, 0)
@@ -770,14 +747,21 @@ class MessageContainer(QWidget):
 
         if is_user:
             self.bubble.setMaximumWidth(440)
-            self.bubble.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
+            self.bubble.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
             row.addStretch(1)
             row.addWidget(self.bubble)
         else:
-            self.bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+            self.bubble.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             row.addWidget(self.bubble)
 
         outer.addLayout(row)
+
+    def resizeEvent(self, event):
+        if self.bubble.is_user:
+            # The pill hugs its text, but never outgrows the row in a narrow dock.
+            margins = self.layout().contentsMargins()
+            self.bubble.setMaximumWidth(min(440, max(1, self.width() - margins.left() - margins.right())))
+        super().resizeEvent(event)
 
     def set_streaming_text(self, text: str):
         self.bubble.set_streaming_text(text)
