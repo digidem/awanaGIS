@@ -97,9 +97,34 @@ class AgentBackend(ABC):
         if toolkit is None:
             return ""
         try:
+            self._refresh_workspace_state(toolkit)
             return toolkit.agent_state_summary() or ""
         except Exception:  # nosec B110
             return ""
+
+    def _refresh_workspace_state(self, toolkit):
+        """Read the project on the QGIS main thread before the state is formatted here.
+
+        The layer registry changes only on the main thread and a backend runs
+        on its own thread. Without this, a user who edited a layer and then
+        sent a message would be answered from the counts read before the edit.
+        A busy main thread leaves the last state read there in place.
+        """
+        refresh = getattr(toolkit, "refresh_agent_layers", None)
+        if refresh is None:
+            return
+        from ..core.toolkit import _on_main_thread
+
+        if _on_main_thread():
+            refresh()
+            return
+        executor = getattr(self, "executor", None)
+        if executor is None:
+            return
+        try:
+            executor.run_sync(refresh, timeout=2.0)
+        except Exception:  # noqa: BLE001 — the next request uses the last state read there
+            pass
 
     def validate(self) -> Optional[str]:
         p = self._provider()

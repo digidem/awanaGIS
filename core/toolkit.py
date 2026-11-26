@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as _FutureTimeoutError
 from contextlib import redirect_stderr, redirect_stdout
 
-from qgis.PyQt.QtCore import QCoreApplication, QThread
+from qgis.PyQt.QtCore import QCoreApplication, QThread, QTimer
 from qgis.core import Qgis
 from qgis.core import (
     QgsApplication,
@@ -836,6 +836,18 @@ class QgisToolkit:
         # Scan layers already loaded in the project so the agent state
         # summary is never stale at startup.
         self._scan_existing_layers()
+        # Layers also change without the agent: in the layer panel, or when a
+        # project loads. Bring the registry in line once the change settles.
+        self._agent_layers_timer = QTimer()
+        self._agent_layers_timer.setSingleShot(True)
+        self._agent_layers_timer.setInterval(0)
+        self._agent_layers_timer.timeout.connect(self.refresh_agent_layers)
+        try:
+            project = QgsProject.instance()
+            project.layersAdded.connect(self._agent_layers_changed)
+            project.layersRemoved.connect(self._agent_layers_changed)
+        except Exception:  # nosec B110
+            pass
 
     def _scan_existing_layers(self):
         """Register all existing project layers in the agent state.
@@ -849,25 +861,57 @@ class QgisToolkit:
         except Exception:  # nosec B110
             return
         for layer in layers:
-            if not layer:
-                continue
-            try:
-                self._agent_state.register_layer(
-                    layer_id=layer.id(),
-                    name=layer.name(),
-                    layer_type=_map_layer_type_name(layer),
-                    crs=layer.crs().authid() if layer.crs().isValid() else None,
-                    feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
-                    fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
-                    source=layer.publicSource(),
-                    is_analysis=_is_analysis_layer(layer),
-                )
-            except Exception:  # nosec B110
-                pass
+            if layer:
+                self._register_agent_layer(layer)
+
+    def _register_agent_layer(self, layer):
+        """Record a project layer as it is now."""
+        try:
+            self._agent_state.register_layer(
+                layer_id=layer.id(),
+                name=layer.name(),
+                layer_type=_map_layer_type_name(layer),
+                crs=layer.crs().authid() if layer.crs().isValid() else None,
+                feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
+                fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
+                source=layer.publicSource(),
+                is_analysis=_is_analysis_layer(layer),
+            )
+        except Exception:  # nosec B110
+            pass
+
+    def _agent_layers_changed(self, *_args):
+        """Project signal: refresh the registry once a burst of changes is over."""
+        try:
+            self._agent_layers_timer.start(0)
+        except Exception:  # nosec B110
+            pass
+
+    def refresh_agent_layers(self):
+        """Bring the layer registry in line with the project. Main thread only.
+
+        The registry feeds the Workspace State block of every model request.
+        A layer that left the project leaves the registry, a layer that joined
+        by any means enters it, and feature counts are read from the layers
+        again, so an edit shows in the next request. Reading QGIS layers from
+        a backend thread is not safe, so the call does nothing there.
+        """
+        if self._agent_state is None or not _on_main_thread():
+            return
+        try:
+            layers = QgsProject.instance().mapLayers()
+        except Exception:  # nosec B110
+            return
+        for layer_id in [layer_id for layer_id in self._agent_state.layers if layer_id not in layers]:
+            self._agent_state.unregister_layer(layer_id)
+        for layer in layers.values():
+            if layer:
+                self._register_agent_layer(layer)
 
     def agent_state_summary(self):
         """Return a compact workspace summary suitable for injection into prompts."""
         try:
+            self.refresh_agent_layers()
             return self._agent_state.to_system_prompt_section()
         except Exception:  # nosec B110
             return ""
@@ -4410,12 +4454,16 @@ class QgisToolkit:
             layer = matches[0]
 
         removed = self._layer_removal_payload(layer)
+        layer_id = layer.id()
         self._maybe_delete_layer_file(layer)
-        project.removeMapLayer(layer.id())
+        # Unregister before the removal: it deletes the layer object, and
+        # any call on the layer afterwards raises. A layer that stayed
+        # registered kept appearing in the Workspace State of every later turn.
         try:
-            self._agent_state.unregister_layer(layer.id())
+            self._agent_state.unregister_layer(layer_id)
         except Exception:  # nosec B110
             pass
+        project.removeMapLayer(layer_id)
         self._canvas_dirty = True
         return {
             "ok": True,

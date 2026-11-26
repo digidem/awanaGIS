@@ -126,7 +126,9 @@ class AgentState:
 
         if self.layers:
             lines.append(f"### Layers ({len(self.layers)})")
-            for layer_id, info in sorted(self.layers.items(), key=lambda kv: kv[1]["name"]):
+            # The toolkit updates the registry on the main thread while this
+            # runs on a backend thread: sort a copy, never the live mapping.
+            for layer_id, info in sorted(list(self.layers.items()), key=lambda kv: kv[1]["name"]):
                 parts = [f"- {info['name']} (id={layer_id}, type={info['type']})"]
                 if info.get("crs"):
                     parts.append(f"crs={info['crs']}")
@@ -145,7 +147,7 @@ class AgentState:
 
         if self.analysis_results:
             lines.append("### Cached Analyses")
-            for layer_id, info in self.analysis_results.items():
+            for layer_id, info in list(self.analysis_results.items()):
                 layer_name = self.layers.get(layer_id, {}).get("name", layer_id)
                 lines.append(
                     f"- {layer_name}: {info.get('analysis_type')} "
