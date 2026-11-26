@@ -311,7 +311,8 @@ def synthetic_sessions(settings, active="D"):
     ev_a.insert(5, {"type": "compaction"})
     save("A", ev_a)
     ev_c = session_events("C", 30)
-    ev_c[11]["tools"] = [None, {"name": "run_pyqgis", "input": {"code": "C-T5-7"}, "result": "ok"}]  # None nested tool: valid one kept
+    # None nested tool: the valid one is kept
+    ev_c[11]["tools"] = [None, {"name": "run_pyqgis", "input": {"code": "C-T5-7"}, "result": "ok"}]
     ev_c[21] = {"type": "agent_turn", "tools": "not a list", "text": 5}  # nothing renderable: no row
     ev_c[8]["text"] = None                                               # user row without text: no row
     ev_c.insert(7, {"type": "widget", "data": 1})                        # unknown type: no row
@@ -324,8 +325,9 @@ def synthetic_sessions(settings, active="D"):
     ev_d.insert(4, {"type": "stats", "data": 5, "raises": True})        # the renderer raises: rolled back
     ev_d.insert(9, {"type": "user", "text": "X-U9", "inject": "after-insert"})  # fails after inserting a row
     mixed = next(e for e in ev_d if isinstance(e, dict) and "D-A6" in str(e.get("text")))
+    # mixed: answer and two tools
     mixed["tools"] = [{"name": "list_layers", "input": {"code": "D-M6-0"}, "result": "ok"},
-                      {"name": "run_pyqgis", "input": {"code": "D-M6-1"}, "result": "ok"}]  # mixed: answer and two tools
+                      {"name": "run_pyqgis", "input": {"code": "D-M6-1"}, "result": "ok"}]
     save("D", ev_d)
     ev_e = session_events("E", 40)
     ev_e.insert(22, {"type": "user", "text": "X-U22", "inject": "after-insert"})  # fails in the second batch
@@ -767,7 +769,8 @@ class ScrollInputTests(DockCase):
                    value=vs.value(), was=v4, pinned=dock._pinned)
             thumb = handle_center(bar)
             mouse(bar, QEvent.Type.MouseButtonPress, thumb)
-            record(results, "press_on_thumb_is_a_thumb_interaction", bar._pin_control == "thumb", control=bar._pin_control)
+            record(results, "press_on_thumb_is_a_thumb_interaction", bar._pin_control == "thumb",
+                   control=bar._pin_control)
             mouse(bar, QEvent.Type.MouseButtonRelease, thumb)
             record(results, "release_clears_the_interaction", bar._pin_control is None, control=bar._pin_control)
 
@@ -1265,7 +1268,8 @@ class RestoreTests(DockCase):
                 wheel(dock.scroll.viewport(), 3)
                 wait_restored(dock)
                 record(results, "scroll_during_restore_cancels_follow",
-                       was_pending and dock._pinned is False and vs.value() < vs.maximum() and row_markers(dock) == exp_a,
+                       was_pending and dock._pinned is False and vs.value() < vs.maximum()
+                       and row_markers(dock) == exp_a,
                        value=vs.value(), maximum=vs.maximum(), pinned=dock._pinned, rows=row_markers(dock))
 
                 # Rapid switches that end on a pending multi-batch restore.
@@ -1290,7 +1294,8 @@ class RestoreTests(DockCase):
                 wait_restored(dock)
                 markers = row_markers(dock)
                 record(results, "malformed_rows_skipped_in_order",
-                       not dock._restoring_transcript and markers == exp_c and len(dock._transcript_events) == len(ev_c),
+                       not dock._restoring_transcript and markers == exp_c
+                       and len(dock._transcript_events) == len(ev_c),
                        restoring=dock._restoring_transcript, rows=markers, stored=len(dock._transcript_events),
                        events=len(ev_c))
                 record(results, "malformed_tool_list_keeps_valid_tools",
@@ -1383,7 +1388,8 @@ class CancelledGestureTests(DockCase):
             raised = False
             with patch.object(dock, "_remember_prompt", failing_prompt):
                 try:
-                    dock._restore_transcript([{"type": "user", "text": "q"}, {"type": "agent_turn", "text": "a", "tools": []}])
+                    dock._restore_transcript([{"type": "user", "text": "q"},
+                                              {"type": "agent_turn", "text": "a", "tools": []}])
                 except Exception:
                     raised = True
             record(results, "setup_failure_does_not_raise", not raised and calls["n"] == 1,
