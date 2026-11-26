@@ -18,7 +18,7 @@ from types import MethodType
 import unittest
 from unittest.mock import patch
 
-from qgis.PyQt.QtCore import QEvent, QPoint, QSettings, Qt
+from qgis.PyQt.QtCore import QEvent, QPoint, QPointF, QSettings, Qt
 from qgis.PyQt.QtGui import QMouseEvent, QWheelEvent
 from qgis.PyQt.QtTest import QTest
 from qgis.PyQt.QtWidgets import QApplication, QLabel, QStyle, QStyleOptionSlider, QWidget
@@ -64,7 +64,7 @@ def settle(ms):
 def wheel_event(widget, delta_y, delta_x=0):
     """A real QWheelEvent, delivered the way QApplication::notify delivers one (delta > 0 scrolls up)."""
     local = QPoint(widget.width() // 2, widget.height() // 2)
-    event = QWheelEvent(local, widget.mapToGlobal(local), QPoint(0, 0), QPoint(delta_x, delta_y),
+    event = QWheelEvent(QPointF(local), QPointF(widget.mapToGlobal(local)), QPoint(0, 0), QPoint(delta_x, delta_y),
                         Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
                         Qt.ScrollPhase.NoScrollPhase, False)
     QApplication.sendEvent(widget, event)
@@ -84,7 +84,8 @@ def mouse(widget, kind, pos, button=LEFT, buttons=None):
     """A real QMouseEvent. QTest.mouseMove only moves the cursor, which the offscreen plugin ignores."""
     if buttons is None:
         buttons = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseButtonRelease else button
-    QApplication.sendEvent(widget, QMouseEvent(kind, pos, widget.mapToGlobal(pos), button, buttons,
+    # QPointF: PyQt 6 does not convert a QPoint for these arguments.
+    QApplication.sendEvent(widget, QMouseEvent(kind, QPointF(pos), QPointF(widget.mapToGlobal(pos)), button, buttons,
                                                Qt.KeyboardModifier.NoModifier))
     settle(100)
 
