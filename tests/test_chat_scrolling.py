@@ -94,7 +94,8 @@ def handle_rect(bar):
     """The rect of the scrollbar thumb."""
     option = QStyleOptionSlider()
     bar.initStyleOption(option)
-    return bar.style().subControlRect(QStyle.CC_ScrollBar, option, QStyle.SC_ScrollBarSlider, bar)
+    return bar.style().subControlRect(QStyle.ComplexControl.CC_ScrollBar, option,
+                                      QStyle.SubControl.SC_ScrollBarSlider, bar)
 
 
 def handle_center(bar):
