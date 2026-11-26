@@ -1189,7 +1189,7 @@ _PYQGIS_MAIN_THREAD_MARKERS = (
     # project layer registry (reading/mutating it off-thread is unsafe)
     "addMapLayer", "removeMapLayer", "setActiveLayer",
     "addVectorLayer", "addRasterLayer",
-    "mapLayer(", "mapLayersByName",
+    "mapLayer(", "mapLayers", "mapLayersByName",
     # layer editing buffers (tied to the project layer they edit)
     "startEditing", "commitChanges", "rollBack",
     # toolkit helpers that read project layers on the main thread
