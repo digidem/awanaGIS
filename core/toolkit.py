@@ -16,6 +16,7 @@ its slot.
 """
 
 import io
+import json
 import os
 import re
 import tempfile
@@ -977,7 +978,7 @@ class QgisToolkit:
         """
         self._ask_emitter = emitter
 
-    def ask_user(self, question, options, allow_free_text=True):
+    def ask_user(self, question=None, options=None, allow_free_text=True):
         """Toolkit implementation of the ``ask_user`` tool.
 
         Return contract (deliberately different from the other toolkit
@@ -1060,6 +1061,17 @@ class QgisToolkit:
     def _normalize_ask_user_options(options):
         """Accept common model-emitted option shapes and return label dicts."""
         normalized = []
+        if isinstance(options, str):
+            # Some models send the list as one JSON string.
+            try:
+                options = json.loads(options)
+            except (ValueError, RecursionError):
+                options = None
+            readable = isinstance(options, dict) or (
+                isinstance(options, list) and all(isinstance(item, (str, dict)) for item in options)
+            )
+            if not readable:
+                options = None
         if isinstance(options, dict):
             options = [
                 {"label": str(key), "description": str(value) if value is not None else ""}
