@@ -30,6 +30,7 @@ from qgis.PyQt.QtWidgets import (
     QStyle,
     QStyleOptionSlider,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -94,6 +95,8 @@ _MAX_PASTE_CHARS = 20_000  # warn before pasting blocks larger than this
 
 PIN_EPS = 2                 # a scroll value this close to the maximum counts as the bottom
 _RESTORE_BATCH_SIZE = 20    # stored events rendered per batch of a session restore
+JUMP_BUTTON_SIZE = 32       # px at font scale 1: the floating button that returns to the latest message
+JUMP_BUTTON_MARGIN = 12     # px at font scale 1, between that button and the edges of the viewport
 _LEFT = Qt.MouseButton.LeftButton
 # Vertical scroll commands. QAbstractScrollArea rejects Home and End on the viewport (Qt 5); the
 # scrollbar itself accepts them when it has the focus. The acceptance gate keeps them inert there.
@@ -233,6 +236,21 @@ class PinScrollBar(QScrollBar):
         toward = _key_direction(event)
         if event.isAccepted() and toward is not None:
             self.reader_scrolled.emit(toward)
+
+
+class JumpButton(QToolButton):
+    """The floating button that returns the reader to the latest message.
+
+    It lies over the transcript, so a wheel event that lands on it must still scroll the transcript.
+    """
+
+    def wheelEvent(self, event):
+        parent = self.parentWidget()
+        area = parent.parentWidget() if parent is not None else None
+        if isinstance(area, QScrollArea):
+            area.wheelEvent(event)
+        else:
+            super().wheelEvent(event)
 
 
 class ChatWorker(QThread):
@@ -560,6 +578,23 @@ class ChatDock(QgsDockWidget):
         self.transcript_layout.addStretch(1)
 
         self.scroll.setWidget(self.transcript_widget)
+        # Floating button that returns the reader to the latest message. It is shown while the last
+        # message is out of view, so the reader can see that the transcript stopped following.
+        self._jump_button = JumpButton(self.scroll.viewport())
+        self._jump_button.setObjectName("JumpToLatest")
+        self._jump_button.setText("↓")
+        self._jump_button.setFont(ui_font(15, QFont.Weight.DemiBold))
+        self._jump_button.setToolTip(QCoreApplication.translate("ChatDock", "Jump to latest message"))
+        self._jump_button.setAccessibleName(self._jump_button.toolTip())
+        self._jump_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._jump_button.setFixedSize(fs(JUMP_BUTTON_SIZE), fs(JUMP_BUTTON_SIZE))
+        self._jump_button.setStyleSheet(
+            f"QToolButton#JumpToLatest {{ background:{_ACCENT}; color:{_ACCENT_TEXT};"
+            f" border:none; border-radius:{fs(JUMP_BUTTON_SIZE) // 2}px; }}"
+            f"QToolButton#JumpToLatest:hover {{ background:{_ACCENT_HOV}; }}"
+        )
+        self._jump_button.clicked.connect(self._pin_and_follow)
+        self._jump_button.hide()
         chat_page = QWidget()
         chat_layout = QVBoxLayout(chat_page)
         chat_layout.setContentsMargins(0, 0, 0, 0)
@@ -851,7 +886,9 @@ class ChatDock(QgsDockWidget):
             new_w = event.size().width()
             if self.transcript_widget.maximumWidth() != new_w or self.transcript_widget.minimumWidth() != new_w:
                 self.transcript_widget.setFixedWidth(new_w)
-            self._cap_rows(max(1, self.transcript_widget.width()))  # the cap follows the viewport
+            # The rows' cap follows the viewport, and so does the jump button.
+            self._cap_rows(max(1, self.transcript_widget.width()))
+            self._place_jump_button()
             return False
         if (obj is self.input.viewport() and event.type() == QEvent.Type.Resize
                 and event.size().width() != event.oldSize().width()):
@@ -1027,6 +1064,19 @@ class ChatDock(QgsDockWidget):
     def _pin_and_follow(self):
         self._pinned = True
         self._follow_bottom()
+        self._update_jump_button()
+
+    def _place_jump_button(self):
+        """Keep the jump button in the bottom-right corner of the viewport, above the transcript."""
+        button = self._jump_button
+        viewport = self.scroll.viewport()
+        button.move(viewport.width() - button.width() - fs(JUMP_BUTTON_MARGIN),
+                    viewport.height() - button.height() - fs(JUMP_BUTTON_MARGIN))
+        button.raise_()
+
+    def _update_jump_button(self):
+        """Show the jump button exactly while the last message is out of view."""
+        self._jump_button.setVisible(not self._is_at_bottom())
 
     def _on_value_changed(self, value):
         """A value change that is neither ours nor a Qt clamp moved the view up: never stay pinned.
@@ -1039,9 +1089,11 @@ class ChatDock(QgsDockWidget):
             return
         if value < self.scroll.verticalScrollBar().maximum() - PIN_EPS:
             self._pinned = False
+        self._update_jump_button()
 
     def _on_range_changed(self, _minimum, _maximum):
         self._follow_bottom()
+        self._update_jump_button()
 
     def _cap(self, widget):
         # QScrollArea sizes the transcript at max(viewport width, minimum width). Capping every row
