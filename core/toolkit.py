@@ -80,6 +80,25 @@ def _is_analysis_layer(layer):
     )
 
 
+def _is_temp_file(path):
+    """True for a file that lies in the system temporary folder.
+
+    Only such a file is deleted with the analysis layer that shows it. A file
+    anywhere else belongs to the user, whatever flag added its layer. Links
+    are not followed: a link outside the folder is the user's, whatever it
+    points to, and a link inside it is removed without its target.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return False
+    try:
+        # Layer options after "?" or "|" are not part of the file name.
+        full = os.path.normcase(os.path.abspath(os.path.expanduser(path.split("|", 1)[0].split("?", 1)[0])))
+        folder = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+        return os.path.commonpath([full, folder]) == folder and full != folder
+    except (OSError, ValueError):  # different drives, or a path that cannot be read
+        return False
+
+
 def _on_main_thread():
     """True when the caller is on the Qt main (GUI) thread.
 
@@ -813,8 +832,9 @@ class QgisToolkit:
         # These are meant to persist; the agent reuses them instead of
         # recreating and never auto-deletes them.
         self._analysis_layers = {}
-        # Track temp file paths for is_analysis layers so they can be cleaned
-        # up when the layer is removed or a session is reset.
+        # Track temporary file paths for is_analysis layers so they can be
+        # cleaned up when the layer is removed or a session is reset. Files
+        # elsewhere are the user's and are never entered here.
         self._temp_layer_files = {}  # layer_id -> file_path
         # Session-level approval for tool categories (e.g., "gee").
         # Reset when the user starts a new chat session.
@@ -1362,6 +1382,8 @@ class QgisToolkit:
     def _delete_temp_analysis_layer_files(self):
         """Delete source files for tracked is_analysis temp layers."""
         for path in list(self._temp_layer_files.values()):
+            if not _is_temp_file(path):
+                continue
             try:
                 os.unlink(path)
             except Exception:  # nosec B110
@@ -2896,8 +2918,8 @@ class QgisToolkit:
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
-            # Track temp file for cleanup when layer is removed/session ends.
-            if isinstance(uri, str):
+            # A temporary file goes with the layer; a file the user keeps does not.
+            if isinstance(uri, str) and _is_temp_file(uri):
                 self._temp_layer_files[layer.id()] = str(uri)
         zoomed = self._zoom_to_layer(layer) if zoom else False
         return {
@@ -4401,7 +4423,7 @@ class QgisToolkit:
         path = self._temp_layer_files.pop(layer.id(), None)
         if path is None:
             path = layer.publicSource()
-        if path:
+        if path and _is_temp_file(path):
             try:
                 os.unlink(path)
             except Exception:  # nosec B110
@@ -4410,8 +4432,9 @@ class QgisToolkit:
     def remove_layer(self, layer_id=None, layer_name=None):
         """Unload one map layer from the current project.
 
-        For is_analysis temp layers, the source file is also deleted.
-        For other layers, the source dataset is never deleted.
+        A temporary file that an analysis layer shows is deleted with the
+        layer. Any other source file is never deleted, including a derived
+        file the user asked to keep.
         """
         layer_id = layer_id.strip() if isinstance(layer_id, str) else layer_id
         layer_name = layer_name.strip() if isinstance(layer_name, str) else layer_name
@@ -4476,7 +4499,7 @@ class QgisToolkit:
         """Unload all map layers from the current project.
 
         Requires confirm=True so the model cannot clear the canvas by accident.
-        Source datasets are not deleted, but is_analysis temp layer files are.
+        Source datasets are not deleted; temporary files of is_analysis layers are.
         """
         if confirm is not True:
             return {
