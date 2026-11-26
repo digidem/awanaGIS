@@ -27,7 +27,6 @@ AgentEvent = import_module(f"{pkg}.backends.base").AgentEvent
 EventType = import_module(f"{pkg}.backends.base").EventType
 atb_mod = import_module(f"{pkg}.gui.agent_turn_bubble")
 mb_mod = import_module(f"{pkg}.gui.message_bubble")
-StatsWidget = import_module(f"{pkg}.gui.stats_widget").StatsWidget
 GifWidget = import_module(f"{pkg}.gui.gif_widget").GifWidget
 theme = import_module(f"{pkg}.gui.theme")
 AgentTurnBubble = atb_mod.AgentTurnBubble
@@ -83,12 +82,11 @@ def row_required(row):
 def geometry_report(dock):
     """Measure one transcript state.
 
-    Every counter should be 0, except ``stat_short``, the one named exception.
-    ``notes`` names each violation with its numbers.
+    Every counter should be 0. ``notes`` names each violation with its numbers.
     """
     tw = dock.transcript_widget
     ws = rows(dock)
-    report = {"not_contained": 0, "clipped": 0, "stat_short": 0, "slack": 0, "notes": []}
+    report = {"not_contained": 0, "clipped": 0, "slack": 0, "notes": []}
     notes = report["notes"]
 
     def outside(widget, parent):
@@ -118,11 +116,7 @@ def geometry_report(dock):
             if isinstance(c, QLabel) and c.wordWrap():
                 need = c.heightForWidth(c.width())
                 if need >= 0 and c.height() < need:
-                    short = need - c.height()
-                    if isinstance(p.parentWidget(), StatsWidget) and short <= 4:
-                        report["stat_short"] += 1    # named exception: stat leaves may be up to 4 px short
-                    else:
-                        clipped(c, need, p)
+                    clipped(c, need, p)
         excess = w.height() - row_required(w)
         if excess > 1:
             report["slack"] = max(report["slack"], excess)
@@ -255,6 +249,8 @@ def caption_font(overlay):
 
 
 class ChatScrollingLayoutTests(unittest.TestCase):
+    maxDiff = None    # a failure lists every violation, not a truncated diff
+
     @classmethod
     def setUpClass(cls):
         cls.app = QgsApplication.instance() or QgsApplication([], True)
