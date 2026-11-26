@@ -57,6 +57,7 @@ from .dev_logging import log_event
 from .layer_analysis import analyze_vector_layer
 from .processing_param_check import build_unknown_params_error
 from .processing_tasks import parameter_names, run_processing_algorithm_task
+from .qt_compat import _qt_enum
 from .web_fetch_helpers import (
     is_binary_content,
     safe_filename_from_url,
@@ -308,6 +309,29 @@ def _no_geometry_flag():
         if val is not None:
             return val
     return getattr(QgsFeatureRequest, "NoGeometry", None)
+
+
+def _scoped_member(owner, enum_name, member_name):
+    """Return an enum member that QGIS 4 scopes under ``Qgis`` and QGIS 3 keeps flat."""
+    scoped = getattr(getattr(Qgis, enum_name, None), member_name, None)
+    return scoped if scoped is not None else getattr(owner, member_name)
+
+
+def _points_unit(unit_types):
+    """Return the points render unit: ``Qgis.RenderUnit.Points`` or ``QgsUnitTypes.RenderPoints``."""
+    scoped = getattr(getattr(Qgis, "RenderUnit", None), "Points", None)
+    return scoped if scoped is not None else unit_types.RenderPoints
+
+
+def _drop_empty_groups(group):
+    """Remove the groups below ``group`` that no longer hold a layer or a group."""
+    from qgis.core import QgsLayerTree
+
+    for child in list(group.children()):
+        if QgsLayerTree.isGroup(child):
+            _drop_empty_groups(QgsLayerTree.toGroup(child))
+            if not child.children():
+                group.removeChildNode(child)
 
 
 def _param_flag_optional():
@@ -4582,10 +4606,11 @@ class QgisToolkit:
     def create_layout(self, title, layers=None, page_size="A4", orientation="portrait"):
         """Create a print layout in the current QGIS project.
 
-        Sets up a default page (configurable size/orientation) and a map item
-        showing ``layers`` (or all visible layers when ``layers`` is None) at
-        the current canvas extent. Runs on the main thread; the dispatcher in
-        ``core.tools.dispatch`` wraps this call in ``executor.run_sync``.
+        Composes a default page: a map item showing ``layers`` (or all
+        visible layers when ``layers`` is None) at the current canvas extent,
+        with a title, a legend, a scale bar and a north arrow. Runs on the
+        main thread; the dispatcher in ``core.tools.dispatch`` wraps this
+        call in ``executor.run_sync``.
         """
         if not isinstance(title, str) or not title.strip():
             return {"ok": False, "error": "title must be a non-empty string"}
@@ -4638,30 +4663,42 @@ class QgisToolkit:
 
             layout.setName(title)
 
-            # Locate the map item created by initializeDefaults and configure it.
-            map_item = None
-            for item in layout.items():
-                if isinstance(item, QgsLayoutItemMap):
-                    map_item = item
-                    break
-            if map_item is not None:
-                resolved = []
-                if layers:
-                    for ref in layers:
-                        layer, lerr = self._resolve_layer_ref(ref)
-                        if lerr is not None:
-                            return lerr
-                        resolved.append(layer)
-                else:
-                    # Fall back to all currently visible layers.
-                    canvas = self.iface.mapCanvas() if self.iface is not None else None
-                    if canvas is not None:
-                        resolved = [lyr for lyr in canvas.layers() if lyr is not None]
-                if resolved:
-                    map_item.setLayers(resolved)
+            resolved = []
+            if layers:
+                for ref in layers:
+                    layer, lerr = self._resolve_layer_ref(ref)
+                    if lerr is not None:
+                        return lerr
+                    resolved.append(layer)
+            else:
+                # Fall back to all currently visible layers.
                 canvas = self.iface.mapCanvas() if self.iface is not None else None
                 if canvas is not None:
-                    map_item.setExtent(canvas.extent())
+                    resolved = [lyr for lyr in canvas.layers() if lyr is not None]
+                else:
+                    # Drawing order is bottom first; a map item lists top first.
+                    resolved = list(reversed(project.layerTreeRoot().layerOrder()))
+            if not resolved:
+                # QGIS falls back to the whole project behind an empty layer list,
+                # which would print layers the user has turned off.
+                return {
+                    "ok": False,
+                    "error": "No visible layers to show. Turn layers on in the project "
+                             "or pass their names in layers.",
+                }
+
+            # initializeDefaults() creates the page only. The map item it was
+            # once assumed to create is added by the QGIS designer for
+            # interactive layouts, so without this step the export is blank.
+            map_item = next((item for item in layout.items() if isinstance(item, QgsLayoutItemMap)), None)
+            if map_item is None:
+                map_item = QgsLayoutItemMap(layout)
+                layout.addLayoutItem(map_item)
+            map_item.setKeepLayerSet(True)
+            map_item.setLayers(resolved)
+            crs, view = self._layout_view(project, resolved)
+            items, notes = self._compose_layout(layout, map_item, title, crs, view)
+            shown = map_item.extent()
 
             manager.addLayout(layout)
             self._canvas_dirty = True
@@ -4670,10 +4707,233 @@ class QgisToolkit:
                 title=title,
                 page_size=page_size,
                 orientation=orientation,
+                items=items,
             )
-            return {"ok": True, "layout_id": title, "name": title}
+            return {
+                "ok": True,
+                "layout_id": title,
+                "name": title,
+                "layers": [layer.name() for layer in resolved],
+                "extent": [shown.xMinimum(), shown.yMinimum(), shown.xMaximum(), shown.yMaximum()],
+                "crs": map_item.crs().authid(),
+                "page": f"{page_size} {orientation}",
+                "items": items,
+                "notes": notes,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+
+    _LAYOUT_MARGIN_MM = 10.0
+    _LAYOUT_TITLE_TOP_MM = 3.0
+    _LAYOUT_TITLE_BAND_MM = 20.0
+    _LAYOUT_BOTTOM_BAND_MM = 34.0
+    _LAYOUT_MAX_BAND_SHARE = 0.45
+
+    def _layout_view(self, project, layers):
+        """Return ``(crs, extent)`` for a new layout map.
+
+        The canvas view wins. Without a canvas the project's default view is
+        used, and failing that the combined extent of the layers.
+        """
+        from qgis.core import QgsCoordinateTransform, QgsRectangle
+
+        canvas = self.iface.mapCanvas() if self.iface is not None else None
+        if canvas is not None:
+            # QgsMapCanvas exposes its CRS only through the map settings.
+            return canvas.mapSettings().destinationCrs(), canvas.extent()
+        default = project.viewSettings().defaultViewExtent()
+        crs = default.crs()
+        if not crs.isValid():
+            crs = project.crs()
+        extent = QgsRectangle(default)
+        if extent.isNull() and layers:
+            for layer in layers:
+                box = QgsCoordinateTransform(layer.crs(), crs, project).transformBoundingBox(layer.extent())
+                extent.combineExtentWith(box)
+        return crs, extent
+
+    def _compose_layout(self, layout, map_item, title, crs, view):
+        """Place the map and add a title, legend, scale bar and north arrow.
+
+        Returns the names of the items on the page and notes about anything
+        left out. Each optional item is dropped on its own when the QGIS
+        build refuses it or the page has no room for it, so an accessory
+        never costs the map itself.
+        """
+        from qgis.PyQt.QtCore import QFile
+        from qgis.PyQt.QtGui import QFont
+        from qgis.core import (
+            QgsLayoutItemLabel,
+            QgsLayoutItemPicture,
+            QgsLayoutItemScaleBar,
+            QgsLayoutPoint,
+            QgsLayoutSize,
+            QgsTextFormat,
+            QgsUnitTypes,
+        )
+
+        page = layout.pageCollection().page(0).pageSize()
+        width, height = float(page.width()), float(page.height())
+        margin, top = self._LAYOUT_MARGIN_MM, self._LAYOUT_TITLE_BAND_MM
+        band = self._LAYOUT_BOTTOM_BAND_MM
+        items, notes = ["map"], []
+
+        # The legend is measured first, because its height decides how much
+        # room the band under the map needs.
+        try:
+            legend, legend_height = self._layout_legend(layout, map_item, band)
+        except Exception as exc:  # noqa: BLE001
+            legend, legend_height = None, 0.0
+            log_event("toolkit.create_layout.item_dropped", item="legend", error=str(exc))
+        # The legend sits on the page margin, so the band also keeps it off the map.
+        needed = legend_height + margin + 4.0
+        if legend is not None and needed > height * self._LAYOUT_MAX_BAND_SHARE:
+            notes.append(f"The legend needs {legend_height:.0f} mm and does not fit the page, so it was left out.")
+            log_event("toolkit.create_layout.item_dropped", item="legend", height_mm=round(legend_height, 1))
+            legend = None
+        if legend is not None:
+            band = max(band, needed)
+
+        map_item.setCrs(crs)
+        map_item.attemptResize(QgsLayoutSize(width - 2 * margin, height - top - band))
+        map_item.attemptMove(QgsLayoutPoint(margin, top))
+        if view is not None and not view.isNull():
+            # zoomToExtent keeps the item's size; setExtent would change it.
+            map_item.zoomToExtent(view)
+
+        def accessory(name, item, place):
+            try:
+                layout.addLayoutItem(item)
+                place(item)
+            except Exception as exc:  # noqa: BLE001
+                layout.removeLayoutItem(item)
+                log_event("toolkit.create_layout.item_dropped", item=name, error=str(exc))
+                return
+            items.append(name)
+
+        label = QgsLayoutItemLabel(layout)
+
+        def place_label(item):
+            item.setText(title)
+            text = QgsTextFormat()
+            font = QFont()
+            font.setBold(True)
+            text.setFont(font)
+            text.setSize(16 if len(title) <= 48 else 12)
+            text.setSizeUnit(_points_unit(QgsUnitTypes))
+            item.setTextFormat(text)
+            item.setHAlign(_qt_enum("AlignmentFlag", "AlignLeft"))
+            item.setVAlign(_qt_enum("AlignmentFlag", "AlignVCenter"))
+            item.attemptResize(QgsLayoutSize(width - 2 * margin, top - 2 * self._LAYOUT_TITLE_TOP_MM))
+            item.attemptMove(QgsLayoutPoint(margin, self._LAYOUT_TITLE_TOP_MM))
+
+        accessory("title", label, place_label)
+
+        if legend is not None:
+            def place_legend(item):
+                size = item.rect()
+                item.attemptMove(QgsLayoutPoint(width - margin - size.width(), height - margin - size.height()))
+
+            accessory("legend", legend, place_legend)
+
+        bar = QgsLayoutItemScaleBar(layout)
+
+        def place_scale_bar(item):
+            item.setLinkedMap(map_item)
+            item.setStyle("Single Box")
+            item.applyDefaultSize()
+            item.attemptMove(QgsLayoutPoint(margin, height - margin - item.rect().height()))
+
+        accessory("scale bar", bar, place_scale_bar)
+
+        arrow_path = ":/images/north_arrows/layout_default_north_arrow.svg"
+
+        def place_north_arrow(item):
+            if not QFile.exists(arrow_path):
+                raise RuntimeError("QGIS ships no default north arrow")
+            item.setPicturePath(arrow_path)
+            item.setNorthMode(_scoped_member(QgsLayoutItemPicture, "NorthMode", "GridNorth"))
+            item.setLinkedMap(map_item)
+            item.attemptResize(QgsLayoutSize(12.0, 16.0))
+            item.attemptMove(QgsLayoutPoint(width - margin - 13.0, top + 1.0))
+
+        accessory("north arrow", QgsLayoutItemPicture(layout), place_north_arrow)
+        return items, notes
+
+    def _layout_legend(self, layout, map_item, band):
+        """Create the legend for the map and measure it.
+
+        Returns ``(legend, height in mm)``. Columns are added until the
+        legend fits the band under the map. Raises when the build offers no
+        usable legend; the caller then leaves the legend out.
+        """
+        from qgis.PyQt.QtGui import QFont, QImage, QPainter
+        from qgis.PyQt.QtWidgets import QStyleOptionGraphicsItem
+        from qgis.core import QgsLayoutItemLegend, QgsLegendStyle, QgsTextFormat, QgsUnitTypes
+
+        def build(columns):
+            """Create a legend that lists the layers the map renders and nothing else."""
+            legend = QgsLayoutItemLegend(layout)
+            legend.setTitle("")
+            legend.setLinkedMap(map_item)
+            legend.setSymbolWidth(5.0)
+            legend.setSymbolHeight(4.0)
+            # Linking the legend to the map does not narrow its layer tree, and
+            # the map keeps the layer set it was given. The legend therefore
+            # takes a private copy of the project tree and keeps only the map's
+            # layers: hiding them in the shared tree would hide them on the canvas.
+            legend.setAutoUpdateModel(False)
+            tree = legend.model().rootGroup()
+            shown = {layer.id() for layer in map_item.layers()}
+            for node in tree.findLayers():
+                if node.layer() is None or node.layer().id() not in shown:
+                    node.parent().removeChildNode(node)
+                else:
+                    node.setItemVisibilityChecked(True)
+            _drop_empty_groups(tree)
+            font = QFont()
+            font.setPointSizeF(9.0)
+            for name in ("Group", "Subgroup", "Symbol", "SymbolLabel"):
+                member = _scoped_member(QgsLegendStyle, "LegendStyle", name)
+                if member is None:
+                    continue
+                style = QgsLegendStyle(legend.style(member))
+                if hasattr(style, "setTextFormat"):
+                    text = QgsTextFormat()
+                    text.setFont(font)
+                    text.setSize(9.0)
+                    text.setSizeUnit(_points_unit(QgsUnitTypes))
+                    style.setTextFormat(text)
+                else:
+                    style.setFont(font)
+                try:
+                    # QGIS 3.44 takes the style alone; QGIS 3.34 also wants its component.
+                    legend.setStyle(style)
+                except TypeError:
+                    legend.setStyle(member, style)
+            legend.setColumnCount(columns)
+            return legend
+
+        scratch = QImage(
+            8, 8, _qt_enum("Format", "Format_ARGB32_Premultiplied", owner=QImage)
+        )
+        scratch.fill(0)
+        painter = QPainter(scratch)
+        try:
+            legend, height = None, 0.0
+            # A legend only sizes itself for the column count it was given
+            # before its first paint, so each candidate is a fresh legend.
+            for columns in (1, 2, 3):
+                legend = build(columns)
+                legend.paint(painter, QStyleOptionGraphicsItem(), None)
+                height = float(legend.rect().height())
+                if height <= 0.0:
+                    raise RuntimeError("the legend reported no size")
+                if height <= band - 4.0:
+                    break
+        finally:
+            painter.end()
+        return legend, height
 
     def export_layout(self, layout_id, output_path, format="pdf"):
         """Export a print layout to PDF or PNG.
