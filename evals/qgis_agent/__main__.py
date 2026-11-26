@@ -13,18 +13,22 @@ from .runner import run_case
 
 def supervise(command, output, timeout, identity):
     process = subprocess.Popen(command, start_new_session=True)
+    detail = None
     try:
         code = process.wait(timeout=timeout)
         status = 'error' if code else None
+        if status:
+            detail = f'Worker exited with code {code} before writing a report'
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
         process.wait()
         status = 'timeout'
+        detail = f'Worker passed the {timeout:g} second deadline and was killed'
     report = output / 'run.json'
     if status and (status == 'timeout' or not report.exists()):
         output.mkdir(parents=True, exist_ok=True)
         report.write_text(json.dumps(dict(identity, status=status, turns=[], artifacts=[],
-                                          checks=[{'id': 'runner', 'status': 'blocked', 'detail': status}]),
+                                          checks=[{'id': 'runner', 'status': 'blocked', 'detail': detail}]),
                                      ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return status
 

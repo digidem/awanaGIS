@@ -20,6 +20,8 @@ The report captures first visible text, elapsed time, detected tool failures, an
 
 Unattended runs deny external basemap requests at the permission prompt. Verify the Google Satellite default, explicit alternatives, and unavailable-source behavior in QGIS Desktop. A synthetic raster provides repeatable imagery for PDF and SMP cases.
 
+An unattended run stands in for a user who approves work on the run's own files. The runner approves without a prompt: a layer loaded from the run's `inputs` or `outputs` folder with any provider; Processing parameters and PyQGIS code whose absolute paths stay inside the run directory. It still sends to the normal permission prompt, which unattended runs deny: URLs, network, subprocess and environment access, and absolute paths outside the run directory. A run that asks for permission records a `permission` check with status `blocked`.
+
 For Desktop basemap acceptance, use a disposable profile with [QuickMapServices 1.5.5](https://plugins.qgis.org/plugins/quick_map_services/version/1.5.5/) and verify the resulting layer against [Google Satellite, QMS service 678](https://qms.nextgis.com/geoservices/678/). Installing QuickMapServices supplies the catalog and layer actions. AwanaGIS still needs an integration to invoke that action from the chat. Record the plugin version and whether the basemap rendered.
 
 Run the candidate into a different directory, then compare collections of `run.json` reports.

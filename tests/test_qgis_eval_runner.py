@@ -232,3 +232,90 @@ class RunnerTest(unittest.TestCase):
             trace = run_case('selection', Path(tmp) / 'run', 'offline', 'fake', backend_factory=Backend)
             self.assertEqual(trace['status'], 'completed')
             self.assertEqual(trace['checks'][0]['status'], 'pass', trace['checks'][0])
+
+    def test_selection_is_seeded_when_heldout_fixture_renames_the_layer(self):
+        class Backend:
+            def __init__(self, config, toolkit, executor):
+                self.toolkit = toolkit
+                self.executor = executor
+
+            def send(self, message, history, emit, should_stop):
+                def selected_names():
+                    layer = self.toolkit.iface.activeLayer()
+                    return [str(feature['nome']) for feature in layer.selectedFeatures()]
+
+                emit(AgentEvent(EventType.TEXT, {'text': ', '.join(self.executor.run_sync(selected_names))}))
+                return history + [message]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            trace = run_case('selection', Path(tmp) / 'run', 'offline', 'fake', 'heldout', backend_factory=Backend)
+            self.assertEqual(trace['status'], 'completed')
+            self.assertEqual(trace['turns'][0]['reply'], 'Aldeia Arumã (teste), Aldeia Samaúma (teste)')
+            self.assertEqual(trace['checks'][0]['status'], 'pass', trace['checks'][0])
+
+    def test_unattended_run_approves_its_own_files_and_gates_everything_else(self):
+        runner = import_module(f"{EVAL_MODULE}.runner")
+
+        def gated(run_dir, tool, **arguments):
+            toolkit = runner.EvalToolkit(None, runner.EvalConfig('offline', 'fake'), run_dir / 'inputs')
+            return toolkit.confirm_external_access(tool, arguments) is not None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_dir = Path(tmp).resolve()
+            inputs, outputs = self.run_dir / 'inputs', self.run_dir / 'outputs'
+            inputs.mkdir()
+            outputs.mkdir()
+            (inputs / 'dados_aldeias.csv').write_text('codigo,pop\nA1,120\n', encoding='utf-8')
+            table, saved = inputs / 'dados_aldeias.csv', outputs / 'escola_sim.geojson'
+
+            approved = (
+                ('add_layer', {'uri': str(table), 'provider': 'ogr'}),
+                ('add_layer', {'uri': str(table) + '?type=csv', 'provider': 'ogr'}),
+                ('add_layer', {'uri': str(table) + '|geomType=none', 'provider': 'ogr'}),
+                ('add_layer', {'uri': f'file://{table}?type=csv&geomType=none', 'provider': 'delimitedtext'}),
+                ('add_layer', {'uri': str(table), 'provider': 'delimitedtext'}),
+                ('add_layer', {'uri': str(saved), 'provider': 'ogr'}),
+                ('run_processing', {'alg_id': 'native:extractbyattribute',
+                                    'params': {'INPUT': 'Aldeias', 'OUTPUT': str(saved)}}),
+                ('run_processing', {'alg_id': 'native:extractbyattribute',
+                                    'params': {'INPUT': 'Aldeias', 'OUTPUT': 'memory:'}}),
+                ('run_processing', {'alg_id': 'smp:generatesmp',
+                                    'params': {'EXTENT': '-60.85,-2.85,-60.20,-2.15 [EPSG:4326]',
+                                               'OUTPUT_FILE': str(outputs / 'territorio.smp')}}),
+                ('run_pyqgis', {'code': f"open('{saved}', 'w').write('ok')"}),
+                ('run_pyqgis', {'code': f"open('{table}').read()"}),
+                ('run_pyqgis', {'code': "Path(output_dir) / 'escola.geojson'"}),
+                ('run_pyqgis', {'code': "result = [f['nome'] for f in _sample_features(get_layer('Aldeias'))]"}),
+            )
+            for tool, arguments in approved:
+                self.assertFalse(gated(self.run_dir, tool, **arguments), (tool, arguments))
+
+            blocked = (
+                ('add_layer', {'uri': 'type=xyz&url=https://mt1.google.com/vt/lyrs=s&z={z}&y={y}&x={x}'}),
+                ('add_layer', {'uri': 'https://example.org/fundo.tif', 'provider': 'gdal'}),
+                ('add_layer', {'uri': '/etc/hosts', 'provider': 'ogr'}),
+                ('add_layer', {'uri': 'file:///etc/hosts', 'provider': 'delimitedtext'}),
+                ('add_layer', {'uri': str(Path(tmp).resolve().parent / 'outside.geojson'), 'provider': 'ogr'}),
+                ('run_processing', {'alg_id': 'native:buffer',
+                                    'params': {'INPUT': 'Aldeias', 'OUTPUT': '/tmp/fora.gpkg'}}),
+                ('run_processing', {'alg_id': 'native:filedownloader',
+                                    'params': {'URL': 'https://example.org/dados.zip'}}),
+                ('run_pyqgis', {'code': "import urllib.request; result = urllib.request.urlopen('https://example.org')"}),
+                ('run_pyqgis', {'code': "import os; result = os.environ['HOME']"}),
+                ('run_pyqgis', {'code': "result = open('/etc/passwd').read()"}),
+                ('run_pyqgis', {'code': "result = open('../fora.csv').read()"}),
+                ('run_pyqgis', {'code': f"result = '{Path(tmp).resolve().parent}/fora.geojson'"}),
+                ('web_fetch', {'url': 'https://example.org'}),
+            )
+            for tool, arguments in blocked:
+                self.assertTrue(gated(self.run_dir, tool, **arguments), (tool, arguments))
+
+    def test_supervisor_reports_the_worker_exit_code(self):
+        supervise = import_module(f"{EVAL_MODULE}.__main__").supervise
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'run'
+            status = supervise([sys.executable, '-c', 'import sys; sys.exit(3)'], output, 30, {'case': 'load'})
+            self.assertEqual(status, 'error')
+            report = json.loads((output / 'run.json').read_text())
+            self.assertEqual(report['status'], 'error')
+            self.assertIn('exited with code 3', report['checks'][0]['detail'])

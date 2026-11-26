@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from qgis.analysis import QgsNativeAlgorithms
 from qgis.core import Qgis, QgsApplication, QgsProject, QgsRectangle
@@ -48,15 +49,29 @@ class EvalIface:
 
 
 class EvalToolkit(QgisToolkit):
-    """Approve only fixture input files; leave other permissions to the normal gate."""
+    """Approve the run's own files; leave other permissions to the normal gate.
+
+    An unattended run stands in for a user who approves operations on the
+    files they supplied and on the results folder the runner names in the
+    first prompt. URLs, network, subprocess and environment access, and any
+    absolute path outside the run directory still go through the normal
+    permission prompt, which unattended runs deny.
+    """
+    _NETWORK_MARKERS = (
+        'urllib', 'requests', 'socket.', 'http.client', 'httpx', 'aiohttp', 'ftplib', 'smtplib',
+        'websocket', 'subprocess', 'os.system', 'popen', 'webbrowser',
+        'qgsnetworkaccessmanager', 'qgsfiledownloader', 'qgsnetworkrequest', 'qgsblockingnetworkrequest',
+    )
+
     def __init__(self, iface, config, input_dir, capture_first_pdf=False):
         super().__init__(iface, config=config)
         self.input_dir = Path(input_dir).resolve()
+        self.output_dir = self.input_dir.parent / 'outputs'
         self.capture_first_pdf = capture_first_pdf
         self.first_pdf_export = None
 
     def export_layout(self, layout_id, output_path, format="pdf"):
-        output_dir = self.input_dir.parent / 'outputs'
+        output_dir = self.output_dir
         capture = self.capture_first_pdf and self.first_pdf_export is None
         earlier_pdf = capture and any(path.lower().endswith('.pdf') for path in artifacts_under(output_dir))
         result = super().export_layout(layout_id, output_path, format)
@@ -79,22 +94,72 @@ class EvalToolkit(QgisToolkit):
         }
         return result
 
+    def _inside_run(self, value):
+        """True for an absolute path that resolves inside the run directory."""
+        return Path(value).is_absolute() and Path(value).resolve().is_relative_to(self.input_dir.parent)
+
+    @staticmethod
+    def _local_path(uri):
+        """Return the filesystem path of a layer URI, or None when it is not a local file."""
+        if not isinstance(uri, str) or not uri.strip():
+            return None
+        text = uri.strip()
+        if text.casefold().startswith('file://'):
+            return Path(unquote(urlparse(text).path))
+        if '://' in text.casefold():
+            return None
+        return Path(text.split('?', 1)[0].split('|', 1)[0])
+
+    def _non_local_reason(self, code):
+        """Describe what model-authored code reaches beyond the run directory, or None when it does not.
+
+        Relative file names are left to the code: the working directory is
+        the read-only checkout, so they cannot name user data.
+        """
+        lowered = code.casefold()
+        if 'environ' in lowered or 'getenv' in lowered:
+            return 'read environment variables'
+        if '://' in lowered or any(marker in lowered for marker in self._NETWORK_MARKERS):
+            return 'reach the network or start processes'
+        for match in self._STRING_LITERAL_RE.finditer(code):
+            value = match.group('value')
+            if (self._looks_external_reference(value) and self._PATH_RE.search(value)
+                    and not self._inside_run(value)):
+                return f'access a path outside the run directory: {value}'
+        return None
+
     def confirm_external_access(self, tool_name, args):
+        args = args or {}
         if tool_name == 'add_layer':
-            uri = (args or {}).get('uri')
-            if isinstance(uri, str) and (args or {}).get('provider', 'ogr') in ('ogr', 'gdal'):
-                path = Path(uri).resolve()
-                if path.is_file() and path.is_relative_to(self.input_dir):
-                    return None
-        if tool_name == 'run_processing' and (args or {}).get('alg_id') == 'smp:generatesmp':
-            params = (args or {}).get('params') or {}
-            output = params.get('OUTPUT_FILE')
-            if isinstance(output, str) and Path(output).resolve().is_relative_to(self.input_dir.parent / 'outputs'):
-                paths = [v for v in self._iter_strings(params) if self._looks_external_reference(v)]
-                if all(Path(v).is_absolute() and Path(v).resolve().is_relative_to(self.input_dir.parent)
-                       for v in paths):
-                    return None
+            path = self._local_path(args.get('uri'))
+            if path is not None and self._inside_run(str(path)):
+                return None
+        if tool_name == 'run_processing':
+            flagged = [value for value in self._iter_strings(args.get('params') or {})
+                       if self._looks_external_reference(value)]
+            if all(self._inside_run(value) for value in flagged):
+                return None
+        if tool_name == 'run_pyqgis':
+            reason = self._non_local_reason(str(args.get('code') or ''))
+            if reason is None:
+                return None
+            verdict = super().confirm_external_access(tool_name, args)
+            if verdict is None:
+                # The normal gate does not watch environment access, and an
+                # unattended worker holds the eval credential in its environment.
+                return {'ok': False, 'error': f'Permission denied: {reason}', 'cancelled': True}
+            return verdict
         return super().confirm_external_access(tool_name, args)
+
+
+def layer_for_file(project, path):
+    """Return the project layer whose source is the given file."""
+    target = Path(path).resolve()
+    for layer in project.mapLayers().values():
+        source = layer.source().split('?', 1)[0].split('|', 1)[0]
+        if source and Path(source).resolve() == target:
+            return layer
+    raise RuntimeError(f'No project layer is backed by {target.name}')
 
 
 def load_processing_plugin(path, iface):
@@ -211,7 +276,8 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
     iface = EvalIface(project)
     selected_codes = set(getattr(fixture, 'preselected_codes', ()))
     if selected_codes:
-        layer, = project.mapLayersByName('Aldeias')
+        # Resolve by source file: held-out fixtures name the layer differently.
+        layer = layer_for_file(project, fixture.villages_path)
         layer.selectByIds([feature.id() for feature in layer.getFeatures() if str(feature['codigo']) in selected_codes])
         iface.active_layer = layer
     plugin = load_processing_plugin(plugin_path, iface) if plugin_path else None
