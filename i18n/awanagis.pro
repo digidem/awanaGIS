@@ -22,5 +22,6 @@ SOURCES = ../plugin.py \
     ../gui/session_popup.py \
     ../gui/settings_dialog.py \
     ../gui/stats_widget.py
+    ../gui/wrap_label.py
 
 TRANSLATIONS = awanagis_pt_BR.ts
