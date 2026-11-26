@@ -39,6 +39,7 @@ from .theme import (
     DOCK_BLUE as _BLUE,
     DOCK_WARN as _WARN,
 )
+from .wrap_label import WrapLabel
 
 
 def _mono(size, weight=QFont.Weight.Normal):
@@ -66,12 +67,11 @@ class _OptionRow(QFrame):
         layout.setSpacing(4)
         self._layout = layout
 
-        title = QLabel(display_label)
+        title = WrapLabel(display_label)
         title.setTextFormat(Qt.TextFormat.PlainText)
         self._title = title
         title.setObjectName("AskUserOptionTitle")
         title.setFont(_mono(11, QFont.Weight.DemiBold))
-        title.setWordWrap(True)
         title.setMinimumWidth(0)
         title.setStyleSheet(
             f"color:{_TEXT}; background:transparent; border:none; font-size:{fs(12)}px;"
@@ -79,12 +79,11 @@ class _OptionRow(QFrame):
         layout.addWidget(title)
 
         if description:
-            desc = QLabel(description)
+            desc = WrapLabel(description)
             desc.setTextFormat(Qt.TextFormat.PlainText)
             self._description = desc
             desc.setObjectName("AskUserOptionDescription")
             desc.setFont(_mono(10))
-            desc.setWordWrap(True)
             desc.setMinimumWidth(0)
             desc.setStyleSheet(
                 f"color:{_TEXT_2}; background:transparent; border:none; "
@@ -227,11 +226,10 @@ class AskUserCard(QFrame):
         header_row.addStretch(1)
         outer.addLayout(header_row)
 
-        q = QLabel(question)
+        q = WrapLabel(question)
         q.setTextFormat(Qt.TextFormat.PlainText)
         q.setObjectName("AskUserQuestion")
         q.setFont(_mono(12, QFont.Weight.DemiBold))
-        q.setWordWrap(True)
         q.setMinimumWidth(0)
         q.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         q.setStyleSheet(

@@ -8,7 +8,6 @@ from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtWidgets import (
     QFrame,
     QGridLayout,
-    QLabel,
     QSizePolicy,
     QVBoxLayout,
 )
@@ -154,19 +153,17 @@ class StatsWidget(QFrame):
         layout.setSpacing(2)
         layout.setContentsMargins(10, 8, 10, 8)
 
-        label_widget = QLabel(label)
-        label_widget.setWordWrap(True)
+        label_widget = WrapLabel(label)
         label_widget.setStyleSheet(
             f"color: {_TEXT_3}; font-size: {fs(9)}px; background: transparent; letter-spacing: 0.03em;"
         )
         layout.addWidget(label_widget)
 
-        value_widget = QLabel(str(value))
+        value_widget = WrapLabel(str(value))
         value_widget.setTextFormat(Qt.TextFormat.PlainText)
         value_widget.setStyleSheet(
             f"color: {_TEXT_2}; font-size: {fs(14)}px; font-weight: 500; background: transparent;"
         )
-        value_widget.setWordWrap(True)
         layout.addWidget(value_widget)
 
         return card

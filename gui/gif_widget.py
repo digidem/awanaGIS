@@ -68,9 +68,8 @@ class GifWidget(QFrame):
         title_label.setStyleSheet(f"color: {_TEXT_2}; font-size: {fs(12)}px;")
 
         # Animation label
-        animation_label = QLabel()
+        animation_label = WrapLabel()
         animation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        animation_label.setWordWrap(True)
         animation_label.setMinimumHeight(200)
         animation_label.setStyleSheet(
             f"background-color: {_SURFACE}; color: {_TEXT};"

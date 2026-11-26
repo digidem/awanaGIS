@@ -944,7 +944,9 @@ class ChatDock(QgsDockWidget):
 
     def _add_agent_turn_widget(self):
         container = QWidget()
-        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Preferred, not Maximum: Qt caps a Maximum item at sizeHint().height(), the turn's height at
+        # an ideal width, so the answer was clipped and blank space remained below the row.
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         vl = QVBoxLayout(container)
         vl.setContentsMargins(16, 0, 16, 0)
         vl.setSpacing(0)
