@@ -1395,18 +1395,19 @@ class ChatDock(QgsDockWidget):
                 index = layout.indexOf(widget)
                 if index >= 0:
                     layout.takeAt(index)
-            except Exception:  # noqa: BLE001 - the layout refuses: hide and detach it below anyway
-                pass
+            except RuntimeError:
+                index = -1                   # already deleted or refused: hide and detach it below anyway
             try:
                 widget.hide()                # never visible, even if the layout refuses to let go
                 widget.setParent(None)       # normally this takes it out of the layout as well
             except RuntimeError:
                 continue                     # already deleted
             try:
-                if layout.indexOf(widget) < 0:
-                    widget.deleteLater()     # nothing references it any more
-            except Exception:  # noqa: BLE001
-                pass
+                attached = layout.indexOf(widget) >= 0
+            except RuntimeError:
+                attached = True               # already deleted: never call deleteLater on it
+            if not attached:
+                widget.deleteLater()         # nothing references it any more
 
     def _sweep_detached(self):
         """Remove layout rows whose widget was detached by a failed rollback earlier."""

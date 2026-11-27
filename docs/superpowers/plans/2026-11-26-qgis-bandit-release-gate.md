@@ -269,6 +269,7 @@ Expected: no issues in `_discard`.
 **Files:**
 - Modify: `.github/workflows/qgis-ci.yml:73-87`
 - Modify: `metadata.txt:7-16`
+- Modify: `server/mcp_server.py:40`
 
 **Interfaces:**
 - Consumes: extracted packaged plugin, pinned Bandit dependency, release metadata validator.
@@ -288,7 +289,7 @@ Insert before `Upload packaged plugin artifact`:
 
 - [ ] **Step 2: Bump release metadata**
 
-Set `version=1.1.1` and prepend:
+Set `version=1.1.1` in `metadata.txt`, set `SERVER_INFO["version"]` to `1.1.1` in `server/mcp_server.py`, and prepend:
 
 ```ini
 changelog=1.1.1 - Fix the QGIS plugin-check security findings in failed chat-row cleanup and make pre-upload CI reject every Bandit finding.

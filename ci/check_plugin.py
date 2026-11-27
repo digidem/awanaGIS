@@ -689,10 +689,9 @@ def _run_bandit(target_dir: Path) -> dict:
             "confidence": str(item.get("issue_confidence", "")).upper(),
             "message": safe_message,
         }
-        if severity in ("MEDIUM", "HIGH"):
-            result["blocking_findings"].append(entry)
-        else:
-            result["informational_findings"].append(entry)
+        # QGIS blocks plugin releases on Bandit findings even when Bandit
+        # labels them low severity (for example, B110 try/except/pass).
+        result["blocking_findings"].append(entry)
 
     result["ok"] = not result["blocking_findings"] and not result["errors"]
     return result
@@ -1531,8 +1530,7 @@ def _format_scan_summary(report: dict) -> str:
             lines.append(
                 f"- **Bandit**: {'PASSED' if check['ok'] else 'FAILED'} "
                 f"({check['files_checked']} files; "
-                f"{len(check['blocking_findings'])} medium/high, "
-                f"{len(check['informational_findings'])} low)"
+                f"{len(check['blocking_findings'])} blocking finding(s))"
             )
             for f in check["blocking_findings"][:20]:
                 lines.append(
