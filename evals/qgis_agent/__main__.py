@@ -65,6 +65,7 @@ _PRESERVED_ENV_KEYS = frozenset({
     'PYTHONPATH',
     'PYTHONDONTWRITEBYTECODE',
     'QGIS_CUSTOM_CONFIG_PATH',
+    'QGIS_PREFIX_PATH',
     'QT_QPA_PLATFORM',
     'TMPDIR',
     'XDG_CACHE_HOME',
@@ -75,23 +76,14 @@ _PRESERVED_ENV_KEYS = frozenset({
 
 
 def _scrubbed_worker_env(provider, key_env):
-    """Pass only runtime variables and the single credential needed by the worker."""
+    """Pass only allowlisted runtime variables and the single credential needed by the worker."""
     from .runner import provider_key_env
 
     allowed = set(_PRESERVED_ENV_KEYS)
     needed_key = provider_key_env(provider, key_env)
     if needed_key:
         allowed.add(needed_key)
-    env = {}
-    for name, value in os.environ.items():
-        if (
-            name in allowed
-            or name.startswith('AWANAGIS_')
-            or name.startswith('QGIS_')
-            or name.startswith('QT_')
-        ):
-            env[name] = value
-    return env
+    return {name: value for name, value in os.environ.items() if name in allowed}
 
 
 def supervise(command, output, timeout, identity, env=None):

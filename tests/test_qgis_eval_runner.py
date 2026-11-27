@@ -1,6 +1,7 @@
 """Offline checks for the QGIS evaluation request path."""
 from importlib import import_module
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -370,7 +371,58 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(raised.exception.code, 2)
             self.assertFalse((root / 'missing-target').exists())
 
-            tk = runner.EvalToolkit(None, runner.EvalConfig('offline', 'fake'), root / 'inputs', allow_pyqgis=False)
-            verdict = tk.confirm_external_access('run_pyqgis', {'code': 'result = 1'})
+            seen = []
+
+            def fake_supervise(command, output, timeout, identity, env=None):
+                idx = command.index('--worker')
+                with patch.dict(os.environ, env or {}, clear=True), \
+                        patch.object(main_mod, 'run_case', return_value={'status': 'completed'}) as mock_run:
+                    rc = main_mod.main(command[idx:])
+                seen.append((list(command), dict(env or {}), rc, mock_run.call_args.kwargs['allow_pyqgis']))
+                return None
+
+            dirty_env = {
+                'PATH': os.environ.get('PATH', ''),
+                'EVAL_CUSTOM_KEY': 'secret-12345',
+                'AWANAGIS_OTHER_API_KEY': 'unrelated-awanagis-secret',
+                'OPENAI_API_KEY': 'unrelated-openai-secret',
+            }
+            with patch.dict(os.environ, dirty_env, clear=True), \
+                    patch.object(main_mod, 'supervise', side_effect=fake_supervise):
+                rc_default = main_mod.main([
+                    '--case', 'load', '--output', str(root / 'run-default'),
+                    '--provider', 'custom', '--base-url', 'https://127.0.0.1:9999/v1',
+                    '--key-env', 'EVAL_CUSTOM_KEY', '--model', 'fake',
+                ])
+                rc_allowed = main_mod.main([
+                    '--case', 'load', '--output', str(root / 'run-allowed'),
+                    '--provider', 'custom', '--base-url', 'https://127.0.0.1:9999/v1',
+                    '--key-env', 'EVAL_CUSTOM_KEY', '--model', 'fake', '--allow-pyqgis',
+                ])
+
+            self.assertEqual(rc_default, 0)
+            self.assertEqual(rc_allowed, 0)
+            cmd_default, env_default, _, allow_default = seen[0]
+            cmd_allowed, env_allowed, _, allow_allowed = seen[1]
+            self.assertNotIn('--allow-pyqgis', cmd_default)
+            self.assertNotIn('AWANAGIS_EVAL_ISOLATED', env_default)
+            self.assertFalse(allow_default)
+            self.assertIn('EVAL_CUSTOM_KEY', env_default)
+            self.assertNotIn('AWANAGIS_OTHER_API_KEY', env_default)
+            self.assertNotIn('OPENAI_API_KEY', env_default)
+
+            self.assertIn('--allow-pyqgis', cmd_allowed)
+            self.assertEqual(env_allowed.get('AWANAGIS_EVAL_ISOLATED'), '1')
+            self.assertTrue(allow_allowed)
+
+            tk_denied = runner.EvalToolkit(
+                None, runner.EvalConfig('offline', 'fake'), root / 'inputs', allow_pyqgis=False
+            )
+            verdict = tk_denied.confirm_external_access('run_pyqgis', {'code': 'result = 1'})
             self.assertIsNotNone(verdict)
             self.assertIn('isolated sandbox', verdict['error'])
+
+            tk_allowed = runner.EvalToolkit(
+                None, runner.EvalConfig('offline', 'fake'), root / 'inputs', allow_pyqgis=True
+            )
+            self.assertIsNone(tk_allowed.confirm_external_access('run_pyqgis', {'code': 'result = 1'}))
