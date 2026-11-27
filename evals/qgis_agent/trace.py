@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 import os
+import secrets as secure_random
+import string
 import time
 from pathlib import Path
 
@@ -17,10 +19,13 @@ def _redaction_placeholder(secrets):
     candidate_key = any(len(secret) == 1 and secret in candidates for secret in secrets)
     if default_safe and not candidate_key:
         return default
-    for character in candidates:
+    for character in candidates + string.ascii_letters + string.digits:
         if not any(character in secret for secret in secrets):
             return character * 3
-    raise ValueError('Run secrets leave no safe redaction placeholder')
+    while True:
+        marker = secure_random.token_hex(8)
+        if not any(marker in secret for secret in secrets):
+            return marker
 
 
 def redact(text, secrets=()):
@@ -122,7 +127,16 @@ def _redact_value(value, secrets, placeholder):
     if isinstance(value, (list, tuple)):
         return [_redact_value(item, secrets, placeholder) for item in value]
     if isinstance(value, dict):
-        return {key: _redact_value(item, secrets, placeholder) for key, item in value.items()}
+        redacted = {}
+        for key, item in value.items():
+            clean_key = _redact_value(key, secrets, placeholder) if isinstance(key, str) else key
+            if clean_key in redacted:
+                suffix = 2
+                while f'{clean_key}#{suffix}' in redacted:
+                    suffix += 1
+                clean_key = f'{clean_key}#{suffix}'
+            redacted[clean_key] = _redact_value(item, secrets, placeholder)
+        return redacted
     text = str(value)
     if any(secret in text for secret in secrets):
         for secret in secrets:
@@ -137,7 +151,8 @@ def redact_trace(trace, secrets=()):
     if not run_secrets:
         return trace
     placeholder = _redaction_placeholder(run_secrets)
-    return {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets, placeholder)
+    trusted = ('backend', 'key_env', 'status', 'variant', 'case')
+    return {key: value if key in trusted else _redact_value(value, run_secrets, placeholder)
             for key, value in trace.items()}
 
 

@@ -213,6 +213,18 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertEqual(json.loads(report_text)["key_env"], KEY_ENV)
         self.assertNotIn(SENTINEL, report_text)
 
+    def test_report_status_stays_exact_when_it_is_also_the_run_secret(self):
+        secret = "completed"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: secret}, clear=True):
+            run_dir = Path(directory) / "run"
+            trace, _ = self.run_scripted(run_dir, base_url=BASE_URL, key_env=KEY_ENV,
+                                         text=f"Reply: {secret}")
+            report = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "completed")
+        self.assertEqual(trace["status"], "completed")
+        self.assertNotIn(secret, report["turns"][0]["reply"])
+        self.assertNotIn(secret, trace["turns"][0]["reply"])
+
     def test_run_case_returns_the_redacted_trace_after_backend_exception(self):
         # _turn records exception types rather than messages, so the type carries the sentinel into the trace.
         exception_type = type(f"BackendError-{SENTINEL}", (Exception,), {})
@@ -296,6 +308,31 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertEqual(report, {"status": "completed"})
         self.assertEqual(written, report)
         self.assertEqual(trace_module.redact(secret, (secret,)), "[redacted]")
+
+    def test_placeholder_falls_back_when_key_uses_all_primary_candidates(self):
+        secret = "*#x-0[]a"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            written = trace_module.write_trace(path, {"turns": [{"reply": secret}]}, (secret,))
+            report = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(report["turns"][0]["reply"], "bbb")
+        self.assertEqual(written, report)
+        self.assertNotIn(secret, json.dumps(report))
+
+    def test_write_trace_redacts_dictionary_keys_and_resolves_collisions(self):
+        secret = "abcdefgh"
+        trace = {"turns": [{secret: "first", "middle": "stay", "[redacted]": "second"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            written = trace_module.write_trace(path, trace, (secret,))
+            report_text = path.read_text(encoding="utf-8")
+            report = json.loads(report_text)
+        keys = list(report["turns"][0])
+        self.assertIn("[redacted]", keys)
+        self.assertIn("[redacted]#2", keys)
+        self.assertEqual(len(set(keys)), 3)
+        self.assertNotIn(secret, report_text)
+        self.assertNotIn(secret, json.dumps(written))
 
     def test_write_trace_walks_values_and_preserves_trusted_metadata(self):
         class SecretValue:
