@@ -208,8 +208,10 @@ State: released | awaiting QGIS staff approval | blocked
 
 - QGIS blocked `1.1.0` for two low-severity Bandit `B110` findings. CI must not
   classify low findings as informational.
-- `gh repo view` selected the upstream AgenticGIS repository in this multi-remote
+- `gh repo view` selected an unrelated upstream repository in this multi-remote
   checkout. Pass `--repo digidem/awanaGIS` or set the default explicitly.
+- The branding test scans tracked documentation too. Keep retired upstream
+  product and repository names out of new runbooks.
 - `gh api -f 'environment_ids[]=...'` sends strings and fails validation. Use
   `--input -` with a JSON number.
 - `agent-browser`'s bundled Chrome does not inherit Brave authentication. Reuse a

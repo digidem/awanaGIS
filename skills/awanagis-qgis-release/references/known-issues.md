@@ -36,8 +36,8 @@ The pinned QGIS 3.44/Qt 5 and QGIS 4.4/Qt 6 release jobs passed for `1.1.1`.
 
 ## Tooling dead ends
 
-- Multiple git remotes made implicit `gh` commands target upstream
-  `ultramenid/AgenticGIS`; use `--repo digidem/awanaGIS`.
+- Multiple git remotes made implicit `gh` commands target an unrelated upstream
+  repository; use `--repo digidem/awanaGIS`.
 - Protected environment approval rejected string IDs sent through `gh api -f`;
   send a JSON body with numeric IDs through `--input -`.
 - A fresh agent-browser Chrome profile was not logged into QGIS; the user's
