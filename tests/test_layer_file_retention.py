@@ -99,6 +99,58 @@ class LayerFileRetentionTests(unittest.TestCase):
 
         self.assertTrue(kept.is_file(), "the marker stored in the project made the plugin delete a kept file")
 
+    def test_a_saved_project_analysis_layer_inside_temp_is_not_deleted(self):
+        outside = self.write(self.scratch.name, "saved_project_layer.geojson")
+        layer = QgsVectorLayer(str(outside), "saved_temp", "ogr")
+        layer.setCustomProperty("awanagis/analysis", True)
+        self.project.addMapLayer(layer)
+
+        self.assertTrue(self.toolkit.remove_layer(layer_id=layer.id())["ok"])
+        self.assertTrue(outside.is_file())
+
+        second = self.write(self.scratch.name, "saved_project_clear.geojson")
+        layer2 = QgsVectorLayer(str(second), "saved_clear", "ogr")
+        layer2.setCustomProperty("awanagis/analysis", True)
+        self.project.addMapLayer(layer2)
+        self.assertTrue(self.toolkit.clear_layers(confirm=True)["ok"])
+        self.assertTrue(second.is_file())
+
+    def test_a_symlinked_parent_inside_temp_does_not_delete_user_files(self):
+        kept_sub = Path(self.kept.name) / "subdir"
+        kept_sub.mkdir()
+        kept_file = self.write(kept_sub, "user_data.geojson")
+        temp_link_dir = Path(self.scratch.name) / "link_dir"
+        temp_link_dir.symlink_to(kept_sub, target_is_directory=True)
+        via_link = temp_link_dir / "user_data.geojson"
+
+        added = self.toolkit.add_layer(uri=str(via_link), is_analysis=True)
+        self.assertTrue(added["ok"], added)
+        self.assertEqual(self.toolkit._temp_layer_files, {})
+
+        self.assertTrue(self.toolkit.remove_layer(layer_id=added["layer_id"])["ok"])
+        self.assertTrue(kept_file.is_file(), "symlinked parent inside temp allowed user file deletion")
+
+        added2 = self.toolkit.add_layer(uri=str(via_link), is_analysis=True)
+        self.assertTrue(added2["ok"], added2)
+        self.toolkit.reset_agent_state()
+        self.assertTrue(kept_file.is_file(), "reset_agent_state deleted file via symlinked parent")
+
+    def test_non_analysis_temp_file_is_not_deleted(self):
+        temp_file = self.write(self.scratch.name, "non_analysis.geojson")
+        added = self.toolkit.add_layer(uri=str(temp_file), is_analysis=False)
+        self.assertTrue(added["ok"], added)
+
+        self.assertTrue(self.toolkit.remove_layer(layer_id=added["layer_id"])["ok"])
+        self.assertTrue(temp_file.is_file())
+
+    def test_clear_layers_deletes_tracked_temp_file(self):
+        scratch = self.write(self.scratch.name, "clear_temp.geojson")
+        added = self.toolkit.add_layer(uri=str(scratch), is_analysis=True)
+        self.assertTrue(added["ok"], added)
+
+        self.assertTrue(self.toolkit.clear_layers(confirm=True)["ok"])
+        self.assertFalse(scratch.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

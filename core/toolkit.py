@@ -19,6 +19,7 @@ import io
 import json
 import os
 import re
+import stat
 import tempfile
 import threading
 import time
@@ -82,6 +83,39 @@ def _is_analysis_layer(layer):
     )
 
 
+def _temp_file_location(path):
+    """Return ``(real_folder, rel_dir, basename)`` for a temporary file, or None.
+
+    Only a regular file (or symlink directly inside the temp folder) whose
+    lexical path and resolved parent directory both stay inside the system
+    temporary folder is eligible. A symlink outside the temp folder or a
+    symlinked parent directory inside it pointing outside is rejected.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return None
+    try:
+        # Layer options after "?" or "|" are not part of the file name.
+        raw = path.split("|", 1)[0].split("?", 1)[0].strip()
+        full = os.path.normcase(os.path.abspath(os.path.expanduser(raw)))
+        lexical_folder = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+        if os.path.commonpath([full, lexical_folder]) != lexical_folder or full == lexical_folder:
+            return None
+        parent = os.path.dirname(full)
+        basename = os.path.basename(full)
+        if basename in ("", ".", ".."):
+            return None
+        real_folder = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
+        real_parent = os.path.normcase(os.path.realpath(parent))
+        if os.path.commonpath([real_parent, real_folder]) != real_folder:
+            return None
+        if not os.path.islink(full) and os.path.isdir(full):
+            return None
+        rel_dir = os.path.relpath(parent, lexical_folder)
+        return real_folder, rel_dir, basename
+    except (OSError, ValueError):  # different drives, or a path that cannot be read
+        return None
+
+
 def _is_temp_file(path):
     """True for a file that lies in the system temporary folder.
 
@@ -90,14 +124,50 @@ def _is_temp_file(path):
     are not followed: a link outside the folder is the user's, whatever it
     points to, and a link inside it is removed without its target.
     """
-    if not isinstance(path, str) or not path.strip():
+    return _temp_file_location(path) is not None
+
+
+def _safe_unlink_temp_file(path):
+    """Unlink ``path`` without traversing symlinks out of the temporary folder."""
+    location = _temp_file_location(path)
+    if location is None:
         return False
+    real_folder, rel_dir, basename = location
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        dir_fd = None
+        try:
+            dir_fd = os.open(real_folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            if rel_dir not in ("", "."):
+                for part in rel_dir.split(os.sep):
+                    if not part or part == ".":
+                        continue
+                    if part == "..":
+                        return False
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                    os.close(dir_fd)
+                    dir_fd = next_fd
+            entry = os.lstat(basename, dir_fd=dir_fd)
+            if stat.S_ISDIR(entry.st_mode):
+                return False
+            os.unlink(basename, dir_fd=dir_fd)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            log_event("toolkit.temp_file_unlink_failed", error=str(exc))
+            return False
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
     try:
-        # Layer options after "?" or "|" are not part of the file name.
-        full = os.path.normcase(os.path.abspath(os.path.expanduser(path.split("|", 1)[0].split("?", 1)[0])))
-        folder = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
-        return os.path.commonpath([full, folder]) == folder and full != folder
-    except (OSError, ValueError):  # different drives, or a path that cannot be read
+        os.unlink(os.path.join(real_folder, rel_dir, basename))
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log_event("toolkit.temp_file_unlink_failed", error=str(exc))
         return False
 
 
@@ -953,6 +1023,35 @@ class QgisToolkit:
             if layer:
                 self._register_agent_layer(layer)
 
+    def cleanup_agent_layers(self):
+        """Stop the workspace-sync timer and disconnect project/app signals."""
+        timer = getattr(self, "_agent_layers_timer", None)
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception as exc:
+                log_event("toolkit.cleanup_timer_failed", error=str(exc))
+            try:
+                timer.timeout.disconnect(self.refresh_agent_layers)
+            except (TypeError, RuntimeError):
+                pass
+        try:
+            project = QgsProject.instance()
+            if project is not None:
+                for sig in (project.layersAdded, project.layersRemoved):
+                    try:
+                        sig.disconnect(self._agent_layers_changed)
+                    except (TypeError, RuntimeError):
+                        pass
+        except Exception as exc:
+            log_event("toolkit.cleanup_project_signals_failed", error=str(exc))
+        plugins_changed = getattr(QgsApplication, "pluginsChanged", None)
+        if plugins_changed is not None:
+            try:
+                plugins_changed.disconnect(self._invalidate_alg_cache)
+            except (TypeError, RuntimeError):
+                pass
+
     def agent_state_summary(self):
         """Return a compact workspace summary suitable for injection into prompts."""
         try:
@@ -1418,12 +1517,7 @@ class QgisToolkit:
     def _delete_temp_analysis_layer_files(self):
         """Delete source files for tracked is_analysis temp layers."""
         for path in list(self._temp_layer_files.values()):
-            if not _is_temp_file(path):
-                continue
-            try:
-                os.unlink(path)
-            except Exception:  # nosec B110
-                pass
+            _safe_unlink_temp_file(path)
         self._temp_layer_files.clear()
 
     # ------------------------------------------------------------------ #
@@ -2954,8 +3048,8 @@ class QgisToolkit:
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
-            # A temporary file goes with the layer; a file the user keeps does not.
-            if isinstance(uri, str) and _is_temp_file(uri):
+            # Only files this toolkit opened directly from the temp folder go with the layer.
+            if registered is None and isinstance(uri, str) and _is_temp_file(uri):
                 self._temp_layer_files[layer.id()] = str(uri)
         zoomed = self._zoom_to_layer(layer) if zoom else False
         return {
@@ -4449,21 +4543,16 @@ class QgisToolkit:
         return {"id": layer.id(), "name": layer.name()}
 
     def _maybe_delete_layer_file(self, layer):
-        """Delete the source file for an is_analysis temp layer."""
+        """Delete the source file for a tracked is_analysis temp layer."""
         try:
             is_analysis = _is_analysis_layer(layer)
-        except Exception:
+        except Exception as exc:
+            log_event("toolkit.analysis_layer_check_failed", error=str(exc))
             is_analysis = False
-        if not is_analysis:
-            return
         path = self._temp_layer_files.pop(layer.id(), None)
-        if path is None:
-            path = layer.publicSource()
-        if path and _is_temp_file(path):
-            try:
-                os.unlink(path)
-            except Exception:  # nosec B110
-                pass
+        if not is_analysis or not path:
+            return
+        _safe_unlink_temp_file(path)
 
     def remove_layer(self, layer_id=None, layer_name=None):
         """Unload one map layer from the current project.
@@ -4687,8 +4776,11 @@ class QgisToolkit:
                 # which would print layers the user has turned off.
                 return {
                     "ok": False,
-                    "error": "No visible layers to show. Turn layers on in the project "
-                             "or pass their names in layers.",
+                    "error": QCoreApplication.translate(
+                        "QgisToolkit",
+                        "No visible layers to show. Turn layers on in the project "
+                        "or pass their names in layers.",
+                    ),
                 }
 
             # initializeDefaults() creates the page only. The map item it was
@@ -4827,7 +4919,12 @@ class QgisToolkit:
         # The legend sits on the page margin, so the band also keeps it off the map.
         needed = legend_height + margin + 4.0
         if legend is not None and needed > height * self._LAYOUT_MAX_BAND_SHARE:
-            notes.append(f"The legend needs {legend_height:.0f} mm and does not fit the page, so it was left out.")
+            notes.append(
+                QCoreApplication.translate(
+                    "QgisToolkit",
+                    "The legend needs {height} mm and does not fit the page, so it was left out.",
+                ).format(height=f"{legend_height:.0f}")
+            )
             log_event("toolkit.create_layout.item_dropped", item="legend", height_mm=round(legend_height, 1))
             legend = None
         if legend is not None:

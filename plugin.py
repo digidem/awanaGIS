@@ -20,6 +20,7 @@ except ImportError:
 
 from . import config as config_mod
 from .backends import build_backend
+from .core.dev_logging import log_event
 from .core.executor import MainThreadExecutor
 from .core.toolkit import QgisToolkit
 from .i18n import load_plugin_translator, resolve_qgis_locale
@@ -91,6 +92,10 @@ class AwanaGisPlugin:
             self.toolkit.cleanup_gee_gifs()
         except Exception:  # nosec B110
             pass
+        try:
+            self.toolkit.cleanup_agent_layers()
+        except Exception as exc:
+            log_event("plugin.cleanup_agent_layers_failed", error=str(exc))
         self._stop_server()
         if self._dock is not None:
             try:

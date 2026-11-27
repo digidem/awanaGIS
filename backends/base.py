@@ -123,8 +123,8 @@ class AgentBackend(ABC):
             return
         try:
             executor.run_sync(refresh, timeout=2.0)
-        except Exception:  # noqa: BLE001 — the next request uses the last state read there
-            pass
+        except Exception as exc:  # noqa: BLE001 — the next request uses the last state read there
+            log_event("agent_state.refresh_failed", error=str(exc))
 
     def _tool_limit_reply(self, client, model, messages, emit, should_stop, limit_msg):
         """Closing reply for a turn that ended at the tool limit.

@@ -139,6 +139,19 @@ class AgentStateSyncTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertFalse(worker.is_alive())
 
+    def test_cleanup_agent_layers_stops_timer_and_disconnects_signals_idempotently(self):
+        self.toolkit._agent_layers_timer.start(1000)
+        self.assertTrue(self.toolkit._agent_layers_timer.isActive())
+
+        self.toolkit.cleanup_agent_layers()
+        self.toolkit.cleanup_agent_layers()
+
+        self.assertFalse(self.toolkit._agent_layers_timer.isActive())
+        layer = memory_layer("AfterUnload", [(-60.1, -2.1)])
+        self.project.addMapLayer(layer)
+        QCoreApplication.processEvents()
+        self.assertNotIn(layer.id(), self.toolkit._agent_state.layers)
+
 
 if __name__ == "__main__":
     unittest.main()

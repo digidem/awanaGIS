@@ -1934,4 +1934,15 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <translation>A Tinfoil é o provedor padrão porque executa os modelos em enclaves seguros, mantendo seus prompts privados. Cole sua chave de API abaixo para conectar. Você pode escolher outro provedor a qualquer momento.</translation>
         </message>
     </context>
+    <context>
+        <name>QgisToolkit</name>
+        <message>
+            <source>No visible layers to show. Turn layers on in the project or pass their names in layers.</source>
+            <translation>Nenhuma camada visível para exibir. Ative camadas no projeto ou informe os nomes delas em layers.</translation>
+        </message>
+        <message>
+            <source>The legend needs {height} mm and does not fit the page, so it was left out.</source>
+            <translation>A legenda precisa de {height} mm e não cabe na página, por isso foi omitida.</translation>
+        </message>
+    </context>
 </TS>

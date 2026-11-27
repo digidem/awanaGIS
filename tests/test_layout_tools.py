@@ -25,13 +25,14 @@ from qgis.core import (
     QgsVectorLayer,
 )
 from qgis.gui import QgsLayerTreeMapCanvasBridge, QgsMapCanvas
-from qgis.PyQt.QtCore import QSettings
+from qgis.PyQt.QtCore import QCoreApplication, QSettings
 from qgis.PyQt.QtGui import QColor, QImage
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 Config = import_module(f"{ROOT.name}.config").Config
 QgisToolkit = import_module(f"{ROOT.name}.core.toolkit").QgisToolkit
+load_plugin_translator = import_module(f"{ROOT.name}.i18n").load_plugin_translator
 
 MARKER = QColor(255, 0, 0)
 FILL = QColor(0, 0, 255)
@@ -301,6 +302,29 @@ class LayoutToolsTests(unittest.TestCase):
         self.assertFalse(second["ok"])
         self.assertIn("already exists", second["error"])
         self.assertEqual(len(self.project.layoutManager().layouts()), 1)
+
+    def test_user_facing_layout_messages_translate_to_portuguese(self):
+        from unittest.mock import patch
+
+        translator = load_plugin_translator("pt_BR")
+        self.assertIsNotNone(translator)
+        self.assertTrue(QCoreApplication.installTranslator(translator))
+        self.addCleanup(QCoreApplication.removeTranslator, translator)
+
+        for node in self.project.layerTreeRoot().findLayers():
+            node.setItemVisibilityChecked(False)
+        QgsLayerTreeMapCanvasBridge(self.project.layerTreeRoot(), self.toolkit.iface.mapCanvas()).setCanvasLayers()
+        empty = self.toolkit.create_layout("Sem visíveis")
+        self.assertFalse(empty["ok"])
+        self.assertIn("Nenhuma camada visível", empty["error"])
+
+        for node in self.project.layerTreeRoot().findLayers():
+            node.setItemVisibilityChecked(True)
+        QgsLayerTreeMapCanvasBridge(self.project.layerTreeRoot(), self.toolkit.iface.mapCanvas()).setCanvasLayers()
+        with patch.object(QgisToolkit, "_layout_legend", return_value=(object(), 300.0)):
+            tall = self.toolkit.create_layout("Legenda grande")
+        self.assertTrue(tall["ok"], tall)
+        self.assertTrue(any("300 mm" in note and "legenda" in note.lower() for note in tall["notes"]), tall["notes"])
 
 
 if __name__ == "__main__":
