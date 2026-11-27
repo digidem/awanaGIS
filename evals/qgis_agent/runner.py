@@ -18,8 +18,7 @@ from ...backends import build_backend
 from ...config import DEFAULTS
 from ...core.executor import MainThreadExecutor
 from ...core.toolkit import QgisToolkit
-from .trace import (artifacts_under, event_record, pdf_exports, redact, redact_trace, smp_export_seconds,
-                    write_trace)
+from .trace import artifacts_under, event_record, pdf_exports, redact, smp_export_seconds, write_trace
 
 
 def backend_record(provider, model, base_url=None):
@@ -320,13 +319,14 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
     workflow_steps = ('basemap', 'load', 'style', 'filter_join', 'pdf')
     started = time.monotonic()
     try:
-        if base_url is not None and not secrets[0]:
+        credential = secrets[0]
+        if base_url is not None and (not credential or len(credential) < 8):
+            detail = (f'Environment variable {key_env} is unset or empty' if not credential else
+                      f'Environment variable {key_env} has a value shorter than 8 characters')
             trace['status'] = 'blocked'
-            trace['checks'] = [{'id': 'runner', 'status': 'blocked',
-                                'detail': f'Environment variable {key_env} is unset or empty'}]
+            trace['checks'] = [{'id': 'runner', 'status': 'blocked', 'detail': detail}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
-            trace = redact_trace(trace, secrets)
-            write_trace(run_dir / 'run.json', trace, secrets)
+            trace = write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         backend = (backend_factory or build_backend)(config, toolkit, executor)
         if case_id.startswith('smp_') and not QgsApplication.processingRegistry().algorithmById(
@@ -335,16 +335,14 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'CoMapeo Map Builder processing algorithm is unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
-            trace = redact_trace(trace, secrets)
-            write_trace(run_dir / 'run.json', trace, secrets)
+            trace = write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         if backend_factory is None and backend.validate():
             trace['status'] = 'blocked'
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'Backend configuration or credential unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
-            trace = redact_trace(trace, secrets)
-            write_trace(run_dir / 'run.json', trace, secrets)
+            trace = write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         for index, prompt in enumerate(fixture.turns):
             if prompt.strip().lower().startswith('pronto') and getattr(fixture, 'region_extent', None):
@@ -429,8 +427,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
         if any('error' in turn for turn in trace['turns']):
             trace['status'] = 'error'
             trace['checks'].append({'id': 'runner', 'status': 'blocked', 'detail': 'Backend raised an exception'})
-        trace = redact_trace(trace, secrets)
-        write_trace(run_dir / 'run.json', trace, secrets)
+        trace = write_trace(run_dir / 'run.json', trace, secrets)
         return trace
     finally:
         if plugin is not None:

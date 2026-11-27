@@ -7,13 +7,30 @@ import time
 from pathlib import Path
 
 
+def _redaction_placeholder(secrets):
+    """Choose a marker that cannot recreate a run secret at a replacement boundary."""
+    candidates = '*#x-0'
+    if all(any(character in secret for secret in secrets) for character in candidates):
+        raise ValueError('Run secrets leave no safe redaction placeholder')
+    default = '[redacted]'
+    unsafe_default = any(secret in default or secret.startswith(default[-1]) or secret.endswith(default[0])
+                         or (len(secret) == 1 and secret in candidates) for secret in secrets)
+    if not unsafe_default:
+        return default
+    for character in candidates:
+        if not any(character in secret for secret in secrets):
+            return character * 3
+    raise ValueError('Run secrets leave no safe redaction placeholder')
+
+
 def redact(text, secrets=()):
+    run_secrets = tuple(secret for secret in secrets if secret)
+    placeholder = _redaction_placeholder(run_secrets)
     for key, value in os.environ.items():
         if len(value) >= 4 and any(word in key.upper() for word in ('API_KEY', 'TOKEN', 'SECRET', 'PASSWORD')):
             text = text.replace(value, '[redacted]')
-    for value in secrets:
-        if value:
-            text = text.replace(value, '[redacted]')
+    for secret in run_secrets:
+        text = text.replace(secret, placeholder)
     return text
 
 
@@ -96,20 +113,20 @@ def artifacts_under(directory):
                   if not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(directory.resolve()))
 
 
-def _redact_value(value, secrets):
+def _redact_value(value, secrets, placeholder):
     """Redact run secrets before JSON escaping can change their representation."""
     if isinstance(value, str):
         for secret in secrets:
-            value = value.replace(secret, '[redacted]')
+            value = value.replace(secret, placeholder)
         return value
     if isinstance(value, (list, tuple)):
-        return [_redact_value(item, secrets) for item in value]
+        return [_redact_value(item, secrets, placeholder) for item in value]
     if isinstance(value, dict):
-        return {key: _redact_value(item, secrets) for key, item in value.items()}
+        return {key: _redact_value(item, secrets, placeholder) for key, item in value.items()}
     text = str(value)
     if any(secret in text for secret in secrets):
         for secret in secrets:
-            text = text.replace(secret, '[redacted]')
+            text = text.replace(secret, placeholder)
         return text
     return value
 
@@ -119,7 +136,8 @@ def redact_trace(trace, secrets=()):
     run_secrets = tuple(secret for secret in secrets if secret)
     if not run_secrets:
         return trace
-    return {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets)
+    placeholder = _redaction_placeholder(run_secrets)
+    return {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets, placeholder)
             for key, value in trace.items()}
 
 
@@ -127,3 +145,4 @@ def write_trace(path, trace, secrets=()):
     trace = redact_trace(trace, secrets)
     payload = json.dumps(trace, ensure_ascii=False, indent=2, default=str) + '\n'
     Path(path).write_text(payload, encoding='utf-8')
+    return trace

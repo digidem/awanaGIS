@@ -109,6 +109,22 @@ class CustomEndpointTest(unittest.TestCase):
                     if path.is_file():
                         self.assertNotIn(SENTINEL.encode(), path.read_bytes(), str(path))
 
+    def test_short_run_key_blocks_before_backend_creation(self):
+        secret = "1234567"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: secret}, clear=True):
+            run_dir = Path(directory) / "run"
+            trace, captured = self.run_scripted(run_dir, base_url=BASE_URL, key_env=KEY_ENV, text=secret)
+            for path in run_dir.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn(secret.encode(), path.read_bytes(), str(path))
+        self.assertEqual(captured, [])
+        self.assertEqual(trace["status"], "blocked")
+        self.assertEqual(trace["checks"][0]["id"], "runner")
+        self.assertEqual(trace["checks"][0]["status"], "blocked")
+        self.assertIn(KEY_ENV, trace["checks"][0]["detail"])
+        self.assertIn("shorter than 8 characters", trace["checks"][0]["detail"])
+        self.assertNotIn(secret, trace["checks"][0]["detail"])
+
     def test_base_url_and_key_env_must_be_given_together(self):
         detail = self.assert_argument_error("--base-url", BASE_URL)
         self.assertIn("--base-url", detail)
@@ -209,6 +225,19 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertNotIn(SENTINEL, report_text)
         self.assertNotIn(SENTINEL, json.dumps(trace))
 
+    def test_write_trace_returns_one_pass_redaction_without_residual_secret(self):
+        secret = "]x"
+        trace = {"turns": [{"reply": "]xx"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            expected = trace_module.redact_trace(trace, (secret,))
+            written = trace_module.write_trace(path, expected, (secret,))
+            report = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(report["turns"][0]["reply"], expected["turns"][0]["reply"])
+        self.assertEqual(written["turns"][0]["reply"], report["turns"][0]["reply"])
+        self.assertNotIn(secret, written["turns"][0]["reply"])
+        self.assertNotIn(secret, report["turns"][0]["reply"])
+
     def test_write_trace_redacts_json_special_secret_before_serialization(self):
         secret = 'abc"def\\ghi'
         trace = {"turns": [{"error": ("Backend raised: " + secret,),
@@ -224,18 +253,26 @@ class CustomEndpointTest(unittest.TestCase):
 
     def test_report_keeps_trusted_base_url_when_secret_occurs_in_it(self):
         base_url = "https://v1.example.com/v1"
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: "v1"}, clear=True):
-            run_dir = Path(directory) / "run"
-            self.run_scripted(run_dir, base_url=base_url, key_env=KEY_ENV)
-            report = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        trace = {"backend": {"provider": "custom", "model": "fake", "base_url": base_url}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            trace_module.write_trace(path, trace, ("v1",))
+            report = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(report["backend"]["base_url"], base_url)
 
     def test_report_stays_valid_json_when_secret_is_a_quote(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: '"'}, clear=True):
-            run_dir = Path(directory) / "run"
-            self.run_scripted(run_dir, base_url=BASE_URL, key_env=KEY_ENV)
-            report = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            trace_module.write_trace(path, {"status": "completed"}, ('"',))
+            report = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(report["status"], "completed")
+
+    def test_write_trace_uses_a_placeholder_that_avoids_the_run_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            trace_module.write_trace(path, {"turns": [{"reply": "before * after"}]}, ("*",))
+            report = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(report["turns"][0]["reply"], "before ### after")
 
     def test_write_trace_walks_values_and_preserves_trusted_metadata(self):
         class SecretValue:
@@ -254,6 +291,15 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertEqual(report["backend"], trace["backend"])
         self.assertEqual(report["key_env"], trace["key_env"])
         self.assertEqual(report["nested"], [{"text": "[redacted]", "object": "value-[redacted]", "count": 7}])
+
+    def test_run_without_key_keeps_environment_redaction_placeholder(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.dict(os.environ, {"UNRELATED_API_TOKEN": SENTINEL}, clear=True):
+            run_dir = Path(directory) / "run"
+            trace, _ = self.run_scripted(run_dir, provider="offline", text=SENTINEL)
+            report = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual(trace["turns"][0]["reply"], "[redacted]")
+        self.assertEqual(report["turns"][0]["reply"], "[redacted]")
 
     def test_report_without_run_secret_does_not_redact_environment_values(self):
         model = "model-id"
