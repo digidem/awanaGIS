@@ -326,6 +326,31 @@ class LayoutToolsTests(unittest.TestCase):
         self.assertTrue(tall["ok"], tall)
         self.assertTrue(any("300 mm" in note and "legenda" in note.lower() for note in tall["notes"]), tall["notes"])
 
+    def test_title_falls_back_to_setfont_without_settextformat_and_wide_legend_is_dropped(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from qgis.PyQt.QtCore import QRectF
+
+        orig_set_tf = getattr(QgsLayoutItemLabel, "setTextFormat", None)
+        if orig_set_tf is not None:
+            delattr(QgsLayoutItemLabel, "setTextFormat")
+        try:
+            res = self.toolkit.create_layout("Título 3.22")
+        finally:
+            if orig_set_tf is not None:
+                setattr(QgsLayoutItemLabel, "setTextFormat", orig_set_tf)
+        self.assertTrue(res["ok"], res)
+        self.assertIn("title", res["items"])
+        labels = page_items(self.project.layoutManager().layoutByName("Título 3.22"), QgsLayoutItemLabel)
+        self.assertEqual([lbl.text() for lbl in labels], ["Título 3.22"])
+
+        wide_legend = SimpleNamespace(rect=lambda: QRectF(0.0, 0.0, 500.0, 20.0))
+        with patch.object(QgisToolkit, "_layout_legend", return_value=(wide_legend, 20.0)):
+            wide = self.toolkit.create_layout("Legenda larga", orientation="portrait")
+        self.assertTrue(wide["ok"], wide)
+        self.assertNotIn("legend", wide["items"])
+        self.assertTrue(any("500 mm" in note for note in wide["notes"]), wide["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,14 +68,40 @@ class LayerFileRetentionTests(unittest.TestCase):
         self.assertTrue(second.is_file(), "a new chat session deleted a kept file")
         self.assertEqual(self.toolkit._temp_layer_files, {})
 
-    def test_a_temporary_file_is_still_deleted_with_its_layer(self):
+    def test_an_existing_user_file_inside_temp_is_not_deleted(self):
+        user_file = self.write(self.scratch.name, "user_temp_data.geojson")
+        added = self.toolkit.add_layer(uri=str(user_file), is_analysis=True)
+        self.assertTrue(added["ok"], added)
+
+        self.assertTrue(self.toolkit.remove_layer(layer_id=added["layer_id"])["ok"])
+        self.assertTrue(user_file.is_file(), "pre-existing user file inside temp was deleted")
+
+        added2 = self.toolkit.add_layer(uri=str(user_file), is_analysis=True)
+        self.assertTrue(added2["ok"], added2)
+        self.toolkit.reset_agent_state()
+        self.assertTrue(user_file.is_file(), "reset_agent_state deleted pre-existing user file inside temp")
+
+    def test_an_owned_temporary_file_is_deleted_with_its_layer(self):
         scratch = self.write(self.scratch.name, "awanagis_result.geojson")
+        self.assertTrue(self.toolkit._register_owned_temp_file(str(scratch)))
         added = self.toolkit.add_layer(uri=str(scratch), is_analysis=True)
         self.assertTrue(added["ok"], added)
 
         self.assertTrue(self.toolkit.remove_layer(layer_id=added["layer_id"])["ok"])
 
         self.assertFalse(scratch.exists())
+
+    def test_an_owned_temp_file_replaced_on_disk_is_not_deleted(self):
+        scratch = self.write(self.scratch.name, "owned_then_replaced.geojson")
+        self.assertTrue(self.toolkit._register_owned_temp_file(str(scratch)))
+        added = self.toolkit.add_layer(uri=str(scratch), is_analysis=True)
+        self.assertTrue(added["ok"], added)
+
+        replacement = self.write(self.scratch.name, "replacement_inode.geojson")
+        replacement.replace(scratch)
+
+        self.assertTrue(self.toolkit.remove_layer(layer_id=added["layer_id"])["ok"])
+        self.assertTrue(scratch.is_file(), "replaced file with different inode was deleted")
 
     def test_a_link_outside_the_temporary_folder_is_not_deleted(self):
         target = self.write(self.scratch.name, "awanagis_target.geojson")
@@ -145,6 +171,7 @@ class LayerFileRetentionTests(unittest.TestCase):
 
     def test_clear_layers_deletes_tracked_temp_file(self):
         scratch = self.write(self.scratch.name, "clear_temp.geojson")
+        self.assertTrue(self.toolkit._register_owned_temp_file(str(scratch)))
         added = self.toolkit.add_layer(uri=str(scratch), is_analysis=True)
         self.assertTrue(added["ok"], added)
 

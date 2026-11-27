@@ -127,7 +127,47 @@ def _is_temp_file(path):
     return _temp_file_location(path) is not None
 
 
-def _safe_unlink_temp_file(path):
+def _temp_file_stat(path):
+    """Return ``(norm_path, (st_dev, st_ino))`` for a safe temp file, or None."""
+    location = _temp_file_location(path)
+    if location is None:
+        return None
+    real_folder, rel_dir, basename = location
+    norm_path = os.path.normcase(os.path.normpath(os.path.join(real_folder, rel_dir, basename)))
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        dir_fd = None
+        try:
+            dir_fd = os.open(real_folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            if rel_dir not in ("", "."):
+                for part in rel_dir.split(os.sep):
+                    if not part or part == ".":
+                        continue
+                    if part == "..":
+                        return None
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                    os.close(dir_fd)
+                    dir_fd = next_fd
+            entry = os.lstat(basename, dir_fd=dir_fd)
+            if stat.S_ISDIR(entry.st_mode):
+                return None
+            return norm_path, (entry.st_dev, entry.st_ino)
+        except OSError:
+            return None
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+    try:
+        entry = os.lstat(os.path.join(real_folder, rel_dir, basename))
+        if stat.S_ISDIR(entry.st_mode):
+            return None
+        return norm_path, (entry.st_dev, entry.st_ino)
+    except OSError:
+        return None
+
+
+def _safe_unlink_temp_file(path, expected_identity=None):
     """Unlink ``path`` without traversing symlinks out of the temporary folder."""
     location = _temp_file_location(path)
     if location is None:
@@ -151,6 +191,8 @@ def _safe_unlink_temp_file(path):
             entry = os.lstat(basename, dir_fd=dir_fd)
             if stat.S_ISDIR(entry.st_mode):
                 return False
+            if expected_identity is not None and (entry.st_dev, entry.st_ino) != expected_identity:
+                return False
             os.unlink(basename, dir_fd=dir_fd)
             return True
         except FileNotFoundError:
@@ -162,7 +204,12 @@ def _safe_unlink_temp_file(path):
             if dir_fd is not None:
                 os.close(dir_fd)
     try:
-        os.unlink(os.path.join(real_folder, rel_dir, basename))
+        target = os.path.join(real_folder, rel_dir, basename)
+        if expected_identity is not None:
+            entry = os.lstat(target)
+            if (entry.st_dev, entry.st_ino) != expected_identity:
+                return False
+        os.unlink(target)
         return True
     except FileNotFoundError:
         return False
@@ -927,10 +974,12 @@ class QgisToolkit:
         # These are meant to persist; the agent reuses them instead of
         # recreating and never auto-deletes them.
         self._analysis_layers = {}
-        # Track temporary file paths for is_analysis layers so they can be
-        # cleaned up when the layer is removed or a session is reset. Files
-        # elsewhere are the user's and are never entered here.
-        self._temp_layer_files = {}  # layer_id -> file_path
+        # Track temporary file paths explicitly allocated by this toolkit for
+        # is_analysis layers so they can be cleaned up when the layer is
+        # removed or a session is reset. User-owned files (even inside the
+        # system temp directory) are never entered here.
+        self._owned_temp_files = {}  # norm_path -> (st_dev, st_ino)
+        self._temp_layer_files = {}  # layer_id -> (file_path, (st_dev, st_ino))
         # Session-level approval for tool categories (e.g., "gee").
         # Reset when the user starts a new chat session.
         self._session_approved_tool_categories = set()
@@ -1514,10 +1563,20 @@ class QgisToolkit:
         self._delete_temp_analysis_layer_files()
         self._scan_existing_layers()
 
+    def _register_owned_temp_file(self, path):
+        """Record a toolkit-created temp file and its filesystem identity."""
+        info = _temp_file_stat(path)
+        if info is None:
+            return False
+        norm_path, identity = info
+        self._owned_temp_files[norm_path] = identity
+        return True
+
     def _delete_temp_analysis_layer_files(self):
-        """Delete source files for tracked is_analysis temp layers."""
-        for path in list(self._temp_layer_files.values()):
-            _safe_unlink_temp_file(path)
+        """Delete source files for tracked toolkit-owned is_analysis temp layers."""
+        for entry in list(self._temp_layer_files.values()):
+            path, identity = entry
+            _safe_unlink_temp_file(path, expected_identity=identity)
         self._temp_layer_files.clear()
 
     # ------------------------------------------------------------------ #
@@ -3048,9 +3107,14 @@ class QgisToolkit:
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
-            # Only files this toolkit opened directly from the temp folder go with the layer.
-            if registered is None and isinstance(uri, str) and _is_temp_file(uri):
-                self._temp_layer_files[layer.id()] = str(uri)
+            # Only files explicitly allocated by this toolkit go with the layer.
+            if registered is None and isinstance(uri, str):
+                info = _temp_file_stat(uri)
+                if info is not None:
+                    norm_path, identity = info
+                    owned_identity = self._owned_temp_files.pop(norm_path, None)
+                    if owned_identity is not None and owned_identity == identity:
+                        self._temp_layer_files[layer.id()] = (str(uri), owned_identity)
         zoomed = self._zoom_to_layer(layer) if zoom else False
         return {
             "ok": True,
@@ -4543,16 +4607,17 @@ class QgisToolkit:
         return {"id": layer.id(), "name": layer.name()}
 
     def _maybe_delete_layer_file(self, layer):
-        """Delete the source file for a tracked is_analysis temp layer."""
+        """Delete the source file for a tracked toolkit-owned is_analysis temp layer."""
         try:
             is_analysis = _is_analysis_layer(layer)
         except Exception as exc:
             log_event("toolkit.analysis_layer_check_failed", error=str(exc))
             is_analysis = False
-        path = self._temp_layer_files.pop(layer.id(), None)
-        if not is_analysis or not path:
+        entry = self._temp_layer_files.pop(layer.id(), None)
+        if not is_analysis or not entry:
             return
-        _safe_unlink_temp_file(path)
+        path, identity = entry
+        _safe_unlink_temp_file(path, expected_identity=identity)
 
     def remove_layer(self, layer_id=None, layer_name=None):
         """Unload one map layer from the current project.
@@ -4951,26 +5016,23 @@ class QgisToolkit:
 
         def place_label(item):
             item.setText(title)
-            text = QgsTextFormat()
             font = QFont()
             font.setBold(True)
-            text.setFont(font)
-            text.setSize(16 if len(title) <= 48 else 12)
-            text.setSizeUnit(_points_unit(QgsUnitTypes))
-            item.setTextFormat(text)
+            font.setPointSizeF(16.0 if len(title) <= 48 else 12.0)
+            if hasattr(item, "setTextFormat"):
+                text = QgsTextFormat()
+                text.setFont(font)
+                text.setSize(16 if len(title) <= 48 else 12)
+                text.setSizeUnit(_points_unit(QgsUnitTypes))
+                item.setTextFormat(text)
+            else:
+                item.setFont(font)
             item.setHAlign(_qt_enum("AlignmentFlag", "AlignLeft"))
             item.setVAlign(_qt_enum("AlignmentFlag", "AlignVCenter"))
             item.attemptResize(QgsLayoutSize(width - 2 * margin, top - 2 * self._LAYOUT_TITLE_TOP_MM))
             item.attemptMove(QgsLayoutPoint(margin, self._LAYOUT_TITLE_TOP_MM))
 
         accessory("title", label, place_label)
-
-        if legend is not None:
-            def place_legend(item):
-                size = item.rect()
-                item.attemptMove(QgsLayoutPoint(width - margin - size.width(), height - margin - size.height()))
-
-            accessory("legend", legend, place_legend)
 
         bar = QgsLayoutItemScaleBar(layout)
 
@@ -4981,6 +5043,27 @@ class QgisToolkit:
             item.attemptMove(QgsLayoutPoint(margin, height - margin - item.rect().height()))
 
         accessory("scale bar", bar, place_scale_bar)
+
+        if legend is not None:
+            legend_width = float(legend.rect().width()) if hasattr(legend, "rect") else 0.0
+            bar_width = float(bar.rect().width()) if "scale bar" in items else 0.0
+            max_legend_width = width - 2 * margin - (bar_width + 4.0 if bar_width > 0.0 else 0.0)
+            if legend_width > max_legend_width:
+                notes.append(
+                    QCoreApplication.translate(
+                        "QgisToolkit",
+                        "The legend is {width} mm wide and does not fit the page, so it was left out.",
+                    ).format(width=f"{legend_width:.0f}")
+                )
+                log_event("toolkit.create_layout.item_dropped", item="legend", width_mm=round(legend_width, 1))
+                legend = None
+
+        if legend is not None:
+            def place_legend(item):
+                size = item.rect()
+                item.attemptMove(QgsLayoutPoint(width - margin - size.width(), height - margin - size.height()))
+
+            accessory("legend", legend, place_legend)
 
         arrow_path = ":/images/north_arrows/layout_default_north_arrow.svg"
 
@@ -5655,6 +5738,7 @@ class QgisToolkit:
                 cancelled=True,
             )
             return {"ok": False, "error": "cancelled by user", "cancelled": True}
+        self._register_owned_temp_file(file_path)
         log_event(
             "toolkit.web_fetch.end",
             url=url[:200],

@@ -1944,5 +1944,9 @@ Isso pode exceder a janela de contexto do modelo e causar erros. Colar mesmo ass
             <source>The legend needs {height} mm and does not fit the page, so it was left out.</source>
             <translation>A legenda precisa de {height} mm e não cabe na página, por isso foi omitida.</translation>
         </message>
+        <message>
+            <source>The legend is {width} mm wide and does not fit the page, so it was left out.</source>
+            <translation>A legenda tem {width} mm de largura e não cabe na página, por isso foi omitida.</translation>
+        </message>
     </context>
 </TS>
