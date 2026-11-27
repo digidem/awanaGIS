@@ -395,9 +395,12 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(redacted))
 
     def test_redaction_fails_closed_when_placeholder_candidates_are_exhausted(self):
+        import string
+
+        exhausted = tuple(string.ascii_letters + string.digits + "*#-[]") + ("ab",)
         with patch.object(trace_module.secure_random, "token_hex", return_value="ab"):
             with self.assertRaises(RuntimeError):
-                trace_module._redaction_placeholder(("ab", "x", "*", "#", "-", "0", "[", "]"))
+                trace_module._redaction_placeholder(exhausted)
 
 
 if __name__ == "__main__":
