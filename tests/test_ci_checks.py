@@ -433,7 +433,7 @@ class ScannerAdapterTests(unittest.TestCase):
             self.assertFalse(res["ok"])
             self.assertEqual(len(res["blocking_findings"]), 1)
 
-            # Low severity only -> informational, passes
+            # Low-severity B110 still blocks because QGIS rejects it at release.
             low_payload = {
                 "errors": [],
                 "results": [{
@@ -448,8 +448,10 @@ class ScannerAdapterTests(unittest.TestCase):
             low_proc = subprocess.CompletedProcess([], 1, json.dumps(low_payload), "")
             with patch("ci.check_plugin.subprocess.run", return_value=low_proc):
                 res = check_plugin._run_bandit(target)
-            self.assertTrue(res["ok"])
-            self.assertEqual(len(res["informational_findings"]), 1)
+            self.assertFalse(res["ok"])
+            self.assertEqual(len(res["blocking_findings"]), 1)
+            self.assertEqual(res["blocking_findings"][0]["test_id"], "B110")
+            self.assertEqual(res["informational_findings"], [])
 
             # Missing tool -> error
             with patch("ci.check_plugin.subprocess.run", side_effect=FileNotFoundError()):
@@ -480,7 +482,7 @@ class ScannerAdapterTests(unittest.TestCase):
             b105_proc = subprocess.CompletedProcess([], 1, json.dumps(b105_payload), "")
             with patch("ci.check_plugin.subprocess.run", return_value=b105_proc):
                 report = check_plugin.run_scans(target, "bandit", None)
-            self.assertTrue(report["ok"])
+            self.assertFalse(report["ok"])
             summary = check_plugin._format_scan_summary(report)
             serialized = json.dumps(report) + "\n" + summary
             self.assertNotIn(secret_literal, serialized)
@@ -1099,6 +1101,14 @@ class RealScannerIntegrationTests(unittest.TestCase):
                 "def run(cmd):\n    return subprocess.Popen(cmd, shell=True)\n",
                 encoding="utf-8",
             )
+            (synth / "silent.py").write_text(
+                "def ignore():\n"
+                "    try:\n"
+                "        return 1\n"
+                "    except Exception:\n"
+                "        pass\n",
+                encoding="utf-8",
+            )
             (synth / "leak.py").write_text(
                 f'api_key = "{secret_token}"\n',
                 encoding="utf-8",
@@ -1121,6 +1131,9 @@ class RealScannerIntegrationTests(unittest.TestCase):
             self.assertFalse(bandit_rep["ok"])
             self.assertTrue(
                 any(f["test_id"] == "B602" for f in bandit_rep["checks"][0]["blocking_findings"])
+            )
+            self.assertTrue(
+                any(f["test_id"] == "B110" for f in bandit_rep["checks"][0]["blocking_findings"])
             )
             bandit_text = json.dumps(bandit_rep) + "\n" + check_plugin._format_scan_summary(bandit_rep)
             self.assertNotIn(password_literal, bandit_text)

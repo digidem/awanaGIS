@@ -37,7 +37,7 @@ from ..core import tools as tools_mod
 from .discovery import register_server, unregister_server
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "AwanaGIS", "version": "1.1.0"}
+SERVER_INFO = {"name": "AwanaGIS", "version": "1.1.1"}
 
 # Bounded socket I/O so a stalled client cannot hold a thread forever.
 DEFAULT_SOCKET_TIMEOUT = 30.0  # seconds; per-handler, configurable

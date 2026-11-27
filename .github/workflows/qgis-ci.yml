@@ -78,6 +78,12 @@ jobs:
             --include-metadata \
             --baseline-file .secrets.baseline
 
+      - name: Gate artifact upload with pre-upload Bandit scan
+        run: |
+          python3 ci/check_plugin.py scan \
+            "$RUNNER_TEMP/extracted/awanagis" \
+            --check bandit
+
       - name: Run CI archive and scanner unit tests
         env:
           AWANAGIS_REQUIRE_REAL_SCANNERS: "1"
