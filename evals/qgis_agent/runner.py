@@ -2,6 +2,7 @@
 import configparser
 from hashlib import sha256
 import importlib
+import os
 import sys
 import threading
 import time
@@ -20,10 +21,21 @@ from ...core.toolkit import QgisToolkit
 from .trace import artifacts_under, event_record, pdf_exports, redact, smp_export_seconds, write_trace
 
 
+def backend_record(provider, model, base_url=None):
+    """Keep historical reports comparable unless a custom endpoint identifies this run."""
+    backend = {'provider': provider, 'model': model}
+    if base_url is not None:
+        backend['base_url'] = base_url[:-1] if base_url.endswith('/') else base_url
+    return backend
+
+
 class EvalConfig:
-    def __init__(self, provider, model):
+    def __init__(self, provider, model, base_url=None, key_env=None):
         self.values = dict(DEFAULTS, provider=provider, model=model, connection_mode='api_key',
                            external_access_always_allowed=False)
+        if base_url is not None:
+            self.values['custom_base_url'] = base_url
+            self.values['custom_api_key'] = os.environ.get(key_env or '', '')
 
     def get(self, name, default=None):
         return self.values.get(name, default)
@@ -63,12 +75,13 @@ class EvalToolkit(QgisToolkit):
         'qgsnetworkaccessmanager', 'qgsfiledownloader', 'qgsnetworkrequest', 'qgsblockingnetworkrequest',
     )
 
-    def __init__(self, iface, config, input_dir, capture_first_pdf=False):
+    def __init__(self, iface, config, input_dir, capture_first_pdf=False, secrets=()):
         super().__init__(iface, config=config)
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = self.input_dir.parent / 'outputs'
         self.capture_first_pdf = capture_first_pdf
         self.first_pdf_export = None
+        self.secrets = secrets
 
     def export_layout(self, layout_id, output_path, format="pdf"):
         output_dir = self.output_dir
@@ -85,7 +98,7 @@ class EvalToolkit(QgisToolkit):
         layout = QgsProject.instance().layoutManager().layoutByName(layout_id.strip())
         items = layout.items()
         self.first_pdf_export = {
-            'output': redact(str(output.relative_to(output_dir))),
+            'output': redact(str(output.relative_to(output_dir)), self.secrets),
             'sha256': sha256(output.read_bytes()).hexdigest(),
             'map_layer_ids': [[layer.id() for layer in item.layersToRender()] for item in items
                               if isinstance(item, QgsLayoutItemMap)],
@@ -182,14 +195,14 @@ def plugin_version(path):
     return metadata.get('general', 'version', fallback=None)
 
 
-def _turn(backend, prompt, history, timeout=300, output_dir=None, questions=None):
+def _turn(backend, prompt, history, timeout=300, output_dir=None, questions=None, secrets=()):
     started = time.monotonic()
     events = []
     result = {}
     stop = threading.Event()
 
     def emit(event):
-        events.append(event_record(event, started, output_dir))
+        events.append(event_record(event, started, output_dir, secrets))
 
     def worker():
         try:
@@ -245,7 +258,8 @@ def visible_reply_check(turn, index):
             'detail': 'Visible final reply or question' if final_text or question else 'No visible final reply'}
 
 
-def run_case(case_id, run_dir, provider, model, variant='baseline', backend_factory=None, plugin_path=None):
+def run_case(case_id, run_dir, provider, model, variant='baseline', backend_factory=None, plugin_path=None,
+             base_url=None, key_env=None):
     """Execute one case; backend_factory(config, toolkit, executor) permits offline tests."""
     from .fixtures import build_fixture
     from .checks import OBSERVED_CASES, evaluate, evaluate_step, observe_run
@@ -272,7 +286,8 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
     project.clear()
     if not project.read(str(fixture.project_path)):
         raise RuntimeError('Unable to load synthetic fixture project')
-    config = EvalConfig(provider, model)
+    config = EvalConfig(provider, model, base_url, key_env)
+    secrets = (config.get('custom_api_key'),)
     iface = EvalIface(project)
     selected_codes = set(getattr(fixture, 'preselected_codes', ()))
     if selected_codes:
@@ -282,40 +297,50 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
         iface.active_layer = layer
     plugin = load_processing_plugin(plugin_path, iface) if plugin_path else None
     executor = MainThreadExecutor(config=config)
-    toolkit = EvalToolkit(iface, config, run_dir / 'inputs', capture_first_pdf=case_id == 'pdf_basemap')
+    toolkit = EvalToolkit(iface, config, run_dir / 'inputs', capture_first_pdf=case_id == 'pdf_basemap',
+                          secrets=secrets)
     questions = []
 
     def capture_question(question, options, allow_free_text, request):
         labels = {option.get('label') for option in options if isinstance(option, dict)}
         if not {'Allow once', 'Always allow', 'Deny'}.issubset(labels):
-            questions.append((time.monotonic(), redact(str(question))))
+            questions.append((time.monotonic(), redact(str(question), secrets)))
         # Unattended runs continue via the fixture's scripted conversation.
         toolkit._resolve_ask_user({'cancelled': True}, request=request)
 
     toolkit.set_ask_user_emitter(capture_question)
-    backend = (backend_factory or build_backend)(config, toolkit, executor)
-    trace = {'case': case_id, 'variant': variant, 'backend': {'provider': provider, 'model': model},
+    trace = {'case': case_id, 'variant': variant, 'backend': backend_record(provider, model, base_url),
              'qgis_version': Qgis.QGIS_VERSION, 'plugin_version': plugin_version(plugin_path),
              'turns': [], 'artifacts': [], 'checks': [], 'status': 'completed',
              'metrics': {'model_requests': None, 'export_seconds': None, 'scripted_wait_seconds': 0.0}}
+    if base_url is not None:
+        trace['key_env'] = key_env
     history = []
     workflow_steps = ('basemap', 'load', 'style', 'filter_join', 'pdf')
     started = time.monotonic()
     try:
+        if base_url is not None and not secrets[0]:
+            trace['status'] = 'blocked'
+            trace['checks'] = [{'id': 'runner', 'status': 'blocked',
+                                'detail': f'Environment variable {key_env} is unset or empty'}]
+            trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
+            write_trace(run_dir / 'run.json', trace, secrets)
+            return trace
+        backend = (backend_factory or build_backend)(config, toolkit, executor)
         if case_id.startswith('smp_') and not QgsApplication.processingRegistry().algorithmById(
                 'smp:generatesmp'):
             trace['status'] = 'blocked'
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'CoMapeo Map Builder processing algorithm is unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
-            write_trace(run_dir / 'run.json', trace)
+            write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         if backend_factory is None and backend.validate():
             trace['status'] = 'blocked'
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'Backend configuration or credential unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
-            write_trace(run_dir / 'run.json', trace)
+            write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         for index, prompt in enumerate(fixture.turns):
             if prompt.strip().lower().startswith('pronto') and getattr(fixture, 'region_extent', None):
@@ -335,7 +360,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
                     request += '\n\nArquivos fornecidos: ' + ', '.join(map(str, files))
             questions.clear()
             turn, history = _turn(backend, request, history, output_dir=fixture.output_dir.resolve(),
-                                  questions=questions)
+                                  questions=questions, secrets=secrets)
             turn['prompt'] = prompt
             turn['questions'] = [question for _, question in questions]
             if case_id == 'smp_region' and index == 0:
@@ -345,7 +370,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
                 # A session case is graded turn by turn: keep what the derived
                 # file, its project layers and the workspace state held now.
                 turn['observed'] = observe_run(fixture, project, run_dir)
-                turn['workspace_state'] = redact(toolkit.agent_state_summary())
+                turn['workspace_state'] = redact(toolkit.agent_state_summary(), secrets)
             if case_id in ('crs_view', 'selection'):
                 bounds = iface.canvas.extent()
                 trace['canvas_state_after_turn'] = {
@@ -400,7 +425,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
         if any('error' in turn for turn in trace['turns']):
             trace['status'] = 'error'
             trace['checks'].append({'id': 'runner', 'status': 'blocked', 'detail': 'Backend raised an exception'})
-        write_trace(run_dir / 'run.json', trace)
+        write_trace(run_dir / 'run.json', trace, secrets)
         return trace
     finally:
         if plugin is not None:

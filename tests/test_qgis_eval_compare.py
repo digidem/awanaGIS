@@ -28,6 +28,22 @@ class EvalCompareTests(unittest.TestCase):
             self.assertEqual(result["baseline"]["outcomes"], {"pass": 1})
             self.assertEqual(result["passing_run_metrics"]["elapsed_seconds"]["baseline_median"], 3)
 
+    def test_rejects_backend_base_url_changes(self):
+        with TemporaryDirectory() as directory:
+            baseline = Path(directory) / "baseline"
+            candidate = Path(directory) / "candidate"
+            for root, base_url in ((baseline, "https://example.com/v1"),
+                                   (candidate, "http://127.0.0.1:18765/v1")):
+                root.mkdir()
+                (root / "run.json").write_text(json.dumps({
+                    "case": "style", "variant": "baseline", "qgis_version": "test",
+                    "backend": {"provider": "custom", "model": "fake", "base_url": base_url},
+                    "checks": [{"id": "style", "status": "pass"}],
+                    "metrics": {"elapsed_seconds": 3},
+                }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "configurations differ"):
+                compare(baseline, candidate)
+
     def test_keeps_failed_blocked_and_unpaired_cases_visible(self):
         with TemporaryDirectory() as directory:
             baseline = Path(directory) / "baseline"

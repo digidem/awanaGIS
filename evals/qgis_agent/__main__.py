@@ -6,9 +6,10 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .cases import CASES
-from .runner import run_case
+from .runner import backend_record, run_case
 
 
 def supervise(command, output, timeout, identity):
@@ -33,31 +34,65 @@ def supervise(command, output, timeout, identity):
     return status
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def parse_args(argv=None, parser=None):
+    if parser is None:
+        parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', required=True, choices=sorted(CASES))
     parser.add_argument('--output', required=True, help='New output directory; repeated runs use numbered children')
     parser.add_argument('--provider', required=True, help='Configured AwanaGIS API provider')
     parser.add_argument('--model', required=True, help='Explicit model identifier')
+    parser.add_argument('--base-url', metavar='URL', help='OpenAI-compatible custom endpoint base URL')
+    parser.add_argument('--key-env', metavar='NAME', help='Environment variable holding the custom endpoint API key')
     parser.add_argument('--variant', default='baseline')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--plugin-path', help='Installed CoMapeo Map Builder plugin directory')
     parser.add_argument('--timeout', type=float, default=900)
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     if args.repeat < 1:
         parser.error('--repeat must be positive')
+    if (args.base_url is None) != (args.key_env is None):
+        parser.error('--base-url and --key-env must be given together')
+    if args.base_url is not None:
+        if args.provider != 'custom':
+            parser.error('--base-url requires --provider custom')
+        try:
+            parsed = urlsplit(args.base_url)
+            host = parsed.hostname
+        except ValueError:
+            parser.error('--base-url must be a valid absolute URL with a host')
+        if not host:
+            parser.error('--base-url must include a host')
+        if parsed.username is not None or parsed.password is not None:
+            parser.error('--base-url must not contain user information')
+        if parsed.fragment or '#' in args.base_url:
+            parser.error('--base-url must not contain a fragment')
+        if parsed.query or '?' in args.base_url:
+            parser.error('--base-url must not contain a query string')
+        if parsed.scheme != 'https' and not (parsed.scheme == 'http' and host in ('127.0.0.1', 'localhost')):
+            parser.error('--base-url must use https, or http with host 127.0.0.1 or localhost')
+    return args
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    args = parse_args(argv, parser)
     output = Path(args.output).resolve()
     if args.worker:
-        trace = run_case(args.case, output, args.provider, args.model, args.variant, plugin_path=args.plugin_path)
+        trace = run_case(args.case, output, args.provider, args.model, args.variant, plugin_path=args.plugin_path,
+                         base_url=args.base_url, key_env=args.key_env)
         return 0 if trace['status'] == 'completed' else 1
     if output.exists():
         parser.error('--output must not exist')
     if args.repeat > 1:
         output.mkdir(parents=True)
     failed = False
+    identity = {'case': args.case, 'variant': args.variant,
+                'backend': backend_record(args.provider, args.model, args.base_url)}
+    if args.base_url is not None:
+        identity['key_env'] = args.key_env
     for index in range(1, args.repeat + 1):
         target = output if args.repeat == 1 else output / f'run-{index:02}'
         command = [sys.executable, '-m', __package__, '--worker', '--case', args.case,
@@ -65,8 +100,9 @@ def main():
                    '--variant', args.variant]
         if args.plugin_path:
             command.extend(['--plugin-path', args.plugin_path])
-        status = supervise(command, target, args.timeout, {'case': args.case, 'variant': args.variant,
-                                                           'backend': {'provider': args.provider, 'model': args.model}})
+        if args.base_url is not None:
+            command.extend(['--base-url', args.base_url, '--key-env', args.key_env])
+        status = supervise(command, target, args.timeout, identity)
         failed = failed or bool(status)
     return 1 if failed else 0
 

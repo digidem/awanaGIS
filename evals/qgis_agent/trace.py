@@ -7,19 +7,22 @@ import time
 from pathlib import Path
 
 
-def redact(text):
+def redact(text, secrets=()):
     for key, value in os.environ.items():
         if len(value) >= 4 and any(word in key.upper() for word in ('API_KEY', 'TOKEN', 'SECRET', 'PASSWORD')):
+            text = text.replace(value, '[redacted]')
+    for value in secrets:
+        if value:
             text = text.replace(value, '[redacted]')
     return text
 
 
-def event_record(event, started, output_dir=None):
+def event_record(event, started, output_dir=None, secrets=()):
     kind = str(event.type)
     data = event.data if isinstance(event.data, dict) else {}
     if kind in ('text', 'ask_user'):
         # Assistant prose may require human review; do not persist raw tool payloads.
-        clean = {key: redact(str(data[key])) for key in ('text', 'question') if key in data}
+        clean = {key: redact(str(data[key]), secrets) for key in ('text', 'question') if key in data}
     elif kind == 'tool_use':
         arguments = data.get('input', {})
         raw = json.dumps(arguments, sort_keys=True, default=str).encode()
@@ -31,8 +34,8 @@ def event_record(event, started, output_dir=None):
             if isinstance(output, str) and isinstance(layout_id, str):
                 path = Path(output).resolve()
                 if path.suffix.lower() == '.pdf' and path.is_relative_to(output_dir):
-                    clean['pdf_export'] = {'output': redact(str(path.relative_to(output_dir))),
-                                           'layout_id': redact(layout_id.strip())}
+                    clean['pdf_export'] = {'output': redact(str(path.relative_to(output_dir)), secrets),
+                                           'layout_id': redact(layout_id.strip(), secrets)}
     elif kind == 'tool_result':
         result = data.get('result')
         failed = bool(data.get('is_error') or data.get('cancelled') or
@@ -93,5 +96,28 @@ def artifacts_under(directory):
                   if not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(directory.resolve()))
 
 
-def write_trace(path, trace):
-    Path(path).write_text(json.dumps(trace, ensure_ascii=False, indent=2, default=str) + '\n', encoding='utf-8')
+def _redact_value(value, secrets):
+    """Redact run secrets before JSON escaping can change their representation."""
+    if isinstance(value, str):
+        for secret in secrets:
+            value = value.replace(secret, '[redacted]')
+        return value
+    if isinstance(value, list):
+        return [_redact_value(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_value(item, secrets) for key, item in value.items()}
+    text = str(value)
+    if any(secret in text for secret in secrets):
+        for secret in secrets:
+            text = text.replace(secret, '[redacted]')
+        return text
+    return value
+
+
+def write_trace(path, trace, secrets=()):
+    run_secrets = tuple(secret for secret in secrets if secret)
+    if run_secrets:
+        trace = {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets)
+                 for key, value in trace.items()}
+    payload = json.dumps(trace, ensure_ascii=False, indent=2, default=str) + '\n'
+    Path(path).write_text(payload, encoding='utf-8')

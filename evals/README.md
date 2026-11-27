@@ -12,6 +12,12 @@ QT_QPA_PLATFORM=offscreen PYTHONPATH=.. /usr/bin/python3 -m "${PWD##*/}.evals.qg
   --repeat 3 --output $HOME/.local/state/awanagis-eval/baseline/style
 ```
 
+To run against an OpenAI-compatible endpoint, pass `--provider custom --base-url URL --key-env NAME`; the two
+custom options must be given together. The URL must use HTTPS, except HTTP is allowed for `127.0.0.1` or
+`localhost`, and it must have a host with no user information, query string, or fragment. The run records the
+variable name and endpoint but never the variable's value; a custom endpoint is a different backend, so changing
+it requires `--allow-backend-change` when comparing reports.
+
 Use a new output path for every invocation. For SMP cases, supply `--plugin-path` pointing to the unpacked, trusted `comapeo_smp` directory from the pinned [0.9.0 release](https://plugins.qgis.org/plugins/comapeo_smp/version/0.9.0/). This loads its Processing provider for the benchmark. Use a disposable profile for the interactive installer acceptance below.
 
 Use `--variant heldout` for held-out baseline and promotion runs. Each repetition has its own process and a default 900-second deadline, configurable through `--timeout`. The runner records missing credentials, timeouts, and check failures in `run.json`.
