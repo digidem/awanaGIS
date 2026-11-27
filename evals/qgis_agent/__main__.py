@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import signal
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -12,26 +13,74 @@ from .cases import CASES
 from .runner import backend_record, run_case
 
 
-def supervise(command, output, timeout, identity):
-    process = subprocess.Popen(command, start_new_session=True)
-    detail = None
-    try:
-        code = process.wait(timeout=timeout)
-        status = 'error' if code else None
-        if status:
-            detail = f'Worker exited with code {code} before writing a report'
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-        status = 'timeout'
-        detail = f'Worker passed the {timeout:g} second deadline and was killed'
-    report = output / 'run.json'
-    if status and (status == 'timeout' or not report.exists()):
+def _write_supervisor_report(parent_fd, output, status, identity, detail):
+    payload = json.dumps(
+        dict(
+            identity,
+            status=status,
+            turns=[],
+            artifacts=[],
+            checks=[{'id': 'runner', 'status': 'blocked', 'detail': detail}],
+        ),
+        ensure_ascii=False,
+        indent=2,
+    ) + '\n'
+    if parent_fd is None:
         output.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(dict(identity, status=status, turns=[], artifacts=[],
-                                          checks=[{'id': 'runner', 'status': 'blocked', 'detail': detail}]),
-                                     ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    return status
+        (output / 'run.json').write_text(payload, encoding='utf-8')
+        return
+    out_fd = None
+    try:
+        try:
+            st = os.lstat(output.name, dir_fd=parent_fd)
+            if not stat.S_ISDIR(st.st_mode):
+                return
+        except FileNotFoundError:
+            os.mkdir(output.name, mode=0o755, dir_fd=parent_fd)
+        out_fd = os.open(output.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        try:
+            st = os.lstat('run.json', dir_fd=out_fd)
+        except FileNotFoundError:
+            st = None
+        if st is not None:
+            if status != 'timeout' or not stat.S_ISREG(st.st_mode):
+                return
+            os.unlink('run.json', dir_fd=out_fd)
+        fd = os.open('run.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=out_fd)
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            handle.write(payload)
+    except OSError:
+        return
+    finally:
+        if out_fd is not None:
+            os.close(out_fd)
+
+
+def supervise(command, output, timeout, identity):
+    output = Path(output)
+    parent_fd = None
+    if os.name == 'posix' and hasattr(os, 'O_NOFOLLOW') and hasattr(os, 'O_DIRECTORY'):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        process = subprocess.Popen(command, start_new_session=True)
+        detail = None
+        try:
+            code = process.wait(timeout=timeout)
+            status = 'error' if code else None
+            if status:
+                detail = f'Worker exited with code {code} before writing a report'
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            status = 'timeout'
+            detail = f'Worker passed the {timeout:g} second deadline and was killed'
+        if status:
+            _write_supervisor_report(parent_fd, output, status, identity, detail)
+        return status
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def parse_args(argv=None, parser=None):

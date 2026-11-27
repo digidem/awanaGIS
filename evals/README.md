@@ -50,7 +50,7 @@ The comparison applies these decisions only to pending manual checks.
 | Check | Record |
 | --- | --- |
 | Any pending check emitted by the runner, such as `smp_region` | `manual_checks.json` next to `run.json`, using its emitted ID |
-| Standalone basemap, missing plugin, visual PDF and offline SMP checks | `desktop.md` under the run directory, using the IDs in TASK.md |
+| Standalone basemap, missing plugin, visual PDF and offline SMP checks | `desktop.md` under the run directory, using the check IDs (`google_satellite_default`, `alternate_basemap`, `missing_imagery`, `missing_smp_plugin`, `pdf_visual`, `smp_offline`) |
 | Canvas selection and territory-only coverage during Desktop SMP acceptance | Include observations under `smp_offline` in `desktop.md` |
 
 ## Compare a candidate with the baseline
@@ -80,7 +80,7 @@ Use a disposable QGIS profile and a generated synthetic fixture. Record the Awan
 - **PDF.** Open the rendered file and inspect readability, clipping, extent, north arrow, scale bar, title, and applicable legend or credits.
 - **Missing SMP plugin.** In a profile without CoMapeo Map Builder, check the PT-BR confirmation. Exercise approval, refusal, and install failure when agent-driven installation is available. For approval, verify the plugin loads and the export resumes. Record an unsupported installation flow as blocked.
 
-For checks with a run ID, use the sidecar above. Record standalone Desktop results in `desktop.md` using the IDs in [TASK.md](../TASK.md). Review those results during promotion.
+For checks with a run ID, use the sidecar above. Record standalone Desktop results in `desktop.md` using the standalone check IDs above. Review those results during promotion.
 
 ## Initial smoke findings
 

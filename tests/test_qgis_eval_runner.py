@@ -319,3 +319,38 @@ class RunnerTest(unittest.TestCase):
             report = json.loads((output / 'run.json').read_text())
             self.assertEqual(report['status'], 'error')
             self.assertIn('exited with code 3', report['checks'][0]['detail'])
+
+    def test_supervisor_timeout_writes_report_and_refuses_worker_symlinks(self):
+        supervise = import_module(f"{EVAL_MODULE}.__main__").supervise
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / 'run'
+            status = supervise([sys.executable, '-c', 'import time; time.sleep(5)'], output, 0.2, {'case': 'load'})
+            self.assertEqual(status, 'timeout')
+            report = json.loads((output / 'run.json').read_text(encoding='utf-8'))
+            self.assertEqual(report['status'], 'timeout')
+
+            outside_dir = root / 'outside_dir'
+            outside_dir.mkdir()
+            sym_output = root / 'sym_run'
+            script = (
+                f"import pathlib, time; "
+                f"pathlib.Path({str(sym_output)!r}).symlink_to({str(outside_dir)!r}); "
+                f"time.sleep(5)"
+            )
+            status2 = supervise([sys.executable, '-c', script], sym_output, 0.2, {'case': 'load'})
+            self.assertEqual(status2, 'timeout')
+            self.assertFalse((outside_dir / 'run.json').exists())
+
+            outside_file = root / 'outside.json'
+            outside_file.write_text('KEEP', encoding='utf-8')
+            sym_report_out = root / 'sym_report_run'
+            script2 = (
+                f"import pathlib, time; "
+                f"p = pathlib.Path({str(sym_report_out)!r}); p.mkdir(); "
+                f"(p / 'run.json').symlink_to({str(outside_file)!r}); "
+                f"time.sleep(5)"
+            )
+            status3 = supervise([sys.executable, '-c', script2], sym_report_out, 0.2, {'case': 'load'})
+            self.assertEqual(status3, 'timeout')
+            self.assertEqual(outside_file.read_text(encoding='utf-8'), 'KEEP')

@@ -118,7 +118,7 @@ class ArchiveCheckTests(unittest.TestCase):
             report = check_plugin.validate_and_extract_archive(zip_path, extract_dir)
             self.assertTrue(report["ok"], report["blocking_errors"])
             plugin_root = extract_dir / "awanagis"
-            for excluded in ("tests", "ci", "docs", ".github", ".flake8", ".gitattributes", ".gitignore"):
+            for excluded in ("tests", "ci", "docs", "evals", ".github", ".flake8", ".gitattributes", ".gitignore"):
                 self.assertFalse((plugin_root / excluded).exists(), f"{excluded} must not ship")
 
     def test_missing_qm_is_rejected(self):
@@ -226,6 +226,7 @@ class ArchiveCheckTests(unittest.TestCase):
             "awanagis/id_rsa",
             "awanagis/core/__pycache__/x.cpython-312.pyc",
             "awanagis/tests/test_x.py",
+            "awanagis/evals/qgis_agent/__init__.py",
             "awanagis/nested.zip",
         ]
         for member_name in forbidden:

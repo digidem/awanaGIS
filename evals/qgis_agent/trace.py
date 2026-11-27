@@ -22,10 +22,11 @@ def _redaction_placeholder(secrets):
     for character in candidates + string.ascii_letters + string.digits:
         if not any(character in secret for secret in secrets):
             return character * 3
-    while True:
+    for _ in range(64):
         marker = secure_random.token_hex(8)
         if not any(marker in secret for secret in secrets):
             return marker
+    raise RuntimeError('Unable to choose a secret-free redaction placeholder')
 
 
 def redact(text, secrets=()):
@@ -131,13 +132,21 @@ def _redact_value(value, secrets, placeholder):
         for key, item in value.items():
             clean_key = _redact_value(key, secrets, placeholder) if isinstance(key, str) else key
             if clean_key in redacted:
-                suffix = 2
-                while True:
+                resolved = None
+                for suffix in range(2, 1025):
                     candidate = f'{clean_key}#{suffix}'
                     if candidate not in redacted and not any(secret in candidate for secret in secrets):
-                        clean_key = candidate
+                        resolved = candidate
                         break
-                    suffix += 1
+                if resolved is None:
+                    for _ in range(64):
+                        candidate = f'{placeholder}_{secure_random.token_hex(8)}'
+                        if candidate not in redacted and not any(secret in candidate for secret in secrets):
+                            resolved = candidate
+                            break
+                if resolved is None:
+                    raise RuntimeError('Unable to resolve secret-free dictionary key collision')
+                clean_key = resolved
             redacted[clean_key] = _redact_value(item, secrets, placeholder)
         return redacted
     text = str(value)
