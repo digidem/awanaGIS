@@ -4844,7 +4844,7 @@ class QgisToolkit:
                     "error": QCoreApplication.translate(
                         "QgisToolkit",
                         "No visible layers to show. Turn layers on in the project "
-                        "or pass their names in layers.",
+                        "or pass their names in layers."
                     ),
                 }
 
@@ -4987,7 +4987,7 @@ class QgisToolkit:
             notes.append(
                 QCoreApplication.translate(
                     "QgisToolkit",
-                    "The legend needs {height} mm and does not fit the page, so it was left out.",
+                    "The legend needs {height} mm and does not fit the page, so it was left out."
                 ).format(height=f"{legend_height:.0f}")
             )
             log_event("toolkit.create_layout.item_dropped", item="legend", height_mm=round(legend_height, 1))
@@ -5052,7 +5052,7 @@ class QgisToolkit:
                 notes.append(
                     QCoreApplication.translate(
                         "QgisToolkit",
-                        "The legend is {width} mm wide and does not fit the page, so it was left out.",
+                        "The legend is {width} mm wide and does not fit the page, so it was left out."
                     ).format(width=f"{legend_width:.0f}")
                 )
                 log_event("toolkit.create_layout.item_dropped", item="legend", width_mm=round(legend_width, 1))
