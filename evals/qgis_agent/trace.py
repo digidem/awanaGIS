@@ -132,9 +132,12 @@ def _redact_value(value, secrets, placeholder):
             clean_key = _redact_value(key, secrets, placeholder) if isinstance(key, str) else key
             if clean_key in redacted:
                 suffix = 2
-                while f'{clean_key}#{suffix}' in redacted:
+                while True:
+                    candidate = f'{clean_key}#{suffix}'
+                    if candidate not in redacted and not any(secret in candidate for secret in secrets):
+                        clean_key = candidate
+                        break
                     suffix += 1
-                clean_key = f'{clean_key}#{suffix}'
             redacted[clean_key] = _redact_value(item, secrets, placeholder)
         return redacted
     text = str(value)

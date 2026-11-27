@@ -334,6 +334,20 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertNotIn(secret, report_text)
         self.assertNotIn(secret, json.dumps(written))
 
+    def test_collision_suffix_does_not_reintroduce_the_run_secret(self):
+        secret = "abcdef#2"
+        trace = {"turns": [{"abcdef#2abcdef": "first", "[redacted]abcdef": "second"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            written = trace_module.write_trace(path, trace, (secret,))
+            report_text = path.read_text(encoding="utf-8")
+            report = json.loads(report_text)
+        keys = list(report["turns"][0])
+        self.assertEqual(keys, ["[redacted]abcdef", "[redacted]abcdef#3"])
+        self.assertEqual(len(set(keys)), 2)
+        self.assertNotIn(secret, report_text)
+        self.assertNotIn(secret, json.dumps(written))
+
     def test_write_trace_walks_values_and_preserves_trusted_metadata(self):
         class SecretValue:
             def __str__(self):
