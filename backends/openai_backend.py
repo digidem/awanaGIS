@@ -21,6 +21,7 @@ from .base import (
     elide_stale_tool_results,
     max_tokens_for,
     unlimited_iterations,
+    TOOL_LIMIT_PROMPT,
 )
 from .openai_http import OpenAIHttpClient, OpenAIHttpError
 
@@ -1043,5 +1044,23 @@ class OpenAIBackend(AgentBackend):
             )
             emit(AgentEvent(EventType.THINKING, {"text": limit_msg}))
             messages.append({"role": "user", "content": f"[System note: {limit_msg}]"})
+            # A turn that ends after a tool result shows nothing in the chat.
+            messages.extend(self._tool_limit_reply(client, model, messages, emit, should_stop, limit_msg))
             emit(AgentEvent(EventType.DONE))
         return messages
+
+    def _request_closing_text(self, client, model, messages, emit, on_text, should_stop):
+        """One request without tools, for the text that ends a turn at the tool limit."""
+        closing = list(messages) + [{"role": "user", "content": TOOL_LIMIT_PROMPT}]
+        content, _finish_reason = client.stream_message(
+            model=model,
+            max_tokens=max_tokens_for(model),
+            system=self._system_text(),
+            tools=None,
+            messages=append_transient_state(closing, self._state_text()),
+            on_text=on_text,
+            should_stop=should_stop,
+            on_connecting=lambda: emit(AgentEvent(EventType.CONNECTING)),
+        )
+        return "".join(block.get("text", "") for block in content
+                       if isinstance(block, dict) and block.get("type") == "text")

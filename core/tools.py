@@ -1025,16 +1025,19 @@ TOOL_SPECS = [
         "name": "create_layout",
         "method": "create_layout",
         "description": (
-            "Create a print layout in the current QGIS project with a map item "
-            "showing the specified layers. Use for preparing map layouts for "
-            "export. Runs on the main thread."
+            "Create a print layout in the current QGIS project: a page with a "
+            "map item showing the specified layers at the current canvas extent, "
+            "plus a title, a legend, a scale bar and a north arrow. Use for "
+            "preparing map layouts for export with export_layout. Runs on the "
+            "main thread. The result lists the layers, the shown extent and the "
+            "items on the page."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "title": {
                     "type": "string",
-                    "description": "Layout name (must be unique in the project).",
+                    "description": "Layout name, shown as the page title (must be unique in the project).",
                 },
                 "layers": {
                     "type": "array",
@@ -1189,7 +1192,7 @@ _PYQGIS_MAIN_THREAD_MARKERS = (
     # project layer registry (reading/mutating it off-thread is unsafe)
     "addMapLayer", "removeMapLayer", "setActiveLayer",
     "addVectorLayer", "addRasterLayer",
-    "mapLayer(", "mapLayersByName",
+    "mapLayer(", "mapLayers", "mapLayersByName",
     # layer editing buffers (tied to the project layer they edit)
     "startEditing", "commitChanges", "rollBack",
     # toolkit helpers that read project layers on the main thread

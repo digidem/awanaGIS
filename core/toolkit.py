@@ -16,8 +16,10 @@ its slot.
 """
 
 import io
+import json
 import os
 import re
+import stat
 import tempfile
 import threading
 import time
@@ -26,7 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as _FutureTimeoutError
 from contextlib import redirect_stderr, redirect_stdout
 
-from qgis.PyQt.QtCore import QCoreApplication, QThread
+from qgis.PyQt.QtCore import QCoreApplication, QThread, QTimer
 from qgis.core import Qgis
 from qgis.core import (
     QgsApplication,
@@ -56,6 +58,7 @@ from .dev_logging import log_event
 from .layer_analysis import analyze_vector_layer
 from .processing_param_check import build_unknown_params_error
 from .processing_tasks import parameter_names, run_processing_algorithm_task
+from .qt_compat import _qt_enum
 from .web_fetch_helpers import (
     is_binary_content,
     safe_filename_from_url,
@@ -78,6 +81,141 @@ def _is_analysis_layer(layer):
         layer.customProperty("awanagis/analysis")
         or layer.customProperty("agenticgis/analysis")
     )
+
+
+def _temp_file_location(path):
+    """Return ``(real_folder, rel_dir, basename)`` for a temporary file, or None.
+
+    Only a regular file (or symlink directly inside the temp folder) whose
+    lexical path and resolved parent directory both stay inside the system
+    temporary folder is eligible. A symlink outside the temp folder or a
+    symlinked parent directory inside it pointing outside is rejected.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return None
+    try:
+        # Layer options after "?" or "|" are not part of the file name.
+        raw = path.split("|", 1)[0].split("?", 1)[0].strip()
+        full = os.path.normcase(os.path.abspath(os.path.expanduser(raw)))
+        lexical_folder = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+        if os.path.commonpath([full, lexical_folder]) != lexical_folder or full == lexical_folder:
+            return None
+        parent = os.path.dirname(full)
+        basename = os.path.basename(full)
+        if basename in ("", ".", ".."):
+            return None
+        real_folder = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
+        real_parent = os.path.normcase(os.path.realpath(parent))
+        if os.path.commonpath([real_parent, real_folder]) != real_folder:
+            return None
+        if not os.path.islink(full) and os.path.isdir(full):
+            return None
+        rel_dir = os.path.relpath(parent, lexical_folder)
+        return real_folder, rel_dir, basename
+    except (OSError, ValueError):  # different drives, or a path that cannot be read
+        return None
+
+
+def _is_temp_file(path):
+    """True for a file that lies in the system temporary folder.
+
+    Only such a file is deleted with the analysis layer that shows it. A file
+    anywhere else belongs to the user, whatever flag added its layer. Links
+    are not followed: a link outside the folder is the user's, whatever it
+    points to, and a link inside it is removed without its target.
+    """
+    return _temp_file_location(path) is not None
+
+
+def _temp_file_stat(path):
+    """Return ``(norm_path, (st_dev, st_ino))`` for a safe temp file, or None."""
+    location = _temp_file_location(path)
+    if location is None:
+        return None
+    real_folder, rel_dir, basename = location
+    norm_path = os.path.normcase(os.path.normpath(os.path.join(real_folder, rel_dir, basename)))
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        dir_fd = None
+        try:
+            dir_fd = os.open(real_folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            if rel_dir not in ("", "."):
+                for part in rel_dir.split(os.sep):
+                    if not part or part == ".":
+                        continue
+                    if part == "..":
+                        return None
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                    os.close(dir_fd)
+                    dir_fd = next_fd
+            entry = os.lstat(basename, dir_fd=dir_fd)
+            if stat.S_ISDIR(entry.st_mode):
+                return None
+            return norm_path, (entry.st_dev, entry.st_ino)
+        except OSError:
+            return None
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+    try:
+        entry = os.lstat(os.path.join(real_folder, rel_dir, basename))
+        if stat.S_ISDIR(entry.st_mode):
+            return None
+        return norm_path, (entry.st_dev, entry.st_ino)
+    except OSError:
+        return None
+
+
+def _safe_unlink_temp_file(path, expected_identity=None):
+    """Unlink ``path`` without traversing symlinks out of the temporary folder."""
+    location = _temp_file_location(path)
+    if location is None:
+        return False
+    real_folder, rel_dir, basename = location
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"):
+        dir_fd = None
+        try:
+            dir_fd = os.open(real_folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            if rel_dir not in ("", "."):
+                for part in rel_dir.split(os.sep):
+                    if not part or part == ".":
+                        continue
+                    if part == "..":
+                        return False
+                    next_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd
+                    )
+                    os.close(dir_fd)
+                    dir_fd = next_fd
+            entry = os.lstat(basename, dir_fd=dir_fd)
+            if stat.S_ISDIR(entry.st_mode):
+                return False
+            if expected_identity is not None and (entry.st_dev, entry.st_ino) != expected_identity:
+                return False
+            os.unlink(basename, dir_fd=dir_fd)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            log_event("toolkit.temp_file_unlink_failed", error=str(exc))
+            return False
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+    try:
+        target = os.path.join(real_folder, rel_dir, basename)
+        if expected_identity is not None:
+            entry = os.lstat(target)
+            if (entry.st_dev, entry.st_ino) != expected_identity:
+                return False
+        os.unlink(target)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log_event("toolkit.temp_file_unlink_failed", error=str(exc))
+        return False
 
 
 def _on_main_thread():
@@ -288,6 +426,29 @@ def _no_geometry_flag():
         if val is not None:
             return val
     return getattr(QgsFeatureRequest, "NoGeometry", None)
+
+
+def _scoped_member(owner, enum_name, member_name):
+    """Return an enum member that QGIS 4 scopes under ``Qgis`` and QGIS 3 keeps flat."""
+    scoped = getattr(getattr(Qgis, enum_name, None), member_name, None)
+    return scoped if scoped is not None else getattr(owner, member_name)
+
+
+def _points_unit(unit_types):
+    """Return the points render unit: ``Qgis.RenderUnit.Points`` or ``QgsUnitTypes.RenderPoints``."""
+    scoped = getattr(getattr(Qgis, "RenderUnit", None), "Points", None)
+    return scoped if scoped is not None else unit_types.RenderPoints
+
+
+def _drop_empty_groups(group):
+    """Remove the groups below ``group`` that no longer hold a layer or a group."""
+    from qgis.core import QgsLayerTree
+
+    for child in list(group.children()):
+        if QgsLayerTree.isGroup(child):
+            _drop_empty_groups(QgsLayerTree.toGroup(child))
+            if not child.children():
+                group.removeChildNode(child)
 
 
 def _param_flag_optional():
@@ -813,9 +974,12 @@ class QgisToolkit:
         # These are meant to persist; the agent reuses them instead of
         # recreating and never auto-deletes them.
         self._analysis_layers = {}
-        # Track temp file paths for is_analysis layers so they can be cleaned
-        # up when the layer is removed or a session is reset.
-        self._temp_layer_files = {}  # layer_id -> file_path
+        # Track temporary file paths explicitly allocated by this toolkit for
+        # is_analysis layers so they can be cleaned up when the layer is
+        # removed or a session is reset. User-owned files (even inside the
+        # system temp directory) are never entered here.
+        self._owned_temp_files = {}  # norm_path -> (st_dev, st_ino)
+        self._temp_layer_files = {}  # layer_id -> (file_path, (st_dev, st_ino))
         # Session-level approval for tool categories (e.g., "gee").
         # Reset when the user starts a new chat session.
         self._session_approved_tool_categories = set()
@@ -836,6 +1000,18 @@ class QgisToolkit:
         # Scan layers already loaded in the project so the agent state
         # summary is never stale at startup.
         self._scan_existing_layers()
+        # Layers also change without the agent: in the layer panel, or when a
+        # project loads. Bring the registry in line once the change settles.
+        self._agent_layers_timer = QTimer()
+        self._agent_layers_timer.setSingleShot(True)
+        self._agent_layers_timer.setInterval(0)
+        self._agent_layers_timer.timeout.connect(self.refresh_agent_layers)
+        try:
+            project = QgsProject.instance()
+            project.layersAdded.connect(self._agent_layers_changed)
+            project.layersRemoved.connect(self._agent_layers_changed)
+        except Exception:  # nosec B110
+            pass
 
     def _scan_existing_layers(self):
         """Register all existing project layers in the agent state.
@@ -849,25 +1025,86 @@ class QgisToolkit:
         except Exception:  # nosec B110
             return
         for layer in layers:
-            if not layer:
-                continue
+            if layer:
+                self._register_agent_layer(layer)
+
+    def _register_agent_layer(self, layer):
+        """Record a project layer as it is now."""
+        try:
+            self._agent_state.register_layer(
+                layer_id=layer.id(),
+                name=layer.name(),
+                layer_type=_map_layer_type_name(layer),
+                crs=layer.crs().authid() if layer.crs().isValid() else None,
+                feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
+                fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
+                source=layer.publicSource(),
+                is_analysis=_is_analysis_layer(layer),
+            )
+        except Exception:  # nosec B110
+            pass
+
+    def _agent_layers_changed(self, *_args):
+        """Project signal: refresh the registry once a burst of changes is over."""
+        try:
+            self._agent_layers_timer.start(0)
+        except Exception:  # nosec B110
+            pass
+
+    def refresh_agent_layers(self):
+        """Bring the layer registry in line with the project. Main thread only.
+
+        The registry feeds the Workspace State block of every model request.
+        A layer that left the project leaves the registry, a layer that joined
+        by any means enters it, and feature counts are read from the layers
+        again, so an edit shows in the next request. Reading QGIS layers from
+        a backend thread is not safe, so the call does nothing there.
+        """
+        if self._agent_state is None or not _on_main_thread():
+            return
+        try:
+            layers = QgsProject.instance().mapLayers()
+        except Exception:  # nosec B110
+            return
+        for layer_id in [layer_id for layer_id in self._agent_state.layers if layer_id not in layers]:
+            self._agent_state.unregister_layer(layer_id)
+        for layer in layers.values():
+            if layer:
+                self._register_agent_layer(layer)
+
+    def cleanup_agent_layers(self):
+        """Stop the workspace-sync timer and disconnect project/app signals."""
+        timer = getattr(self, "_agent_layers_timer", None)
+        if timer is not None:
             try:
-                self._agent_state.register_layer(
-                    layer_id=layer.id(),
-                    name=layer.name(),
-                    layer_type=_map_layer_type_name(layer),
-                    crs=layer.crs().authid() if layer.crs().isValid() else None,
-                    feature_count=_safe_feature_count(layer) if isinstance(layer, QgsVectorLayer) else None,
-                    fields=[f.name() for f in layer.fields()] if isinstance(layer, QgsVectorLayer) else None,
-                    source=layer.publicSource(),
-                    is_analysis=_is_analysis_layer(layer),
-                )
-            except Exception:  # nosec B110
+                timer.stop()
+            except Exception as exc:
+                log_event("toolkit.cleanup_timer_failed", error=str(exc))
+            try:
+                timer.timeout.disconnect(self.refresh_agent_layers)
+            except (TypeError, RuntimeError):
+                pass
+        try:
+            project = QgsProject.instance()
+            if project is not None:
+                for sig in (project.layersAdded, project.layersRemoved):
+                    try:
+                        sig.disconnect(self._agent_layers_changed)
+                    except (TypeError, RuntimeError):
+                        pass
+        except Exception as exc:
+            log_event("toolkit.cleanup_project_signals_failed", error=str(exc))
+        plugins_changed = getattr(QgsApplication, "pluginsChanged", None)
+        if plugins_changed is not None:
+            try:
+                plugins_changed.disconnect(self._invalidate_alg_cache)
+            except (TypeError, RuntimeError):
                 pass
 
     def agent_state_summary(self):
         """Return a compact workspace summary suitable for injection into prompts."""
         try:
+            self.refresh_agent_layers()
             return self._agent_state.to_system_prompt_section()
         except Exception:  # nosec B110
             return ""
@@ -913,7 +1150,7 @@ class QgisToolkit:
         """
         self._ask_emitter = emitter
 
-    def ask_user(self, question, options, allow_free_text=True):
+    def ask_user(self, question=None, options=None, allow_free_text=True):
         """Toolkit implementation of the ``ask_user`` tool.
 
         Return contract (deliberately different from the other toolkit
@@ -996,6 +1233,17 @@ class QgisToolkit:
     def _normalize_ask_user_options(options):
         """Accept common model-emitted option shapes and return label dicts."""
         normalized = []
+        if isinstance(options, str):
+            # Some models send the list as one JSON string.
+            try:
+                options = json.loads(options)
+            except (ValueError, RecursionError):
+                options = None
+            readable = isinstance(options, dict) or (
+                isinstance(options, list) and all(isinstance(item, (str, dict)) for item in options)
+            )
+            if not readable:
+                options = None
         if isinstance(options, dict):
             options = [
                 {"label": str(key), "description": str(value) if value is not None else ""}
@@ -1315,13 +1563,20 @@ class QgisToolkit:
         self._delete_temp_analysis_layer_files()
         self._scan_existing_layers()
 
+    def _register_owned_temp_file(self, path):
+        """Record a toolkit-created temp file and its filesystem identity."""
+        info = _temp_file_stat(path)
+        if info is None:
+            return False
+        norm_path, identity = info
+        self._owned_temp_files[norm_path] = identity
+        return True
+
     def _delete_temp_analysis_layer_files(self):
-        """Delete source files for tracked is_analysis temp layers."""
-        for path in list(self._temp_layer_files.values()):
-            try:
-                os.unlink(path)
-            except Exception:  # nosec B110
-                pass
+        """Delete source files for tracked toolkit-owned is_analysis temp layers."""
+        for entry in list(self._temp_layer_files.values()):
+            path, identity = entry
+            _safe_unlink_temp_file(path, expected_identity=identity)
         self._temp_layer_files.clear()
 
     # ------------------------------------------------------------------ #
@@ -2852,9 +3107,14 @@ class QgisToolkit:
             except Exception:  # nosec B110
                 pass
             self._analysis_layers[name] = layer.id()
-            # Track temp file for cleanup when layer is removed/session ends.
-            if isinstance(uri, str):
-                self._temp_layer_files[layer.id()] = str(uri)
+            # Only files explicitly allocated by this toolkit go with the layer.
+            if registered is None and isinstance(uri, str):
+                info = _temp_file_stat(uri)
+                if info is not None:
+                    norm_path, identity = info
+                    owned_identity = self._owned_temp_files.pop(norm_path, None)
+                    if owned_identity is not None and owned_identity == identity:
+                        self._temp_layer_files[layer.id()] = (str(uri), owned_identity)
         zoomed = self._zoom_to_layer(layer) if zoom else False
         return {
             "ok": True,
@@ -4347,27 +4607,24 @@ class QgisToolkit:
         return {"id": layer.id(), "name": layer.name()}
 
     def _maybe_delete_layer_file(self, layer):
-        """Delete the source file for an is_analysis temp layer."""
+        """Delete the source file for a tracked toolkit-owned is_analysis temp layer."""
         try:
             is_analysis = _is_analysis_layer(layer)
-        except Exception:
+        except Exception as exc:
+            log_event("toolkit.analysis_layer_check_failed", error=str(exc))
             is_analysis = False
-        if not is_analysis:
+        entry = self._temp_layer_files.pop(layer.id(), None)
+        if not is_analysis or not entry:
             return
-        path = self._temp_layer_files.pop(layer.id(), None)
-        if path is None:
-            path = layer.publicSource()
-        if path:
-            try:
-                os.unlink(path)
-            except Exception:  # nosec B110
-                pass
+        path, identity = entry
+        _safe_unlink_temp_file(path, expected_identity=identity)
 
     def remove_layer(self, layer_id=None, layer_name=None):
         """Unload one map layer from the current project.
 
-        For is_analysis temp layers, the source file is also deleted.
-        For other layers, the source dataset is never deleted.
+        A temporary file that an analysis layer shows is deleted with the
+        layer. Any other source file is never deleted, including a derived
+        file the user asked to keep.
         """
         layer_id = layer_id.strip() if isinstance(layer_id, str) else layer_id
         layer_name = layer_name.strip() if isinstance(layer_name, str) else layer_name
@@ -4410,12 +4667,16 @@ class QgisToolkit:
             layer = matches[0]
 
         removed = self._layer_removal_payload(layer)
+        layer_id = layer.id()
         self._maybe_delete_layer_file(layer)
-        project.removeMapLayer(layer.id())
+        # Unregister before the removal: it deletes the layer object, and
+        # any call on the layer afterwards raises. A layer that stayed
+        # registered kept appearing in the Workspace State of every later turn.
         try:
-            self._agent_state.unregister_layer(layer.id())
+            self._agent_state.unregister_layer(layer_id)
         except Exception:  # nosec B110
             pass
+        project.removeMapLayer(layer_id)
         self._canvas_dirty = True
         return {
             "ok": True,
@@ -4428,7 +4689,7 @@ class QgisToolkit:
         """Unload all map layers from the current project.
 
         Requires confirm=True so the model cannot clear the canvas by accident.
-        Source datasets are not deleted, but is_analysis temp layer files are.
+        Source datasets are not deleted; temporary files of is_analysis layers are.
         """
         if confirm is not True:
             return {
@@ -4499,10 +4760,11 @@ class QgisToolkit:
     def create_layout(self, title, layers=None, page_size="A4", orientation="portrait"):
         """Create a print layout in the current QGIS project.
 
-        Sets up a default page (configurable size/orientation) and a map item
-        showing ``layers`` (or all visible layers when ``layers`` is None) at
-        the current canvas extent. Runs on the main thread; the dispatcher in
-        ``core.tools.dispatch`` wraps this call in ``executor.run_sync``.
+        Composes a default page: a map item showing ``layers`` (or all
+        visible layers when ``layers`` is None) at the current canvas extent,
+        with a title, a legend, a scale bar and a north arrow. Runs on the
+        main thread; the dispatcher in ``core.tools.dispatch`` wraps this
+        call in ``executor.run_sync``.
         """
         if not isinstance(title, str) or not title.strip():
             return {"ok": False, "error": "title must be a non-empty string"}
@@ -4555,30 +4817,49 @@ class QgisToolkit:
 
             layout.setName(title)
 
-            # Locate the map item created by initializeDefaults and configure it.
-            map_item = None
-            for item in layout.items():
-                if isinstance(item, QgsLayoutItemMap):
-                    map_item = item
-                    break
-            if map_item is not None:
-                resolved = []
-                if layers:
-                    for ref in layers:
-                        layer, lerr = self._resolve_layer_ref(ref)
-                        if lerr is not None:
-                            return lerr
-                        resolved.append(layer)
-                else:
-                    # Fall back to all currently visible layers.
-                    canvas = self.iface.mapCanvas() if self.iface is not None else None
-                    if canvas is not None:
-                        resolved = [lyr for lyr in canvas.layers() if lyr is not None]
-                if resolved:
-                    map_item.setLayers(resolved)
+            resolved = []
+            if layers:
+                for ref in layers:
+                    layer, lerr = self._resolve_layer_ref(ref)
+                    if lerr is not None:
+                        return lerr
+                    resolved.append(layer)
+                # ``layers`` selects what the map shows, not how it stacks. A
+                # model that names the basemap first would otherwise draw it
+                # over everything else.
+                resolved = self._stack_like_canvas(resolved)
+            else:
+                # Fall back to all currently visible layers.
                 canvas = self.iface.mapCanvas() if self.iface is not None else None
                 if canvas is not None:
-                    map_item.setExtent(canvas.extent())
+                    resolved = [lyr for lyr in canvas.layers() if lyr is not None]
+                else:
+                    # Use the renderer's order so custom layer ordering is honored.
+                    resolved = self._visible_layers_in_render_order()
+            if not resolved:
+                # QGIS falls back to the whole project behind an empty layer list,
+                # which would print layers the user has turned off.
+                return {
+                    "ok": False,
+                    "error": QCoreApplication.translate(
+                        "QgisToolkit",
+                        "No visible layers to show. Turn layers on in the project "
+                        "or pass their names in layers."
+                    ),
+                }
+
+            # initializeDefaults() creates the page only. The map item it was
+            # once assumed to create is added by the QGIS designer for
+            # interactive layouts, so without this step the export is blank.
+            map_item = next((item for item in layout.items() if isinstance(item, QgsLayoutItemMap)), None)
+            if map_item is None:
+                map_item = QgsLayoutItemMap(layout)
+                layout.addLayoutItem(map_item)
+            map_item.setKeepLayerSet(True)
+            map_item.setLayers(resolved)
+            crs, view = self._layout_view(project, resolved)
+            items, notes = self._compose_layout(layout, map_item, title, crs, view)
+            shown = map_item.extent()
 
             manager.addLayout(layout)
             self._canvas_dirty = True
@@ -4587,10 +4868,291 @@ class QgisToolkit:
                 title=title,
                 page_size=page_size,
                 orientation=orientation,
+                items=items,
             )
-            return {"ok": True, "layout_id": title, "name": title}
+            return {
+                "ok": True,
+                "layout_id": title,
+                "name": title,
+                "layers": [layer.name() for layer in resolved],
+                "extent": [shown.xMinimum(), shown.yMinimum(), shown.xMaximum(), shown.yMaximum()],
+                "crs": map_item.crs().authid(),
+                "page": f"{page_size} {orientation}",
+                "items": items,
+                "notes": notes,
+            }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+
+    _LAYOUT_MARGIN_MM = 10.0
+    _LAYOUT_TITLE_TOP_MM = 3.0
+    _LAYOUT_TITLE_BAND_MM = 20.0
+    _LAYOUT_BOTTOM_BAND_MM = 34.0
+    _LAYOUT_MAX_BAND_SHARE = 0.45
+
+    def _stack_like_canvas(self, layers):
+        """Order ``layers`` like the canvas, then by the project's render order.
+
+        Layers shown on the canvas stay top first. Requested layers the canvas
+        does not show follow in the project's rendering order, which includes
+        hidden layers. Without a canvas, visible layers lead in that same order.
+        Layers absent from both orders remain stable at the end.
+        """
+        from qgis.core import QgsProject
+
+        project = QgsProject.instance()
+        # The project's rendering order includes layers hidden on the canvas.
+        render_order = [layer for layer in project.layerTreeRoot().layerOrder() if layer is not None]
+        canvas = self.iface.mapCanvas() if self.iface is not None else None
+        if canvas is not None:
+            shown = [layer for layer in canvas.layers() if layer is not None]
+        else:
+            shown = self._visible_layers_in_render_order()
+        shown_ids = {layer.id() for layer in shown}
+        stacked = shown + [layer for layer in render_order if layer.id() not in shown_ids]
+        rank = {layer.id(): index for index, layer in enumerate(stacked)}
+        return sorted(layers, key=lambda layer: rank.get(layer.id(), len(rank)))
+
+    def _visible_layers_in_render_order(self):
+        """Return visible project layers in the order the renderer uses.
+
+        The Layers panel order can differ from a custom rendering order, so
+        visibility is collected separately from ``layerOrder()``.
+        """
+        from qgis.core import QgsProject
+
+        root = QgsProject.instance().layerTreeRoot()
+        visible_ids = {node.layerId() for node in root.findLayers() if node.isVisible()}
+        return [layer for layer in root.layerOrder() if layer is not None and layer.id() in visible_ids]
+
+    def _layout_view(self, project, layers):
+        """Return ``(crs, extent)`` for a new layout map.
+
+        The canvas view wins. Without a canvas the project's default view is
+        used, and failing that the combined extent of the layers.
+        """
+        from qgis.core import QgsCoordinateTransform, QgsRectangle
+
+        canvas = self.iface.mapCanvas() if self.iface is not None else None
+        if canvas is not None:
+            # QgsMapCanvas exposes its CRS only through the map settings.
+            return canvas.mapSettings().destinationCrs(), canvas.extent()
+        default = project.viewSettings().defaultViewExtent()
+        crs = default.crs()
+        if not crs.isValid():
+            crs = project.crs()
+        extent = QgsRectangle(default)
+        if extent.isNull() and layers:
+            for layer in layers:
+                box = QgsCoordinateTransform(layer.crs(), crs, project).transformBoundingBox(layer.extent())
+                extent.combineExtentWith(box)
+        return crs, extent
+
+    def _compose_layout(self, layout, map_item, title, crs, view):
+        """Place the map and add a title, legend, scale bar and north arrow.
+
+        Returns the names of the items on the page and notes about anything
+        left out. Each optional item is dropped on its own when the QGIS
+        build refuses it or the page has no room for it, so an accessory
+        never costs the map itself.
+        """
+        from qgis.PyQt.QtCore import QFile
+        from qgis.PyQt.QtGui import QFont
+        from qgis.core import (
+            QgsLayoutItemLabel,
+            QgsLayoutItemPicture,
+            QgsLayoutItemScaleBar,
+            QgsLayoutPoint,
+            QgsLayoutSize,
+            QgsTextFormat,
+            QgsUnitTypes,
+        )
+
+        page = layout.pageCollection().page(0).pageSize()
+        width, height = float(page.width()), float(page.height())
+        margin, top = self._LAYOUT_MARGIN_MM, self._LAYOUT_TITLE_BAND_MM
+        band = self._LAYOUT_BOTTOM_BAND_MM
+        items, notes = ["map"], []
+
+        # The legend is measured first, because its height decides how much
+        # room the band under the map needs.
+        try:
+            legend, legend_height = self._layout_legend(layout, map_item, band)
+        except Exception as exc:  # noqa: BLE001
+            legend, legend_height = None, 0.0
+            log_event("toolkit.create_layout.item_dropped", item="legend", error=str(exc))
+        # The legend sits on the page margin, so the band also keeps it off the map.
+        needed = legend_height + margin + 4.0
+        if legend is not None and needed > height * self._LAYOUT_MAX_BAND_SHARE:
+            notes.append(
+                QCoreApplication.translate(
+                    "QgisToolkit",
+                    "The legend needs {height} mm and does not fit the page, so it was left out."
+                ).format(height=f"{legend_height:.0f}")
+            )
+            log_event("toolkit.create_layout.item_dropped", item="legend", height_mm=round(legend_height, 1))
+            legend = None
+        if legend is not None:
+            band = max(band, needed)
+
+        map_item.setCrs(crs)
+        map_item.attemptResize(QgsLayoutSize(width - 2 * margin, height - top - band))
+        map_item.attemptMove(QgsLayoutPoint(margin, top))
+        if view is not None and not view.isNull():
+            # zoomToExtent keeps the item's size; setExtent would change it.
+            map_item.zoomToExtent(view)
+
+        def accessory(name, item, place):
+            try:
+                layout.addLayoutItem(item)
+                place(item)
+            except Exception as exc:  # noqa: BLE001
+                layout.removeLayoutItem(item)
+                log_event("toolkit.create_layout.item_dropped", item=name, error=str(exc))
+                return
+            items.append(name)
+
+        label = QgsLayoutItemLabel(layout)
+
+        def place_label(item):
+            item.setText(title)
+            font = QFont()
+            font.setBold(True)
+            font.setPointSizeF(16.0 if len(title) <= 48 else 12.0)
+            if hasattr(item, "setTextFormat"):
+                text = QgsTextFormat()
+                text.setFont(font)
+                text.setSize(16 if len(title) <= 48 else 12)
+                text.setSizeUnit(_points_unit(QgsUnitTypes))
+                item.setTextFormat(text)
+            else:
+                item.setFont(font)
+            item.setHAlign(_qt_enum("AlignmentFlag", "AlignLeft"))
+            item.setVAlign(_qt_enum("AlignmentFlag", "AlignVCenter"))
+            item.attemptResize(QgsLayoutSize(width - 2 * margin, top - 2 * self._LAYOUT_TITLE_TOP_MM))
+            item.attemptMove(QgsLayoutPoint(margin, self._LAYOUT_TITLE_TOP_MM))
+
+        accessory("title", label, place_label)
+
+        bar = QgsLayoutItemScaleBar(layout)
+
+        def place_scale_bar(item):
+            item.setLinkedMap(map_item)
+            item.setStyle("Single Box")
+            item.applyDefaultSize()
+            item.attemptMove(QgsLayoutPoint(margin, height - margin - item.rect().height()))
+
+        accessory("scale bar", bar, place_scale_bar)
+
+        if legend is not None:
+            legend_width = float(legend.rect().width()) if hasattr(legend, "rect") else 0.0
+            bar_width = float(bar.rect().width()) if "scale bar" in items else 0.0
+            max_legend_width = width - 2 * margin - (bar_width + 4.0 if bar_width > 0.0 else 0.0)
+            if legend_width > max_legend_width:
+                notes.append(
+                    QCoreApplication.translate(
+                        "QgisToolkit",
+                        "The legend is {width} mm wide and does not fit the page, so it was left out."
+                    ).format(width=f"{legend_width:.0f}")
+                )
+                log_event("toolkit.create_layout.item_dropped", item="legend", width_mm=round(legend_width, 1))
+                legend = None
+
+        if legend is not None:
+            def place_legend(item):
+                size = item.rect()
+                item.attemptMove(QgsLayoutPoint(width - margin - size.width(), height - margin - size.height()))
+
+            accessory("legend", legend, place_legend)
+
+        arrow_path = ":/images/north_arrows/layout_default_north_arrow.svg"
+
+        def place_north_arrow(item):
+            if not QFile.exists(arrow_path):
+                raise RuntimeError("QGIS ships no default north arrow")
+            item.setPicturePath(arrow_path)
+            item.setNorthMode(_scoped_member(QgsLayoutItemPicture, "NorthMode", "GridNorth"))
+            item.setLinkedMap(map_item)
+            item.attemptResize(QgsLayoutSize(12.0, 16.0))
+            item.attemptMove(QgsLayoutPoint(width - margin - 13.0, top + 1.0))
+
+        accessory("north arrow", QgsLayoutItemPicture(layout), place_north_arrow)
+        return items, notes
+
+    def _layout_legend(self, layout, map_item, band):
+        """Create the legend for the map and measure it.
+
+        Returns ``(legend, height in mm)``. Columns are added until the
+        legend fits the band under the map. Raises when the build offers no
+        usable legend; the caller then leaves the legend out.
+        """
+        from qgis.PyQt.QtGui import QFont, QImage, QPainter
+        from qgis.PyQt.QtWidgets import QStyleOptionGraphicsItem
+        from qgis.core import QgsLayoutItemLegend, QgsLegendStyle, QgsTextFormat, QgsUnitTypes
+
+        def build(columns):
+            """Create a legend that lists the layers the map renders and nothing else."""
+            legend = QgsLayoutItemLegend(layout)
+            legend.setTitle("")
+            legend.setLinkedMap(map_item)
+            legend.setSymbolWidth(5.0)
+            legend.setSymbolHeight(4.0)
+            # Linking the legend to the map does not narrow its layer tree, and
+            # the map keeps the layer set it was given. The legend therefore
+            # takes a private copy of the project tree and keeps only the map's
+            # layers: hiding them in the shared tree would hide them on the canvas.
+            legend.setAutoUpdateModel(False)
+            tree = legend.model().rootGroup()
+            shown = {layer.id() for layer in map_item.layers()}
+            for node in tree.findLayers():
+                if node.layer() is None or node.layer().id() not in shown:
+                    node.parent().removeChildNode(node)
+                else:
+                    node.setItemVisibilityChecked(True)
+            _drop_empty_groups(tree)
+            font = QFont()
+            font.setPointSizeF(9.0)
+            for name in ("Group", "Subgroup", "Symbol", "SymbolLabel"):
+                member = _scoped_member(QgsLegendStyle, "LegendStyle", name)
+                if member is None:
+                    continue
+                style = QgsLegendStyle(legend.style(member))
+                if hasattr(style, "setTextFormat"):
+                    text = QgsTextFormat()
+                    text.setFont(font)
+                    text.setSize(9.0)
+                    text.setSizeUnit(_points_unit(QgsUnitTypes))
+                    style.setTextFormat(text)
+                else:
+                    style.setFont(font)
+                try:
+                    # QGIS 3.44 takes the style alone; QGIS 3.34 also wants its component.
+                    legend.setStyle(style)
+                except TypeError:
+                    legend.setStyle(member, style)
+            legend.setColumnCount(columns)
+            return legend
+
+        scratch = QImage(
+            8, 8, _qt_enum("Format", "Format_ARGB32_Premultiplied", owner=QImage)
+        )
+        scratch.fill(0)
+        painter = QPainter(scratch)
+        try:
+            legend, height = None, 0.0
+            # A legend only sizes itself for the column count it was given
+            # before its first paint, so each candidate is a fresh legend.
+            for columns in (1, 2, 3):
+                legend = build(columns)
+                legend.paint(painter, QStyleOptionGraphicsItem(), None)
+                height = float(legend.rect().height())
+                if height <= 0.0:
+                    raise RuntimeError("the legend reported no size")
+                if height <= band - 4.0:
+                    break
+        finally:
+            painter.end()
+        return legend, height
 
     def export_layout(self, layout_id, output_path, format="pdf"):
         """Export a print layout to PDF or PNG.
@@ -5176,6 +5738,7 @@ class QgisToolkit:
                 cancelled=True,
             )
             return {"ok": False, "error": "cancelled by user", "cancelled": True}
+        self._register_owned_temp_file(file_path)
         log_event(
             "toolkit.web_fetch.end",
             url=url[:200],

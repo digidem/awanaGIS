@@ -97,9 +97,61 @@ class AgentBackend(ABC):
         if toolkit is None:
             return ""
         try:
+            self._refresh_workspace_state(toolkit)
             return toolkit.agent_state_summary() or ""
         except Exception:  # nosec B110
             return ""
+
+    def _refresh_workspace_state(self, toolkit):
+        """Read the project on the QGIS main thread before the state is formatted here.
+
+        The layer registry changes only on the main thread and a backend runs
+        on its own thread. Without this, a user who edited a layer and then
+        sent a message would be answered from the counts read before the edit.
+        A busy main thread leaves the last state read there in place.
+        """
+        refresh = getattr(toolkit, "refresh_agent_layers", None)
+        if refresh is None:
+            return
+        from ..core.toolkit import _on_main_thread
+
+        if _on_main_thread():
+            refresh()
+            return
+        executor = getattr(self, "executor", None)
+        if executor is None:
+            return
+        try:
+            executor.run_sync(refresh, timeout=2.0)
+        except Exception as exc:  # noqa: BLE001 — the next request uses the last state read there
+            log_event("agent_state.refresh_failed", error=str(exc))
+
+    def _tool_limit_reply(self, client, model, messages, emit, should_stop, limit_msg):
+        """Closing reply for a turn that ended at the tool limit.
+
+        Asks the model once more, without tools, to tell the user what was
+        done and what remains. When that request fails, the chat keeps the
+        words that already arrived, and when nothing arrived it shows the
+        limit notice itself.
+        """
+        shown = []
+
+        def on_text(part):
+            shown.append(part)
+            emit(AgentEvent(EventType.TEXT, {"text": part}))
+
+        text = ""
+        if not should_stop():
+            try:
+                text = self._request_closing_text(
+                    client, model, messages, emit, on_text, should_stop).strip()
+            except Exception:  # noqa: BLE001 — the turn still ends with a visible reply
+                text = "".join(shown).strip()
+        if not text:
+            text = limit_msg
+            if not should_stop():
+                emit(AgentEvent(EventType.TEXT, {"text": text}))
+        return [{"role": "assistant", "content": text}]
 
     def validate(self) -> Optional[str]:
         p = self._provider()
@@ -448,6 +500,15 @@ def should_compact(messages, model: str) -> bool:
     limit = context_window_for(model)
     estimated = estimate_message_tokens(messages) + _COMPACTION_FIXED_OVERHEAD
     return estimated >= int(limit * _COMPACTION_THRESHOLD)
+
+
+# Sent once, without tools, when the tool limit ends a turn. Without a reply
+# after the last tool result the chat shows nothing and the user keeps waiting.
+TOOL_LIMIT_PROMPT = (
+    "You reached the limit of tool steps for this turn, so no more tools can run now. "
+    "Answer the user in their language with plain text only: what was completed, "
+    "what was not, and what they should answer or do next."
+)
 
 
 def unlimited_iterations(max_iterations: Any) -> bool:
