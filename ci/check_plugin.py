@@ -70,6 +70,7 @@ FORBIDDEN_PATH_COMPONENTS = frozenset({
     "tests",
     "ci",
     "docs",
+    "evals",
     ".pytest_cache",
     "htmlcov",
 })

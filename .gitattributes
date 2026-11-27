@@ -9,6 +9,7 @@ CLAUDE.md export-ignore
 QGIS_COMPATIBILITY_RULES.md export-ignore
 ci/ export-ignore
 docs/ export-ignore
+evals/ export-ignore
 scripts/ export-ignore
 tests/ export-ignore
 REBRAND_AUDIT.md export-ignore
