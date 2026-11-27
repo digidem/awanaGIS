@@ -10,12 +10,12 @@ from pathlib import Path
 def _redaction_placeholder(secrets):
     """Choose a marker that cannot recreate a run secret at a replacement boundary."""
     candidates = '*#x-0'
-    if all(any(character in secret for secret in secrets) for character in candidates):
-        raise ValueError('Run secrets leave no safe redaction placeholder')
     default = '[redacted]'
-    unsafe_default = any(secret in default or secret.startswith(default[-1]) or secret.endswith(default[0])
-                         or (len(secret) == 1 and secret in candidates) for secret in secrets)
-    if not unsafe_default:
+    default_safe = all('[' not in secret and ']' not in secret and secret not in default and default not in secret
+                       for secret in secrets)
+    # Single-character candidate keys retain the established fallback marker.
+    candidate_key = any(len(secret) == 1 and secret in candidates for secret in secrets)
+    if default_safe and not candidate_key:
         return default
     for character in candidates:
         if not any(character in secret for secret in secrets):

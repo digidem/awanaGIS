@@ -238,6 +238,19 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertNotIn(secret, written["turns"][0]["reply"])
         self.assertNotIn(secret, report["turns"][0]["reply"])
 
+    def test_placeholder_does_not_recreate_a_key_containing_the_default(self):
+        secret = "[redacted]x"
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: secret}, clear=True):
+            run_dir = Path(directory) / "run"
+            trace, _ = self.run_scripted(run_dir, base_url=BASE_URL, key_env=KEY_ENV,
+                                         text="[redacted]xx")
+            report_text = (run_dir / "run.json").read_text(encoding="utf-8")
+            report = json.loads(report_text)
+        self.assertEqual(report["turns"][0]["reply"], "***x")
+        self.assertEqual(trace["turns"][0]["reply"], report["turns"][0]["reply"])
+        self.assertNotIn(secret, json.dumps(trace))
+        self.assertNotIn(secret, report_text)
+
     def test_write_trace_redacts_json_special_secret_before_serialization(self):
         secret = 'abc"def\\ghi'
         trace = {"turns": [{"error": ("Backend raised: " + secret,),
@@ -273,6 +286,16 @@ class CustomEndpointTest(unittest.TestCase):
             trace_module.write_trace(path, {"turns": [{"reply": "before * after"}]}, ("*",))
             report = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(report["turns"][0]["reply"], "before ### after")
+
+    def test_default_placeholder_remains_valid_when_key_contains_every_candidate(self):
+        secret = "*#x-0abcd"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            written = trace_module.write_trace(path, {"status": "completed"}, (secret,))
+            report = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(report, {"status": "completed"})
+        self.assertEqual(written, report)
+        self.assertEqual(trace_module.redact(secret, (secret,)), "[redacted]")
 
     def test_write_trace_walks_values_and_preserves_trusted_metadata(self):
         class SecretValue:
