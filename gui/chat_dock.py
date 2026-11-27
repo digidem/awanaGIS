@@ -24,9 +24,13 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QScrollBar,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
+    QStyleOptionSlider,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -77,6 +81,7 @@ from .theme import (
     DOCK_DANGER_BORDER as _DANGER_BORDER,
     DOCK_DANGER_TEXT as _DANGER_TEXT,
 )
+from .wrap_label import WrapLabel, add_left_aligned
 _STREAM_COALESCE_INTERVAL_S = 0.008   # ~120fps — tight enough to feel instant
 _STREAM_COALESCE_MAX_CHARS = 4096     # smaller burst ceiling for finer granularity
 _STREAM_RENDER_INTERVAL_S = 0.016     # ~60fps base — perceptually "realtime smooth"
@@ -87,6 +92,165 @@ _BUFFER_DROP_COUNT = 500
 _MAX_TURN_TEXT_CHARS = 200_000
 _MAX_THINKING_TEXT_CHARS = 50_000
 _MAX_PASTE_CHARS = 20_000  # warn before pasting blocks larger than this
+
+PIN_EPS = 2                 # a scroll value this close to the maximum counts as the bottom
+_RESTORE_BATCH_SIZE = 20    # stored events rendered per batch of a session restore
+JUMP_BUTTON_SIZE = 32       # px at font scale 1: the floating button that returns to the latest message
+JUMP_BUTTON_MARGIN = 12     # px at font scale 1, between that button and the edges of the viewport
+_LEFT = Qt.MouseButton.LeftButton
+# Vertical scroll commands. QAbstractScrollArea rejects Home and End on the viewport (Qt 5); the
+# scrollbar itself accepts them when it has the focus. The acceptance gate keeps them inert there.
+_AWAY_KEYS = (Qt.Key.Key_Up, Qt.Key.Key_PageUp, Qt.Key.Key_Home)
+_TOWARD_KEYS = (Qt.Key.Key_Down, Qt.Key.Key_PageDown, Qt.Key.Key_End)
+
+
+def _vertical_delta(event):
+    """The vertical part of a wheel event, from the angle or else the pixel delta."""
+    return event.angleDelta().y() or event.pixelDelta().y()
+
+
+def _key_direction(event):
+    """True for a key that scrolls toward the bottom, False away from it, None for any other key."""
+    if event.key() in _AWAY_KEYS:
+        return False
+    if event.key() in _TOWARD_KEYS:
+        return True
+    return None
+
+
+def _event_position(event):
+    """The position of a mouse event as a QPoint (QMouseEvent.position() arrives in Qt 6)."""
+    position = getattr(event, "position", None)
+    return position().toPoint() if position is not None else event.pos()
+
+
+def _dicts(value):
+    """The dictionary entries of a stored list; anything else in it is dropped."""
+    return [entry for entry in value if isinstance(entry, dict)] if isinstance(value, list) else []
+
+
+class TranscriptScrollArea(QScrollArea):
+    """The transcript viewport.
+
+    After Qt handled a wheel or key event it reports which way the reader asked to move:
+    ``reader_scrolled`` carries True toward the bottom and False away from it. Focus navigation
+    (Tab) is not reported: it must never pin the view to the bottom.
+    """
+
+    reader_scrolled = pyqtSignal(object)
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        delta = _vertical_delta(event)
+        if delta != 0:                      # a vertical action, even when Qt could not move the view
+            self.reader_scrolled.emit(delta < 0)
+
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        toward = _key_direction(event)
+        if event.isAccepted() and toward is not None:
+            self.reader_scrolled.emit(toward)
+
+
+class PinScrollBar(QScrollBar):
+    """A scrollbar that reports left-button dragging and wheel and key scrolling after Qt handled it.
+
+    ``reader_scrolled`` carries True toward the bottom, False away from it, and None for a thumb
+    drag or its release: there the position alone decides.
+    """
+
+    reader_scrolled = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pin_control = None    # what the open left press landed on: "thumb", "toward" or "away"
+
+    def wheelEvent(self, event):
+        super().wheelEvent(event)
+        delta = _vertical_delta(event)
+        if delta != 0:
+            self.reader_scrolled.emit(delta < 0)
+
+    def _control_at(self, pos):
+        """What a left press landed on: the thumb, a control toward the bottom, or one away from it."""
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        hit = self.style().hitTestComplexControl(QStyle.ComplexControl.CC_ScrollBar, option, pos, self)
+        if hit == QStyle.SubControl.SC_ScrollBarSlider:
+            return "thumb"
+        if hit in (QStyle.SubControl.SC_ScrollBarAddPage, QStyle.SubControl.SC_ScrollBarAddLine):
+            return "toward"
+        if hit in (QStyle.SubControl.SC_ScrollBarSubPage, QStyle.SubControl.SC_ScrollBarSubLine):
+            return "away"
+        if hit == QStyle.SubControl.SC_ScrollBarGroove:
+            thumb = self.style().subControlRect(
+                QStyle.ComplexControl.CC_ScrollBar, option, QStyle.SubControl.SC_ScrollBarSlider, self
+            )
+            return "toward" if pos.y() > thumb.center().y() else "away"
+        return None
+
+    def mousePressEvent(self, event):
+        # Classify before Qt handles the press: on a plain scrollbar Qt pages at once, which moves
+        # the thumb under the cursor.
+        control = self._control_at(_event_position(event)) if event.button() == _LEFT else None
+        super().mousePressEvent(event)
+        if event.button() != _LEFT or control is None or not event.isAccepted():
+            return                             # Qt did not take this press
+        if control == "thumb" and not self.isSliderDown():
+            return                             # Qt started no drag: another button was already held
+        self._pin_control = control            # recorded only for an interaction Qt started
+
+    def mouseMoveEvent(self, event):
+        active = self.isSliderDown()           # read before Qt handles the event
+        super().mouseMoveEvent(event)
+        control = self._pin_control
+        if control == "thumb" and not active:
+            self._pin_control = None           # Qt had cancelled the drag (disable): so it is over
+            return
+        if (event.buttons() & _LEFT) and control == "thumb":
+            self.reader_scrolled.emit(None)    # a thumb drag: the position alone decides
+
+    def mouseReleaseEvent(self, event):
+        active = self.isSliderDown()
+        super().mouseReleaseEvent(event)
+        if event.button() != _LEFT:
+            return                             # only the matching left release consumes it
+        control, self._pin_control = self._pin_control, None
+        if control == "thumb" and not active:
+            return                             # that drag was cancelled before this release
+        if control is not None:
+            self.reader_scrolled.emit(None if control == "thumb" else control == "toward")
+
+    def hideEvent(self, event):
+        self._pin_control = None               # an interaction cannot outlive a hidden scrollbar
+        super().hideEvent(event)
+
+    def event(self, e):
+        kind = e.type()
+        if kind == QEvent.Type.UngrabMouse or (kind == QEvent.Type.EnabledChange and not self.isEnabled()):
+            self._pin_control = None           # a lost grab or a disabled bar ends any interaction
+        return super().event(e)
+
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        toward = _key_direction(event)
+        if event.isAccepted() and toward is not None:
+            self.reader_scrolled.emit(toward)
+
+
+class JumpButton(QToolButton):
+    """The floating button that returns the reader to the latest message.
+
+    It lies over the transcript, so a wheel event that lands on it must still scroll the transcript.
+    """
+
+    def wheelEvent(self, event):
+        parent = self.parentWidget()
+        area = parent.parentWidget() if parent is not None else None
+        if isinstance(area, QScrollArea):
+            area.wheelEvent(event)
+        else:
+            super().wheelEvent(event)
 
 
 class ChatWorker(QThread):
@@ -264,6 +428,8 @@ class ChatDock(QgsDockWidget):
         self._startup_picker_shown = False
         self._transcript_events = []
         self._restoring_transcript = False
+        self._restore_generation = 0     # bumped when a restore ends: queued batches of an older one are stale
+        self._restore_staging = None     # while not None, _add_widget collects rows instead of inserting them
         self._current_turn_event = None
         self._history = []
         self._history_generation = 0  # incremented on every send + session switch
@@ -284,7 +450,6 @@ class ChatDock(QgsDockWidget):
         self._showing_tool_progress = False
         self._pending_stream_render = False
         self._pending_stream_kind = None
-        self._pending_stream_scroll = False
         self._last_stream_render_at = 0.0
         self._ttft_trace_id = None
         self._ttft_started_at = None
@@ -296,8 +461,8 @@ class ChatDock(QgsDockWidget):
         self._current_text_truncated = False
         self._ask_user_card = None
         self._ask_user_payload = None
-        self._scroll_locked = False
-        self._programmatic_scroll = False
+        self._pinned = True                  # the transcript follows the stream while the reader is at the bottom
+        self._in_follow = False              # a follow write is in progress
         self._status_phase = 0
         self._status_text = QCoreApplication.translate("ChatDock", "Ready")
         self._status_cancelled = False
@@ -397,7 +562,7 @@ class ChatDock(QgsDockWidget):
         self._top_bar_divider = divider
 
         # -- Scrollable transcript --------------------------------------- #
-        self.scroll = QScrollArea()
+        self.scroll = TranscriptScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet(
@@ -413,12 +578,36 @@ class ChatDock(QgsDockWidget):
         self.transcript_layout.addStretch(1)
 
         self.scroll.setWidget(self.transcript_widget)
+        # Floating button that returns the reader to the latest message. It is shown while the last
+        # message is out of view, so the reader can see that the transcript stopped following.
+        self._jump_button = JumpButton(self.scroll.viewport())
+        self._jump_button.setObjectName("JumpToLatest")
+        self._jump_button.setText("↓")
+        self._jump_button.setFont(ui_font(15, QFont.Weight.DemiBold))
+        self._jump_button.setToolTip(QCoreApplication.translate("ChatDock", "Jump to latest message"))
+        self._jump_button.setAccessibleName(self._jump_button.toolTip())
+        self._jump_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._jump_button.setFixedSize(fs(JUMP_BUTTON_SIZE), fs(JUMP_BUTTON_SIZE))
+        self._jump_button.setStyleSheet(
+            f"QToolButton#JumpToLatest {{ background:{_ACCENT}; color:{_ACCENT_TEXT};"
+            f" border:none; border-radius:{fs(JUMP_BUTTON_SIZE) // 2}px; }}"
+            f"QToolButton#JumpToLatest:hover {{ background:{_ACCENT_HOV}; }}"
+        )
+        self._jump_button.clicked.connect(self._pin_and_follow)
+        self._jump_button.hide()
         chat_page = QWidget()
         chat_layout = QVBoxLayout(chat_page)
         chat_layout.setContentsMargins(0, 0, 0, 0)
         chat_layout.setSpacing(0)
         chat_layout.addWidget(self.scroll, 1)
-        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_changed)
+        # Scroll controller. Wired before __init__ runs the startup restore. The scrollbar signals
+        # stay enabled: QScrollArea needs them to move the transcript.
+        self._scroll_bar = PinScrollBar(self.scroll)
+        self.scroll.setVerticalScrollBar(self._scroll_bar)
+        self._scroll_bar.rangeChanged.connect(self._on_range_changed)
+        self._scroll_bar.valueChanged.connect(self._on_value_changed)
+        self._scroll_bar.reader_scrolled.connect(self._sync_pin)
+        self.scroll.reader_scrolled.connect(self._sync_pin)
         # Clamp transcript width to viewport — prevents any child widget from
         # forcing horizontal overflow and unwanted sideways scrolling.
         self.scroll.viewport().installEventFilter(self)
@@ -697,6 +886,9 @@ class ChatDock(QgsDockWidget):
             new_w = event.size().width()
             if self.transcript_widget.maximumWidth() != new_w or self.transcript_widget.minimumWidth() != new_w:
                 self.transcript_widget.setFixedWidth(new_w)
+            # The rows' cap follows the viewport, and so does the jump button.
+            self._cap_rows(max(1, self.transcript_widget.width()))
+            self._place_jump_button()
             return False
         if (obj is self.input.viewport() and event.type() == QEvent.Type.Resize
                 and event.size().width() != event.oldSize().width()):
@@ -839,61 +1031,93 @@ class ChatDock(QgsDockWidget):
         self.input.setFixedHeight(input_h)
         self._input_frame.setFixedHeight(frame_h)
 
-    def _scroll_to_bottom(self):
-        try:
-            self._programmatic_scroll = True
-            vs = self.scroll.verticalScrollBar()
-            vs.setValue(vs.maximum())
-            self._programmatic_scroll = False
-        except RuntimeError:
-            self._programmatic_scroll = False
-
-    def _scroll_to_bottom_after_layout(self):
-        """Scroll to bottom once the scroll range expands to include new content.
-
-        Hooks rangeChanged so we scroll at the exact moment Qt has finished
-        laying out the new widget (not one tick too early). A 150 ms fallback
-        covers the case where content fits the viewport with no range change.
-        """
+    # -- Scroll controller ----------------------------------------------- #
+    def _is_at_bottom(self):
         vs = self.scroll.verticalScrollBar()
-        fired = [False]
+        return vs.value() >= vs.maximum() - PIN_EPS
 
-        def _go(*_):
-            if fired[0]:
-                return
-            fired[0] = True
-            try:
-                vs.rangeChanged.disconnect(_go)
-            except (RuntimeError, TypeError):
-                pass
-            self._scroll_to_bottom()
+    def _sync_pin(self, toward_bottom=None):
+        """Scroll input was just handled.
 
-        vs.rangeChanged.connect(_go)
-        QTimer.singleShot(150, _go)
+        toward_bottom False: the user moved away from the bottom (or tried to): never follow.
+        toward_bottom True: the user moved toward the bottom: follow only if it is in view.
+        None (drag, release): the position alone decides.
+        """
+        if toward_bottom is False:
+            self._pinned = False
+        else:
+            self._pinned = self._is_at_bottom()
 
-    def _on_scroll_changed(self, value):
-        """Detect user-initiated scroll during streaming and lock auto-scroll.
-        Only lock when the user scrolls *up* by a meaningful amount, and
-        only while streaming. Outside streaming, never lock — the user
-        should be free to scroll wherever they want."""
-        if self._programmatic_scroll or not self._streaming:
+    def _follow_bottom(self):
+        """Jump to the current bottom. No-op unless pinned; nothing written when already there."""
+        if not self._pinned or self._in_follow:
             return
         vs = self.scroll.verticalScrollBar()
-        if vs.maximum() > 0 and value < vs.maximum() - 60:
-            self._scroll_locked = True
-        else:
-            self._scroll_locked = False
+        if vs.value() == vs.maximum():
+            return
+        self._in_follow = True
+        try:
+            vs.setValue(vs.maximum())
+        finally:
+            self._in_follow = False
 
-    def _maybe_scroll_to_bottom(self):
-        """Scroll to bottom only if the user has not manually scrolled up."""
-        if not self._scroll_locked:
-            self._scroll_to_bottom()
+    def _pin_and_follow(self):
+        self._pinned = True
+        self._follow_bottom()
+        self._update_jump_button()
+
+    def _place_jump_button(self):
+        """Keep the jump button in the bottom-right corner of the viewport, above the transcript."""
+        button = self._jump_button
+        viewport = self.scroll.viewport()
+        button.move(viewport.width() - button.width() - fs(JUMP_BUTTON_MARGIN),
+                    viewport.height() - button.height() - fs(JUMP_BUTTON_MARGIN))
+        button.raise_()
+
+    def _update_jump_button(self):
+        """Show the jump button exactly while the last message is out of view."""
+        self._jump_button.setVisible(not self._is_at_bottom())
+
+    def _on_value_changed(self, value):
+        """A value change that is neither ours nor a Qt clamp moved the view up: never stay pinned.
+
+        A Qt clamp on range shrink always lands exactly on the new maximum, so it never matches here.
+        This covers scrolling that does not pass through the input handlers (focus navigation,
+        asynchronous scrolling, foreign setValue). It only ever unpins.
+        """
+        if self._in_follow:
+            return
+        if value < self.scroll.verticalScrollBar().maximum() - PIN_EPS:
+            self._pinned = False
+        self._update_jump_button()
+
+    def _on_range_changed(self, _minimum, _maximum):
+        self._follow_bottom()
+        self._update_jump_button()
+
+    def _cap(self, widget):
+        # QScrollArea sizes the transcript at max(viewport width, minimum width). Capping every row
+        # at the transcript width keeps that minimum at the real width, whatever a descendant asks for.
+        width = max(1, self.transcript_widget.width())
+        widget.setMinimumWidth(0)               # an explicit minimum would override the cap
+        widget.setMaximumWidth(width)
+
+    def _cap_rows(self, width):
+        """Bring the cap of every row in the transcript to ``width``."""
+        layout = self.transcript_layout
+        for index in range(layout.count()):
+            widget = layout.itemAt(index).widget()
+            if widget is not None and (widget.maximumWidth() != width or widget.minimumWidth() != 0):
+                widget.setMinimumWidth(0)
+                widget.setMaximumWidth(width)
 
     def _add_widget(self, widget):
-        """Insert widget above the trailing stretch, then scroll to bottom
-        once the layout has expanded the scroll range to include it."""
+        """Insert a transcript row above the trailing stretch, or stage it during a restore."""
+        if self._restore_staging is not None:
+            self._restore_staging.append(widget)   # built off-layout until its event has rendered
+            return
+        self._cap(widget)
         self.transcript_layout.insertWidget(self.transcript_layout.count() - 1, widget)
-        self._scroll_to_bottom_after_layout()
 
     def _record_transcript_event(self, event):
         if self._restoring_transcript:
@@ -944,7 +1168,9 @@ class ChatDock(QgsDockWidget):
 
     def _add_agent_turn_widget(self):
         container = QWidget()
-        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Preferred, not Maximum: Qt caps a Maximum item at sizeHint().height(), the turn's height at
+        # an ideal width, so the answer was clipped and blank space remained below the row.
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         vl = QVBoxLayout(container)
         vl.setContentsMargins(16, 0, 16, 0)
         vl.setSpacing(0)
@@ -962,7 +1188,7 @@ class ChatDock(QgsDockWidget):
         """
         turn = self._get_or_create_agent_turn()
         turn.add_visual(widget)
-        self._maybe_scroll_to_bottom()
+        self._follow_bottom()
         turn_event = self._ensure_current_turn_event()
         if turn_event is not None:
             turn_event.setdefault("visuals", []).append(
@@ -990,20 +1216,20 @@ class ChatDock(QgsDockWidget):
         vl = QVBoxLayout(container)
         vl.setContentsMargins(16, 0, 16, 0)
         vl.setSpacing(0)
-        vl.addWidget(widget)
+        add_left_aligned(vl, widget)
         return container
 
     def _add_file(self, data):
         """Embed a download card inside the current agent turn bubble."""
         turn = self._get_or_create_agent_turn()
         turn.add_file(DownloadWidget(data))
-        self._maybe_scroll_to_bottom()
+        self._follow_bottom()
         turn_event = self._ensure_current_turn_event()
         if turn_event is not None:
             turn_event.setdefault("files", []).append(dict(data or {}))
 
     def _add_compaction_notice(self):
-        w = QLabel(QCoreApplication.translate("ChatDock", "Earlier messages were summarised to save context"))
+        w = WrapLabel(QCoreApplication.translate("ChatDock", "Earlier messages were summarised to save context"))
         w.setAlignment(Qt.AlignmentFlag.AlignCenter)
         w.setFont(ui_font(11))
         w.setStyleSheet(
@@ -1017,51 +1243,84 @@ class ChatDock(QgsDockWidget):
         self._add_widget(MessageContainer(msg, is_user=False, is_error=True))
         self._record_transcript_event({"type": "error", "text": str(text or "")})
 
+    # -- Session restore ------------------------------------------------- #
     def _restore_transcript(self, events):
-        self._restoring_transcript = True
-        self._clear_live_ui()
-        self._pending_restore_events = list(events or [])
+        # One explicit transition. The flag is set after the clear and before the first batch, so
+        # nothing that the first batch renders is recorded into the session a second time.
+        pending = list(events or [])
         # Up/Down recall this session's earlier prompts, also after a restart.
-        self._prompt_history = []
-        for event in self._pending_restore_events:
-            if isinstance(event, dict) and event.get("type") == "user":
-                self._remember_prompt(event.get("text", ""))
+        prompts = [event.get("text", "") for event in pending
+                   if isinstance(event, dict) and event.get("type") == "user"]
+        self._clear_live_ui()
+        self._restoring_transcript = True
+        self._pending_restore_events = pending
         self._restore_index = 0
-        self._restore_transcript_batch()
-
-    def _restore_transcript_batch(self):
-        batch_size = 20
-        self.transcript_widget.setUpdatesEnabled(False)
+        self._pinned = True                # a reader's scroll during later batches cancels the follow
         try:
-            for _ in range(batch_size):
+            self._prompt_history = []
+            for text in prompts:
+                self._remember_prompt(text)
+        except Exception:  # noqa: BLE001 - setup is under the same abort path as the batches
+            self._abort_restore()
+            return
+        self._restore_step()               # the first batch runs now, later ones are queued
+        self._follow_bottom()
+
+    def _restore_step(self, schedule=True):
+        """Run one batch from any entry point: first batch, queued resume, synchronous drain.
+
+        A batch that raises ends this restore instead of leaving the dock restoring.
+        """
+        try:
+            return self._restore_batch(schedule)
+        except Exception:  # noqa: BLE001
+            self._abort_restore()
+            return True
+
+    def _restore_batch(self, schedule=True):
+        """Render up to one batch. Returns True when the restore is finished."""
+        self._sweep_detached()
+        generation = self._restore_generation
+        self.transcript_widget.setUpdatesEnabled(False)
+        finished = False
+        try:
+            for _ in range(_RESTORE_BATCH_SIZE):
                 if self._restore_index >= len(self._pending_restore_events):
-                    self._finish_restore()
-                    return
+                    finished = True
+                    break
                 event = self._pending_restore_events[self._restore_index]
                 self._restore_index += 1
-                etype = event.get("type") if isinstance(event, dict) else None
-                if etype == "user":
-                    self._add_widget(MessageContainer(event.get("text", ""), sender_name="You", is_user=True))
-                elif etype == "agent_turn":
-                    self._restore_agent_turn(event)
-                elif etype == "chart":
-                    self._add_widget(ChartWidget(event.get("data") or {}))
-                elif etype == "stats":
-                    self._add_widget(StatsWidget(event.get("data") or {}))
-                elif etype == "gif":
-                    self._add_widget(GifWidget(event.get("data") or {}))
-                elif etype == "file":
-                    self._add_widget(
-                        self._wrap_with_bubble_margins(DownloadWidget(event.get("data") or {}))
-                    )
-                elif etype == "error":
-                    self._add_widget(MessageContainer(html.escape(
-                        str(event.get("text", ""))), is_user=False, is_error=True))
-                elif etype == "compaction":
-                    self._add_compaction_notice()
+                self._restore_one(event)
         finally:
             self.transcript_widget.setUpdatesEnabled(True)
-        QTimer.singleShot(0, self._restore_transcript_batch)
+        if finished:
+            self._finish_restore()
+            self._follow_bottom()
+            return True
+        if schedule:
+            QTimer.singleShot(0, lambda: self._resume_restore(generation))
+        return False
+
+    def _resume_restore(self, generation):
+        if generation == self._restore_generation and self._restoring_transcript:
+            self._restore_step()
+
+    def _finish_pending_restore(self):
+        """Complete a restore that is still batching, synchronously and without new timers.
+
+        A callback that was already queued stays queued; the generation bump in _finish_restore()
+        turns it into a no-op when it is delivered.
+        """
+        while self._restoring_transcript:
+            if self._restore_step(schedule=False):
+                break
+
+    def _abort_restore(self):
+        """End the affected generation after a batch raised: updates back on, no longer restoring."""
+        try:
+            self.transcript_widget.setUpdatesEnabled(True)
+        finally:
+            self._finish_restore()
 
     def _finish_restore(self):
         self._restoring_transcript = False
@@ -1071,31 +1330,133 @@ class ChatDock(QgsDockWidget):
         self._current_turn_event = None
         self._pending_tool = None
         self._streaming = False
+        self._restore_generation += 1     # the queued resume callback, if any, is stale now
+
+    def _restore_one(self, event):
+        """Render one stored event off-layout. Its rows are published only when that succeeded.
+
+        A renderer that raises leaves nothing behind: the rows it built were never in the layout.
+        """
+        self._restore_staging = []
+        try:
+            self._restore_event(event)
+        except Exception:  # noqa: BLE001 - a damaged event must not stop the restore or a Send
+            self._discard(self._restore_staging)
+        else:
+            self._publish(self._restore_staging)
+        finally:
+            self._restore_staging = None
+
+    def _restore_event(self, event):
+        etype = event.get("type") if isinstance(event, dict) else None
+        if etype == "user":
+            text = event.get("text")
+            if isinstance(text, str) and text.strip():
+                self._add_widget(MessageContainer(text, sender_name="You", is_user=True))
+        elif etype == "agent_turn":
+            self._restore_agent_turn(event)
+        elif etype == "chart":
+            self._add_widget(ChartWidget(event.get("data") or {}))
+        elif etype == "stats":
+            self._add_widget(StatsWidget(event.get("data") or {}))
+        elif etype == "gif":
+            self._add_widget(GifWidget(event.get("data") or {}))
+        elif etype == "file":
+            self._add_widget(self._wrap_with_bubble_margins(DownloadWidget(event.get("data") or {})))
+        elif etype == "error":
+            self._add_widget(MessageContainer(html.escape(str(event.get("text", ""))), is_user=False, is_error=True))
+        elif etype == "compaction":
+            self._add_compaction_notice()
+
+    def _publish(self, widgets):
+        """Put the rows of one rendered event into the transcript, above the trailing stretch."""
+        layout = self.transcript_layout
+        published = 0
+        try:
+            for widget in widgets:
+                self._cap(widget)
+                layout.insertWidget(layout.count() - 1, widget)
+                published += 1
+        except Exception:  # noqa: BLE001 - a row that cannot be published takes its siblings with it
+            try:
+                self._discard(widgets[:published])
+            finally:
+                self._discard(widgets[published:])
+
+    def _discard(self, widgets):
+        """Drop the rows of a failed event: out of the layout, hidden and detached.
+
+        A widget the layout still references is kept alive: deleting it would leave the layout
+        with a dangling item. It stays hidden and detached, and the next sweep removes it.
+        """
+        layout = self.transcript_layout
+        for widget in widgets:
+            try:
+                index = layout.indexOf(widget)
+                if index >= 0:
+                    layout.takeAt(index)
+            except Exception:  # noqa: BLE001 - the layout refuses: hide and detach it below anyway
+                pass
+            try:
+                widget.hide()                # never visible, even if the layout refuses to let go
+                widget.setParent(None)       # normally this takes it out of the layout as well
+            except RuntimeError:
+                continue                     # already deleted
+            try:
+                if layout.indexOf(widget) < 0:
+                    widget.deleteLater()     # nothing references it any more
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _sweep_detached(self):
+        """Remove layout rows whose widget was detached by a failed rollback earlier."""
+        layout = self.transcript_layout
+        for index in reversed(range(layout.count())):
+            item = layout.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if widget is None or widget.parentWidget() is not None:
+                continue
+            try:
+                layout.takeAt(index)
+                widget.deleteLater()
+            except Exception:  # noqa: BLE001
+                return                         # still refused: try again at the next batch
 
     def _restore_agent_turn(self, event):
+        """One stored turn. Nested lists are sanitized; a turn with nothing renderable gets no row."""
+        text = event.get("text")
+        text = text if isinstance(text, str) else ""
+        tools = _dicts(event.get("tools"))
+        files = _dicts(event.get("files"))
+        visuals = _dicts(event.get("visuals"))
+        thinking = event.get("thinking")
+        thinking = thinking if isinstance(thinking, str) else ""
+        visual_widgets = []
+        for visual in visuals:
+            data = visual.get("data")
+            widget = self._build_visual_widget(visual.get("kind"), data if isinstance(data, dict) else {})
+            if widget is not None:
+                visual_widgets.append(widget)
+        if not (text.strip() or thinking or tools or files or visual_widgets):
+            return                           # nothing renderable: no row
         turn = self._add_agent_turn_widget()
-        thinking = event.get("thinking", "")
         if thinking:
             turn.add_thinking_block()
             turn.set_thinking_text(thinking)
-        for tool in event.get("tools") or []:
-            item = turn.add_tool(tool.get("name", "tool"), tool.get("input") or {})
+        for tool in tools:
+            data = tool.get("input")
+            item = turn.add_tool(str(tool.get("name", "tool")), data if isinstance(data, dict) else {})
             if "result" in tool:
                 item.set_result(str(tool.get("result", "")), bool(tool.get("is_error", False)))
-        for fdata in event.get("files") or []:
-            turn.add_file(DownloadWidget(fdata or {}))
-        text = event.get("text", "")
+        for fdata in files:
+            turn.add_file(DownloadWidget(fdata))
         if text:
             turn.finalize_text(text)
-        for visual in event.get("visuals") or []:
-            widget = self._build_visual_widget(
-                visual.get("kind"), visual.get("data") or {}
-            )
-            if widget is not None:
-                turn.add_visual(widget)
+        for widget in visual_widgets:
+            turn.add_visual(widget)
         turn.finalize()
         if text:  # sessions saved before footers existed simply have no meta
-            turn.set_footer(event.get("model") or "", event.get("elapsed") or "")
+            turn.set_footer(str(event.get("model") or ""), str(event.get("elapsed") or ""))
 
     def _build_visual_widget(self, kind, data):
         if kind == "chart":
@@ -1843,7 +2204,6 @@ class ChatDock(QgsDockWidget):
         self._showing_tool_progress = False
         self._pending_stream_render = False
         self._pending_stream_kind = None
-        self._pending_stream_scroll = False
         self._stream_render_timer.stop()
         self._last_stream_render_at = 0.0
         self._thinking_display = ""
@@ -1851,7 +2211,10 @@ class ChatDock(QgsDockWidget):
         self._thinking_started = False
         self._current_text_truncated = False
         self._status_timer.stop()
-        self._scroll_locked = False
+        # Queued batches of an older restore are stale now; the next content starts followed.
+        self._restore_generation += 1
+        self._restoring_transcript = False
+        self._pinned = True
         if not worker_was_active:
             self._stop_requested = False
 
@@ -1861,6 +2224,10 @@ class ChatDock(QgsDockWidget):
         message = self.input.toPlainText().strip()
         if not message:
             return
+        # A restore that is still batching must be complete before live rows are appended. A batch
+        # that raises has ended its restore, so the dock is consistent and the Send goes ahead.
+        self._finish_pending_restore()
+        self._pin_and_follow()  # send and its validation feedback reveal the latest row
 
         trace_id = new_trace_id()
         trace_started_at = time.monotonic()
@@ -1891,12 +2258,6 @@ class ChatDock(QgsDockWidget):
         self.input.clear()
         self._resize_input()
         self._add_user_message(message)
-        # Reset scroll lock and force-scroll to bottom. The user just hit
-        # send, so they want to see the response that follows. We use
-        # the deferred-scroll path so the new message widget has been
-        # laid out into the scroll range first.
-        self._scroll_locked = False
-        self._scroll_to_bottom_after_layout()
         self._stop_requested = False
         self._streaming = False
         self._pending_tool = None
@@ -1906,7 +2267,6 @@ class ChatDock(QgsDockWidget):
         self._showing_tool_progress = False
         self._pending_stream_render = False
         self._pending_stream_kind = None
-        self._pending_stream_scroll = False
         self._stream_render_timer.stop()
         self._last_stream_render_at = 0.0
         self._thinking_display = ""
@@ -1975,7 +2335,6 @@ class ChatDock(QgsDockWidget):
             self._showing_tool_progress = False
             self._pending_stream_render = False
             self._pending_stream_kind = None
-            self._pending_stream_scroll = False
             self._stream_render_timer.stop()
             # Cooperatively cancel any main-thread operation (run_pyqgis,
             # processing.run, create_chart, get_layer_statistics). The worker
@@ -2094,7 +2453,7 @@ class ChatDock(QgsDockWidget):
                         detail = first_line[:60]
             self._set_tool_progress(QCoreApplication.translate("ChatDock", "Processing `{detail}`...\n").format(detail=detail))
             self._set_status(QCoreApplication.translate("ChatDock", "Running {detail}").format(detail=detail), _TEXT_3, spinning=True)
-            self._maybe_scroll_to_bottom()
+            self._follow_bottom()
             # Main-thread tools (e.g. run_pyqgis) block the UI for their
             # whole duration, and the blocking call is already queued on
             # the event loop right behind this slot — without a synchronous
@@ -2154,7 +2513,7 @@ class ChatDock(QgsDockWidget):
                 else:
                     self._set_tool_progress(QCoreApplication.translate("ChatDock", "Finished `{tool}`{elapsed} — waiting for the model's next step").format(tool=tool_name, elapsed=elapsed))
                 self._set_status(QCoreApplication.translate("ChatDock", "Thinking"), _TEXT_3, spinning=True)
-            self._maybe_scroll_to_bottom()
+            self._follow_bottom()
 
         elif ev.type == EventType.ASK_USER:
             self._flush_stream_render()
@@ -2234,7 +2593,7 @@ class ChatDock(QgsDockWidget):
             self._current_agent_turn = None
             if not self._status_cancelled:
                 self._set_status(QCoreApplication.translate("ChatDock", "Ready"), _SUCCESS, icon="●")
-            self._scroll_to_bottom()
+            self._follow_bottom()
             self._pending_tool = None
 
     def _display_answer(self):
@@ -2331,7 +2690,6 @@ class ChatDock(QgsDockWidget):
         """Throttle expensive rich-text rendering during stream floods."""
         self._pending_stream_render = True
         self._pending_stream_kind = kind
-        self._pending_stream_scroll = self._pending_stream_scroll or not self._scroll_locked
 
         now = time.monotonic()
         interval = self._stream_render_interval()
@@ -2350,10 +2708,8 @@ class ChatDock(QgsDockWidget):
             return
         self._stream_render_timer.stop()
         kind = self._pending_stream_kind
-        should_scroll = self._pending_stream_scroll and not self._scroll_locked
         self._pending_stream_render = False
         self._pending_stream_kind = None
-        self._pending_stream_scroll = False
 
         turn = self._get_or_create_agent_turn()
         if kind == "tool":
@@ -2371,8 +2727,7 @@ class ChatDock(QgsDockWidget):
                 started_at=self._ttft_started_at,
             )
         self._last_stream_render_at = now if now is not None else time.monotonic()
-        if should_scroll:
-            self._scroll_to_bottom()
+        self._follow_bottom()
 
     def _append_thinking_text(self, text: str):
         """Append progress/reasoning text into the turn's thinking block."""
@@ -2440,7 +2795,6 @@ class ChatDock(QgsDockWidget):
         self._stream_render_timer.stop()
         self._pending_stream_render = False
         self._reset_run_ui()
-        self._scroll_locked = False
         self._thinking_started = False
         # Clear the worker reference here (not only in
         # _on_worker_thread_finished) so the UI recovers even if the

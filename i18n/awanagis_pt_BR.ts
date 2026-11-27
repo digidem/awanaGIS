@@ -484,6 +484,10 @@
             <translation>Pronto</translation>
         </message>
         <message>
+            <source>Jump to latest message</source>
+            <translation>Ir para a última mensagem</translation>
+        </message>
+        <message>
             <location filename="../gui/chat_dock.py" line="348" />
             <source>Settings</source>
             <translation>Configurações</translation>

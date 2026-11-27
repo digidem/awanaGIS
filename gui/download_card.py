@@ -25,6 +25,7 @@ from .theme import (
     DOCK_TEXT as _TEXT,
     DOCK_TEXT_2 as _TEXT_2,
 )
+from .wrap_label import WrapLabel
 
 
 _FILE_ICONS = {
@@ -85,13 +86,12 @@ class DownloadWidget(QFrame):
         info_row.addWidget(icon_label)
 
         name = os.path.basename(file_path) or QCoreApplication.translate("DownloadCard", "Download")
-        name_label = QLabel(name)
+        name_label = WrapLabel(name)
         name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_label.setFont(ui_font(13, QFont.Weight.DemiBold))
         name_label.setStyleSheet(
             f"color: {_TEXT}; font-size: {fs(13)}px; background: transparent;"
         )
-        name_label.setWordWrap(True)
         info_row.addWidget(name_label, 1)
 
         size_label = QLabel(_human_size(file_path))
@@ -105,12 +105,11 @@ class DownloadWidget(QFrame):
         # Description (optional)
         desc = data.get("description") or data.get("name") or ""
         if desc:
-            desc_label = QLabel(desc)
+            desc_label = WrapLabel(desc)
             desc_label.setTextFormat(Qt.TextFormat.PlainText)
             desc_label.setStyleSheet(
                 f"color: {_TEXT_2}; font-size: {fs(11)}px; background: transparent;"
             )
-            desc_label.setWordWrap(True)
             layout.addWidget(desc_label)
 
         # Download button

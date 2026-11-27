@@ -9,7 +9,7 @@ import html as _html
 import json
 import re
 
-from qgis.PyQt.QtCore import QCoreApplication, Qt, QElapsedTimer, QSize, QTimer
+from qgis.PyQt.QtCore import QCoreApplication, Qt, QElapsedTimer, QTimer
 from qgis.PyQt.QtGui import QFont, QKeySequence
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
@@ -50,6 +50,7 @@ from .theme import (
     DOCK_SUCCESS as _SUCCESS,
     DOCK_DANGER as _DANGER,
 )
+from .wrap_label import WrapLabel, add_left_aligned, elide_button
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -177,7 +178,8 @@ class ReasoningTicker(QWidget):
         self._lbl.setStyleSheet(
             f"color:{_TEXT_3}; background:transparent; font-style:italic;"
         )
-        self._lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # A long single line must not make the turn wider than the dock.
+        self._lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         hbox.addWidget(self._lbl)
 
         self._timer = QTimer(self)
@@ -246,7 +248,8 @@ class ToolCallRow(QFrame):
         self.setObjectName("ToolRow")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(tool_name)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Preferred: the details panel holds wrapped labels, whose height depends on the width.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setStyleSheet(
             f"QFrame#ToolRow {{ background:transparent; border:none; border-radius:8px; }}"
             f"QFrame#ToolRow:hover {{ background:{_SURFACE}; }}"
@@ -265,7 +268,8 @@ class ToolCallRow(QFrame):
         self._icon_lbl.setStyleSheet(f"color:{_BLUE}; background:transparent;")
         top.addWidget(self._icon_lbl)
 
-        name_lbl = QLabel(humanize_tool_name(tool_name))
+        # Tool names are dynamic and can be very long: wrap them instead of widening the row.
+        name_lbl = WrapLabel(humanize_tool_name(tool_name))
         name_lbl.setTextFormat(Qt.TextFormat.PlainText)
         name_lbl.setFont(ui_font(12.5, QFont.Weight.Medium))
         name_lbl.setStyleSheet(f"color:{_TEXT}; background:transparent; font-size:{fs(12.5)}px;")
@@ -379,8 +383,6 @@ class ToolCallRow(QFrame):
     def _relayout(self) -> None:
         try:
             self.updateGeometry()
-            if self._bubble is not None:
-                self._bubble._refresh_text_geometry()
         except RuntimeError:
             pass
 
@@ -408,7 +410,7 @@ class ToolCallRow(QFrame):
         def _section(label_text: str, body_text: str):
             head_row = QHBoxLayout()
             head_row.setContentsMargins(0, 0, 0, 0)
-            head = QLabel(label_text.upper())
+            head = WrapLabel(label_text.upper())     # a long translation wraps instead of widening the panel
             head.setFont(ui_font(10, QFont.Weight.DemiBold))
             head.setStyleSheet(
                 f"color:{_TEXT_4}; background:transparent; font-size:{fs(10)}px; letter-spacing:0.5px;"
@@ -425,11 +427,13 @@ class ToolCallRow(QFrame):
                     f"QPushButton:hover {{ color:{_TEXT}; }}"
                 )
                 btn.clicked.connect(lambda _checked=False, t=body_text: _copy_to_clipboard(t))
+                btn.ensurePolished()
+                elide_button(btn)
                 head_row.addWidget(btn)
             col.addLayout(head_row)
-            body = QLabel(self._pretty(body_text) if body_text else QCoreApplication.translate("AgentTurnBubble", "(none)"))
+            none_text = QCoreApplication.translate("AgentTurnBubble", "(none)")
+            body = WrapLabel(self._pretty(body_text) if body_text else none_text)
             body.setFont(mono_font(11))
-            body.setWordWrap(True)
             body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             body.setTextFormat(Qt.TextFormat.PlainText)
             body.setStyleSheet(f"color:{_TEXT_2}; background:transparent; font-size:{fs(11)}px; border:none;")
@@ -471,10 +475,6 @@ class AgentTurnBubble(QFrame):
         self._fmt_sig = None
         self._fmt_base_len = 0
         self._fmt_base_html = ""
-        self._geo_timer = QTimer(self)
-        self._geo_timer.setInterval(50)
-        self._geo_timer.setSingleShot(True)
-        self._geo_timer.timeout.connect(self._refresh_text_geometry)
         # Debounce timer for expensive _md_to_html re-parses during streaming.
         # Re-parsing the whole accumulated text on every frame is O(n) and
         # blocks the main thread. We only re-parse when fence/table markers
@@ -486,7 +486,9 @@ class AgentTurnBubble(QFrame):
         self._fmt_pending_text = None
 
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        # Not Maximum: Qt would cap the turn at sizeHint().height(), the height
+        # of its wrapped text at the ideal width rather than at the real one.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setStyleSheet("AgentTurnBubble { background: transparent; border: none; }")
 
         self._outer = QVBoxLayout(self)
@@ -555,36 +557,8 @@ class AgentTurnBubble(QFrame):
             return
         save_text(self, text, _safe_name(text.split("\n", 1)[0], "response", ".md"))
 
-    def _effective_width(self) -> int:
-        """Return the actual usable width for layout calculations."""
-        if self.width() > 0:
-            return self.width()
-        p = self.parentWidget()
-        while p is not None:
-            if p.width() > 0:
-                m = p.contentsMargins()
-                return max(100, p.width() - m.left() - m.right() - 32)
-            p = p.parentWidget()
-        return 400
-
-    def _refresh_text_geometry(self) -> None:
-        """Propagate the text view's size into the transcript layout."""
-        if not self._outer:
-            return
-
-        target_w = self._effective_width()
-        margins = self._outer.contentsMargins()
-        label_w = max(50, target_w - margins.left() - margins.right() - self._text_inset()[0])
-        for w in [self.text_lbl, *self._segments]:
-            if w.maximumWidth() != label_w or w.minimumWidth() != label_w:
-                w.setFixedWidth(label_w)
-            w.updateGeometry()
-        self.updateGeometry()
-
-    def _new_text_label(self) -> QLabel:
-        lbl = QLabel("")
-        lbl.setWordWrap(True)
-        lbl.setMinimumWidth(0)
+    def _new_text_label(self) -> WrapLabel:
+        lbl = WrapLabel("")
         lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setTextInteractionFlags(
@@ -648,12 +622,6 @@ class AgentTurnBubble(QFrame):
             self._answer.setVisible(True)
         self._final_text = text
 
-    def _text_inset(self):
-        """Horizontal and vertical space the answer frame adds around the text."""
-        m = self._answer_layout.contentsMargins()
-        border = 2 if self._bubble_on else 0
-        return m.left() + m.right() + border, m.top() + m.bottom() + border
-
     def add_tool(self, tool_name: str, tool_input: dict) -> ToolCallRow:
         """Add a tool call row (deduplicated on name + input)."""
         tool_key = (tool_name, json.dumps(tool_input or {}, sort_keys=True))
@@ -678,16 +646,15 @@ class AgentTurnBubble(QFrame):
 
     def add_file(self, widget) -> None:
         """Embed a file/download card inside this turn (below tools, above text)."""
-        self._files_layout.addWidget(widget)
+        add_left_aligned(self._files_layout, widget)
         self._files_area.setVisible(True)
         self.updateGeometry()
 
     def add_visual(self, widget) -> None:
         """Embed a chart/stats/gif widget inside this turn (below the answer)."""
-        self._visuals_layout.addWidget(widget)
+        add_left_aligned(self._visuals_layout, widget)
         self._visuals_area.setVisible(True)
         self.updateGeometry()
-        self._refresh_text_geometry()
 
     def set_streaming_text(self, text: str) -> None:
         was_progress = self._progress_timer.isActive()
@@ -756,8 +723,6 @@ class AgentTurnBubble(QFrame):
             self._stream_html = body
             self._set_text(body + cursor)
             self._stream_doc_dirty = False
-            if not self._geo_timer.isActive():
-                self._geo_timer.start()
             return
 
         # Fast delta-only path: append into the view's persistent document —
@@ -781,9 +746,6 @@ class AgentTurnBubble(QFrame):
             self._stream_doc_dirty = False
         else:
             self._set_text(self._last_stream_html + cursor)
-
-        if not self._geo_timer.isActive():
-            self._geo_timer.start()
 
     def set_progress_text(self, text: str) -> None:
         clean = (text or "").strip()
@@ -814,7 +776,6 @@ class AgentTurnBubble(QFrame):
         self._done = True
         self._stream_doc_dirty = True
         self._set_final(text)
-        self._refresh_text_geometry()
 
     def finalize(self) -> None:
         """Stop all spinners; mark any still-running tools as timed out."""
@@ -828,7 +789,6 @@ class AgentTurnBubble(QFrame):
         self._stream_doc_dirty = True
         if self._final_text is None or self._final_text != self._stream_text:
             self._set_text(self._stream_html)
-        self._refresh_text_geometry()
         for row in self._tool_rows:
             row.mark_done("unknown", QCoreApplication.translate("AgentTurnBubble", "No result reported"))
 
@@ -851,7 +811,6 @@ class AgentTurnBubble(QFrame):
         if self._stream_text:
             self._stream_html = _md_to_html(self._stream_text)
             self._set_final(self._stream_text)
-        self._refresh_text_geometry()
         for row in self._tool_rows:
             row.mark_done("cancelled", QCoreApplication.translate("AgentTurnBubble", "Stopped"))
         self._show_user_decision(QCoreApplication.translate("AgentTurnBubble", "— Stopped —"))
@@ -915,8 +874,6 @@ class AgentTurnBubble(QFrame):
         self._stream_html = body
         self._set_text(body + cursor)
         self._stream_doc_dirty = False
-        if not self._geo_timer.isActive():
-            self._geo_timer.start()
 
     def _stop_progress(self) -> None:
         if self._progress_timer.isActive():
@@ -924,7 +881,6 @@ class AgentTurnBubble(QFrame):
         if self._progress_text:
             self._stream_html = ""
             self._set_text("")
-            self._refresh_text_geometry()
         self._progress_text = ""
         self._progress_elapsed.invalidate()
 
@@ -963,7 +919,6 @@ class AgentTurnBubble(QFrame):
         self._stream_html = body
         self._stream_doc_dirty = True
         self._set_text(body, bubble=False)
-        self._refresh_text_geometry()
 
     def set_user_decision(self, text: str = "", *, cancelled: bool = False) -> None:
         if cancelled:
@@ -975,9 +930,7 @@ class AgentTurnBubble(QFrame):
 
     def _show_user_decision(self, text: str) -> None:
         if self._user_decision_lbl is None:
-            self._user_decision_lbl = QLabel("")
-            self._user_decision_lbl.setWordWrap(True)
-            self._user_decision_lbl.setMinimumWidth(0)
+            self._user_decision_lbl = WrapLabel("")
             self._user_decision_lbl.setTextFormat(Qt.TextFormat.PlainText)
             self._user_decision_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             self._user_decision_lbl.setStyleSheet(
@@ -1006,8 +959,11 @@ class AgentTurnBubble(QFrame):
                 f"QPushButton:hover {{ color:{_TEXT}; }}"
             )
             copy_btn.clicked.connect(self._copy_answer)
+            copy_btn.ensurePolished()
+            elide_button(copy_btn)
             row.addWidget(copy_btn)
-            self._footer_meta = QLabel("")
+            # The meta label wraps, so the footer's minimum width fits a narrow dock.
+            self._footer_meta = WrapLabel("")
             self._footer_meta.setTextFormat(Qt.TextFormat.PlainText)
             self._footer_meta.setStyleSheet(
                 f"color:{_TEXT_4}; background:transparent; font-size:{fs(11)}px;"
@@ -1026,71 +982,5 @@ class AgentTurnBubble(QFrame):
 
     # ── Layout ────────────────────────────────────────────────────────────
 
-    def hasHeightForWidth(self):
-        return True
-
-    def _content_height(self, width):
-        """Tight height the turn needs at ``width`` — sum of the visible rows."""
-        if not self._outer:
-            return -1
-        m = self._outer.contentsMargins()
-        inner_w = width - m.left() - m.right()
-        if inner_w <= 0:
-            return -1
-
-        raw_text = self.text_lbl.text() or ""
-        if raw_text.strip():
-            inset_w, inset_h = self._text_inset()
-            lh = self.text_lbl.heightForWidth(inner_w - inset_w)
-            if lh <= 0:
-                lh = self.text_lbl.sizeHint().height()
-            lh += inset_h
-        else:
-            lh = 0
-
-        def _area_h(area):
-            return area.sizeHint().height() if area.isVisible() else 0
-
-        tools_h = _area_h(self._tools_area)
-        files_h = _area_h(self._files_area)
-        visuals_h = _area_h(self._visuals_area)
-        ticker_h = _area_h(self._ticker)
-        decision_h = (
-            self._user_decision_lbl.sizeHint().height()
-            if self._user_decision_lbl is not None and self._user_decision_lbl.isVisible()
-            else 0
-        )
-        footer_h = (
-            self._footer.sizeHint().height()
-            if self._footer is not None and self._footer.isVisible()
-            else 0
-        )
-        total = (
-            lh + tools_h + files_h + visuals_h + ticker_h + decision_h + footer_h
-            + m.top() + m.bottom()
-        )
-        return max(1, total)
-
-    def heightForWidth(self, width):
-        return self._content_height(width)
-
-    def sizeHint(self):
-        base = super().sizeHint()
-        w = self._effective_width()
-        h = self._content_height(w)
-        if h > 0:
-            return QSize(base.width(), h)
-        return base
-
     def minimumSizeHint(self):
         return super().minimumSizeHint()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._outer:
-            m = self._outer.contentsMargins()
-            w = event.size().width() - m.left() - m.right() - self._text_inset()[0]
-            if w > 0 and self.text_lbl.width() != w:
-                self.text_lbl.setFixedWidth(w)
-        if not self._geo_timer.isActive():
-            self._geo_timer.start()
