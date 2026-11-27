@@ -29,6 +29,18 @@ def backend_record(provider, model, base_url=None):
     return backend
 
 
+def provider_key_env(provider, key_env=None):
+    """Return the environment variable holding the credential for ``provider``."""
+    if key_env:
+        return key_env
+    if provider == 'custom':
+        return None
+    from ...backends.providers import get_provider
+
+    entry = get_provider(provider)
+    return (entry or {}).get('key_env') or None
+
+
 class EvalConfig:
     def __init__(self, provider, model, base_url=None, key_env=None):
         self.values = dict(DEFAULTS, provider=provider, model=model, connection_mode='api_key',
@@ -75,13 +87,14 @@ class EvalToolkit(QgisToolkit):
         'qgsnetworkaccessmanager', 'qgsfiledownloader', 'qgsnetworkrequest', 'qgsblockingnetworkrequest',
     )
 
-    def __init__(self, iface, config, input_dir, capture_first_pdf=False, secrets=()):
+    def __init__(self, iface, config, input_dir, capture_first_pdf=False, secrets=(), allow_pyqgis=True):
         super().__init__(iface, config=config)
         self.input_dir = Path(input_dir).resolve()
         self.output_dir = self.input_dir.parent / 'outputs'
         self.capture_first_pdf = capture_first_pdf
         self.first_pdf_export = None
         self.secrets = secrets
+        self.allow_pyqgis = bool(allow_pyqgis)
 
     def export_layout(self, layout_id, output_path, format="pdf"):
         output_dir = self.output_dir
@@ -153,6 +166,12 @@ class EvalToolkit(QgisToolkit):
             if all(self._inside_run(value) for value in flagged):
                 return None
         if tool_name == 'run_pyqgis':
+            if not self.allow_pyqgis:
+                return {
+                    'ok': False,
+                    'error': 'Permission denied: run_pyqgis requires an isolated sandbox (--allow-pyqgis)',
+                    'cancelled': True,
+                }
             reason = self._non_local_reason(str(args.get('code') or ''))
             if reason is None:
                 return None
@@ -259,7 +278,7 @@ def visible_reply_check(turn, index):
 
 
 def run_case(case_id, run_dir, provider, model, variant='baseline', backend_factory=None, plugin_path=None,
-             base_url=None, key_env=None):
+             base_url=None, key_env=None, allow_pyqgis=True):
     """Execute one case; backend_factory(config, toolkit, executor) permits offline tests."""
     from .fixtures import build_fixture
     from .checks import OBSERVED_CASES, evaluate, evaluate_step, observe_run
@@ -287,7 +306,11 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
     if not project.read(str(fixture.project_path)):
         raise RuntimeError('Unable to load synthetic fixture project')
     config = EvalConfig(provider, model, base_url, key_env)
+    needed_key_env = provider_key_env(provider, key_env)
+    env_secret = os.environ.get(needed_key_env, '') if needed_key_env else ''
     secrets = (config.get('custom_api_key'),)
+    if env_secret and env_secret not in secrets:
+        secrets = secrets + (env_secret,)
     iface = EvalIface(project)
     selected_codes = set(getattr(fixture, 'preselected_codes', ()))
     if selected_codes:
@@ -298,7 +321,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
     plugin = load_processing_plugin(plugin_path, iface) if plugin_path else None
     executor = MainThreadExecutor(config=config)
     toolkit = EvalToolkit(iface, config, run_dir / 'inputs', capture_first_pdf=case_id == 'pdf_basemap',
-                          secrets=secrets)
+                          secrets=secrets, allow_pyqgis=allow_pyqgis)
     questions = []
 
     def capture_question(question, options, allow_free_text, request):

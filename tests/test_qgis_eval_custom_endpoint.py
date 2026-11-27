@@ -385,14 +385,20 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertEqual(report["backend"], {"provider": "offline", "model": model})
 
     def test_collision_fallback_uses_bounded_random_key_when_numbered_suffixes_collide(self):
-        secret = "abcdef#"
-        trace = {"turns": [{"abcdef#abcdef": "first", "[redacted]abcdef": "second"}]}
-        with patch.object(trace_module, "redact_trace", wraps=trace_module.redact_trace):
-            # Force numbered suffixes to collide with secrets by checking `#` in secret.
-            redacted = trace_module.redact_trace(trace, (secret,))
+        secret_key = "k1"
+        secret_hash = "#"
+        trace = {"turns": [{secret_key: "first", "***": "second"}]}
+        redacted = trace_module.redact_trace(trace, (secret_key, secret_hash))
         keys = list(redacted["turns"][0])
-        self.assertEqual(len(set(keys)), 2)
-        self.assertNotIn(secret, json.dumps(redacted))
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(keys[0], "***")
+        self.assertTrue(keys[1].startswith("***_"), keys)
+        self.assertNotIn(secret_key, json.dumps(redacted))
+        self.assertNotIn(secret_hash, keys[1])
+
+        with patch.object(trace_module.secure_random, "token_hex", return_value="ab"):
+            with self.assertRaises(RuntimeError):
+                trace_module.redact_trace(trace, (secret_key, secret_hash, "ab"))
 
     def test_redaction_fails_closed_when_placeholder_candidates_are_exhausted(self):
         import string

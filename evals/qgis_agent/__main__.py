@@ -56,14 +56,52 @@ def _write_supervisor_report(parent_fd, output, status, identity, detail):
             os.close(out_fd)
 
 
-def supervise(command, output, timeout, identity):
+_PRESERVED_ENV_KEYS = frozenset({
+    'HOME',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'PATH',
+    'PYTHONPATH',
+    'PYTHONDONTWRITEBYTECODE',
+    'QGIS_CUSTOM_CONFIG_PATH',
+    'QT_QPA_PLATFORM',
+    'TMPDIR',
+    'XDG_CACHE_HOME',
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    'XDG_RUNTIME_DIR',
+})
+
+
+def _scrubbed_worker_env(provider, key_env):
+    """Pass only runtime variables and the single credential needed by the worker."""
+    from .runner import provider_key_env
+
+    allowed = set(_PRESERVED_ENV_KEYS)
+    needed_key = provider_key_env(provider, key_env)
+    if needed_key:
+        allowed.add(needed_key)
+    env = {}
+    for name, value in os.environ.items():
+        if (
+            name in allowed
+            or name.startswith('AWANAGIS_')
+            or name.startswith('QGIS_')
+            or name.startswith('QT_')
+        ):
+            env[name] = value
+    return env
+
+
+def supervise(command, output, timeout, identity, env=None):
     output = Path(output)
     parent_fd = None
     if os.name == 'posix' and hasattr(os, 'O_NOFOLLOW') and hasattr(os, 'O_DIRECTORY'):
         output.parent.mkdir(parents=True, exist_ok=True)
         parent_fd = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        process = subprocess.Popen(command, start_new_session=True)
+        process = subprocess.Popen(command, start_new_session=True, env=env)
         detail = None
         try:
             code = process.wait(timeout=timeout)
@@ -96,6 +134,8 @@ def parse_args(argv=None, parser=None):
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--plugin-path', help='Installed CoMapeo Map Builder plugin directory')
     parser.add_argument('--timeout', type=float, default=900)
+    parser.add_argument('--allow-pyqgis', action='store_true',
+                        help='Allow run_pyqgis inside an isolated sandbox (or set AWANAGIS_EVAL_ISOLATED=1)')
     parser.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.timeout <= 0:
@@ -128,11 +168,16 @@ def parse_args(argv=None, parser=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     args = parse_args(argv, parser)
-    output = Path(args.output).resolve()
+    raw_output = Path(args.output)
+    allow_pyqgis = bool(args.allow_pyqgis or os.environ.get('AWANAGIS_EVAL_ISOLATED') == '1')
     if args.worker:
+        output = raw_output.resolve()
         trace = run_case(args.case, output, args.provider, args.model, args.variant, plugin_path=args.plugin_path,
-                         base_url=args.base_url, key_env=args.key_env)
+                         base_url=args.base_url, key_env=args.key_env, allow_pyqgis=allow_pyqgis)
         return 0 if trace['status'] == 'completed' else 1
+    if os.path.lexists(raw_output) or raw_output.exists():
+        parser.error('--output must not exist')
+    output = raw_output.resolve()
     if output.exists():
         parser.error('--output must not exist')
     if args.repeat > 1:
@@ -142,6 +187,9 @@ def main(argv=None):
                 'backend': backend_record(args.provider, args.model, args.base_url)}
     if args.base_url is not None:
         identity['key_env'] = args.key_env
+    worker_env = _scrubbed_worker_env(args.provider, args.key_env)
+    if allow_pyqgis:
+        worker_env['AWANAGIS_EVAL_ISOLATED'] = '1'
     for index in range(1, args.repeat + 1):
         target = output if args.repeat == 1 else output / f'run-{index:02}'
         command = [sys.executable, '-m', __package__, '--worker', '--case', args.case,
@@ -151,7 +199,9 @@ def main(argv=None):
             command.extend(['--plugin-path', args.plugin_path])
         if args.base_url is not None:
             command.extend(['--base-url', args.base_url, '--key-env', args.key_env])
-        status = supervise(command, target, args.timeout, identity)
+        if allow_pyqgis:
+            command.append('--allow-pyqgis')
+        status = supervise(command, target, args.timeout, identity, env=worker_env)
         failed = failed or bool(status)
     return 1 if failed else 0
 

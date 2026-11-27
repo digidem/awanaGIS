@@ -4,7 +4,7 @@ The [eval design](../docs/superpowers/specs/2026-11-25-qgis-agent-eval-design.md
 
 ## Run the eval
 
-Place each checkout at a path such as `<separate-parent>/awanagis`. From that checkout, run with the Python that imports QGIS. Run live models in a disposable environment with access to synthetic inputs and only the eval credential. QGIS tools can execute PyQGIS inside the runner process. Set the provider credential in the environment and select the exact model.
+Place each checkout at a path such as `<separate-parent>/awanagis`. From that checkout, run with the Python that imports QGIS. Run live models inside a disposable OS/container/Bubblewrap sandbox with access only to synthetic inputs and the scoped eval credential (or an external relay). Unattended `run_pyqgis` is disabled by default because the policy gate is not an OS security boundary; pass `--allow-pyqgis` (or set `AWANAGIS_EVAL_ISOLATED=1`) only inside an isolated sandbox. Set the provider credential in the environment and select the exact model.
 
 ```sh
 QT_QPA_PLATFORM=offscreen PYTHONPATH=.. /usr/bin/python3 -m "${PWD##*/}.evals.qgis_agent" \

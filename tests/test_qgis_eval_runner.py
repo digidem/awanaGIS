@@ -354,3 +354,23 @@ class RunnerTest(unittest.TestCase):
             status3 = supervise([sys.executable, '-c', script2], sym_report_out, 0.2, {'case': 'load'})
             self.assertEqual(status3, 'timeout')
             self.assertEqual(outside_file.read_text(encoding='utf-8'), 'KEEP')
+
+    def test_cli_rejects_dangling_symlink_output_and_gates_pyqgis_without_isolation(self):
+        main_mod = import_module(f"{EVAL_MODULE}.__main__")
+        runner = import_module(f"{EVAL_MODULE}.runner")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dangling = root / 'dangling-out'
+            dangling.symlink_to(root / 'missing-target')
+            with self.assertRaises(SystemExit) as raised:
+                main_mod.main([
+                    '--case', 'load', '--output', str(dangling),
+                    '--provider', 'offline', '--model', 'fake',
+                ])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertFalse((root / 'missing-target').exists())
+
+            tk = runner.EvalToolkit(None, runner.EvalConfig('offline', 'fake'), root / 'inputs', allow_pyqgis=False)
+            verdict = tk.confirm_external_access('run_pyqgis', {'code': 'result = 1'})
+            self.assertIsNotNone(verdict)
+            self.assertIn('isolated sandbox', verdict['error'])
