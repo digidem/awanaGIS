@@ -45,3 +45,11 @@ Use short, imperative subjects such as `fix(i18n): harden permission prompts` or
 options`. Describe the user-facing change and checks run in the PR, link related issues when
 available, and include screenshots for visible UI changes. Keep API keys out of commits and
 screenshots.
+
+## Release and Publication
+
+Read `skills/awanagis-qgis-release/SKILL.md` before preparing a release, approving a protected
+GitHub environment, tagging, or uploading to the QGIS plugin repository. Every Bandit finding
+blocks, including low-severity `B110`; scan the extracted release ZIP before upload. Keep
+`metadata.txt` and `server/mcp_server.py` versions in sync. A green QGIS scan with `Approved: no`
+means awaiting staff approval, not rejected or publicly released.
