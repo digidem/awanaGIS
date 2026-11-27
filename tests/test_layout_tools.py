@@ -37,7 +37,7 @@ load_plugin_translator = import_module(f"{ROOT.name}.i18n").load_plugin_translat
 MARKER = QColor(255, 0, 0)
 FILL = QColor(0, 0, 255)
 VIEW = QgsRectangle(-61.0, -3.0, -59.0, -1.0)
-EVERYTHING = ["map", "title", "legend", "scale bar", "north arrow"]
+EVERYTHING = ["map", "title", "scale bar", "legend", "north arrow"]
 
 
 class Iface:
