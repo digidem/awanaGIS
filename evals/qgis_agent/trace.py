@@ -102,7 +102,7 @@ def _redact_value(value, secrets):
         for secret in secrets:
             value = value.replace(secret, '[redacted]')
         return value
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [_redact_value(item, secrets) for item in value]
     if isinstance(value, dict):
         return {key: _redact_value(item, secrets) for key, item in value.items()}
@@ -114,10 +114,16 @@ def _redact_value(value, secrets):
     return value
 
 
-def write_trace(path, trace, secrets=()):
+def redact_trace(trace, secrets=()):
+    """Return a run-safe trace while preserving trusted endpoint metadata."""
     run_secrets = tuple(secret for secret in secrets if secret)
-    if run_secrets:
-        trace = {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets)
-                 for key, value in trace.items()}
+    if not run_secrets:
+        return trace
+    return {key: value if key in ('backend', 'key_env') else _redact_value(value, run_secrets)
+            for key, value in trace.items()}
+
+
+def write_trace(path, trace, secrets=()):
+    trace = redact_trace(trace, secrets)
     payload = json.dumps(trace, ensure_ascii=False, indent=2, default=str) + '\n'
     Path(path).write_text(payload, encoding='utf-8')

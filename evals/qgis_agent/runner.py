@@ -18,7 +18,8 @@ from ...backends import build_backend
 from ...config import DEFAULTS
 from ...core.executor import MainThreadExecutor
 from ...core.toolkit import QgisToolkit
-from .trace import artifacts_under, event_record, pdf_exports, redact, smp_export_seconds, write_trace
+from .trace import (artifacts_under, event_record, pdf_exports, redact, redact_trace, smp_export_seconds,
+                    write_trace)
 
 
 def backend_record(provider, model, base_url=None):
@@ -324,6 +325,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': f'Environment variable {key_env} is unset or empty'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
+            trace = redact_trace(trace, secrets)
             write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         backend = (backend_factory or build_backend)(config, toolkit, executor)
@@ -333,6 +335,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'CoMapeo Map Builder processing algorithm is unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
+            trace = redact_trace(trace, secrets)
             write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         if backend_factory is None and backend.validate():
@@ -340,6 +343,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
             trace['checks'] = [{'id': 'runner', 'status': 'blocked',
                                 'detail': 'Backend configuration or credential unavailable'}]
             trace['timing'] = {'elapsed_seconds': time.monotonic() - started}
+            trace = redact_trace(trace, secrets)
             write_trace(run_dir / 'run.json', trace, secrets)
             return trace
         for index, prompt in enumerate(fixture.turns):
@@ -425,6 +429,7 @@ def run_case(case_id, run_dir, provider, model, variant='baseline', backend_fact
         if any('error' in turn for turn in trace['turns']):
             trace['status'] = 'error'
             trace['checks'].append({'id': 'runner', 'status': 'blocked', 'detail': 'Backend raised an exception'})
+        trace = redact_trace(trace, secrets)
         write_trace(run_dir / 'run.json', trace, secrets)
         return trace
     finally:

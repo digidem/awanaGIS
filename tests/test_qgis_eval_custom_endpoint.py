@@ -57,7 +57,7 @@ class CustomEndpointTest(unittest.TestCase):
         return stderr.getvalue()
 
     def run_scripted(self, run_dir, provider="custom", base_url=None, key_env=None, text="Concluído.",
-                     model="fake"):
+                     model="fake", exception=None):
         captured = []
 
         class Backend:
@@ -65,6 +65,8 @@ class CustomEndpointTest(unittest.TestCase):
                 captured.append(config)
 
             def send(self, message, history, emit, should_stop):
+                if exception is not None:
+                    raise exception
                 emit(AgentEvent(EventType.TEXT, {"text": text}))
                 return history + [message]
 
@@ -195,15 +197,29 @@ class CustomEndpointTest(unittest.TestCase):
         self.assertEqual(json.loads(report_text)["key_env"], KEY_ENV)
         self.assertNotIn(SENTINEL, report_text)
 
+    def test_run_case_returns_the_redacted_trace_after_backend_exception(self):
+        # _turn records exception types rather than messages, so the type carries the sentinel into the trace.
+        exception_type = type(f"BackendError-{SENTINEL}", (Exception,), {})
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {KEY_ENV: SENTINEL}, clear=True):
+            run_dir = Path(directory) / "run"
+            trace, _ = self.run_scripted(run_dir, base_url=BASE_URL, key_env=KEY_ENV,
+                                         exception=exception_type(SENTINEL))
+            report_text = (run_dir / "run.json").read_text(encoding="utf-8")
+        self.assertEqual(trace["status"], "error")
+        self.assertNotIn(SENTINEL, report_text)
+        self.assertNotIn(SENTINEL, json.dumps(trace))
+
     def test_write_trace_redacts_json_special_secret_before_serialization(self):
         secret = 'abc"def\\ghi'
-        trace = {"turns": [{"error": f"Backend raised: {secret}"}]}
+        trace = {"turns": [{"error": ("Backend raised: " + secret,),
+                            "detail": f"Backend raised: {secret}"}]}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.json"
             trace_module.write_trace(path, trace, (secret,))
             report_text = path.read_text(encoding="utf-8")
             report = json.loads(report_text)
-        self.assertNotIn(secret, report["turns"][0]["error"])
+        self.assertNotIn(secret, report["turns"][0]["error"][0])
+        self.assertNotIn(secret, report["turns"][0]["detail"])
         self.assertNotIn(r'abc\"def', report_text)
 
     def test_report_keeps_trusted_base_url_when_secret_occurs_in_it(self):
