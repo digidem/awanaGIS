@@ -233,15 +233,14 @@ if index >= 0:
     layout.takeAt(index)
 ```
 
-For the final lookup:
+For the final lookup and deletion:
 
 ```python
 try:
-    attached = layout.indexOf(widget) >= 0
+    if layout.indexOf(widget) < 0:
+        widget.deleteLater()
 except RuntimeError:
-    attached = True
-if not attached:
-    widget.deleteLater()
+    continue
 ```
 
 - [ ] **Step 4: Run the cleanup tests**

@@ -1403,11 +1403,10 @@ class ChatDock(QgsDockWidget):
             except RuntimeError:
                 continue                     # already deleted
             try:
-                attached = layout.indexOf(widget) >= 0
+                if layout.indexOf(widget) < 0:
+                    widget.deleteLater()     # nothing references it any more
             except RuntimeError:
-                attached = True               # already deleted: never call deleteLater on it
-            if not attached:
-                widget.deleteLater()         # nothing references it any more
+                continue                     # already deleted: keep cleaning the remaining rows
 
     def _sweep_detached(self):
         """Remove layout rows whose widget was detached by a failed rollback earlier."""

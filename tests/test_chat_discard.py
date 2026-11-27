@@ -31,23 +31,29 @@ class FakeLayout:
 
 
 class FakeWidget:
-    def __init__(self):
+    def __init__(self, hide_error=None, delete_error=None):
+        self.hide_error = hide_error
+        self.delete_error = delete_error
         self.hidden = False
         self.detached = False
         self.deleted = False
 
     def hide(self):
+        if self.hide_error is not None:
+            raise self.hide_error
         self.hidden = True
 
     def setParent(self, _parent):
         self.detached = True
 
     def deleteLater(self):
+        if self.delete_error is not None:
+            raise self.delete_error
         self.deleted = True
 
 
 class ChatDiscardTests(unittest.TestCase):
-    def test_deleted_widget_is_hidden_without_delete_later(self):
+    def test_deleted_layout_lookup_skips_delete_later(self):
         widget = FakeWidget()
         layout = FakeLayout([RuntimeError("deleted"), RuntimeError("deleted")])
         dock = SimpleNamespace(transcript_layout=layout)
@@ -80,6 +86,30 @@ class ChatDiscardTests(unittest.TestCase):
         self.assertTrue(widget.hidden)
         self.assertTrue(widget.detached)
         self.assertFalse(widget.deleted)
+
+    def test_deleted_widget_does_not_stop_sibling_cleanup(self):
+        deleted = FakeWidget(hide_error=RuntimeError("deleted"))
+        sibling = FakeWidget()
+        layout = FakeLayout([-1, -1, -1])
+        dock = SimpleNamespace(transcript_layout=layout)
+
+        ChatDock._discard(dock, [deleted, sibling])
+
+        self.assertTrue(sibling.hidden)
+        self.assertTrue(sibling.detached)
+        self.assertTrue(sibling.deleted)
+
+    def test_delete_later_error_does_not_stop_sibling_cleanup(self):
+        deleted = FakeWidget(delete_error=RuntimeError("deleted"))
+        sibling = FakeWidget()
+        layout = FakeLayout([-1, -1, -1, -1])
+        dock = SimpleNamespace(transcript_layout=layout)
+
+        ChatDock._discard(dock, [deleted, sibling])
+
+        self.assertTrue(sibling.hidden)
+        self.assertTrue(sibling.detached)
+        self.assertTrue(sibling.deleted)
 
     def test_unexpected_layout_error_propagates(self):
         widget = FakeWidget()
