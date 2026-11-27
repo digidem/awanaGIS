@@ -211,6 +211,50 @@ class LayoutToolsTests(unittest.TestCase):
         self.assertIn("No visible layers", result["error"])
         self.assertEqual(len(self.project.layoutManager().layouts()), 0)
 
+    def test_hidden_requested_layers_follow_the_project_render_order(self):
+        for node in self.project.layerTreeRoot().findLayers():
+            node.setItemVisibilityChecked(False)
+        QgsLayerTreeMapCanvasBridge(self.project.layerTreeRoot(), self.toolkit.iface.mapCanvas()).setCanvasLayers()
+        self.assertEqual(self.toolkit.iface.mapCanvas().layers(), [])
+        result = self.toolkit.create_layout("Ocultos", layers=["Territórios", "Aldeias"])
+        self.assertTrue(result["ok"], result)
+        layout = self.project.layoutManager().layoutByName("Ocultos")
+        maps = page_items(layout, QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Aldeias", "Territórios"])
+
+    def test_a_shown_layer_precedes_a_hidden_requested_layer(self):
+        root = self.project.layerTreeRoot()
+        villages_node = next(node for node in root.findLayers() if node.layerId() == self.villages.id())
+        villages_node.setItemVisibilityChecked(False)
+        QgsLayerTreeMapCanvasBridge(root, self.toolkit.iface.mapCanvas()).setCanvasLayers()
+        self.assertEqual([layer.id() for layer in self.toolkit.iface.mapCanvas().layers()], [self.territory.id()])
+        result = self.toolkit.create_layout("Parcial", layers=["Aldeias", "Territórios"])
+        self.assertTrue(result["ok"], result)
+        layout = self.project.layoutManager().layoutByName("Parcial")
+        maps = page_items(layout, QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Territórios", "Aldeias"])
+
+    def test_headless_layouts_follow_a_custom_layer_order(self):
+        root = self.project.layerTreeRoot()
+        root.setCustomLayerOrder([self.territory, self.villages])
+        root.setHasCustomLayerOrder(True)
+        self.assertEqual([layer.name() for layer in root.layerOrder()], ["Territórios", "Aldeias"])
+        self.assertEqual([node.layer().name() for node in root.findLayers()], ["Aldeias", "Territórios"])
+        self.project.viewSettings().setDefaultViewExtent(QgsReferencedRectangle(VIEW, self.project.crs()))
+        toolkit = QgisToolkit(iface=None, config=self.config)
+
+        result = toolkit.create_layout("Ordem personalizada", layers=["Aldeias", "Territórios"])
+        self.assertTrue(result["ok"], result)
+        layout = self.project.layoutManager().layoutByName("Ordem personalizada")
+        maps = page_items(layout, QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Territórios", "Aldeias"])
+
+        result = toolkit.create_layout("Ordem personalizada sem lista")
+        self.assertTrue(result["ok"], result)
+        layout = self.project.layoutManager().layoutByName("Ordem personalizada sem lista")
+        maps = page_items(layout, QgsLayoutItemMap)
+        self.assertEqual([layer.name() for layer in maps[0].layersToRender()], ["Territórios", "Aldeias"])
+
     def test_a_legend_too_tall_for_the_page_is_left_out_and_said_so(self):
         from unittest.mock import patch
 

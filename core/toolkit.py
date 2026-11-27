@@ -4680,9 +4680,8 @@ class QgisToolkit:
                 if canvas is not None:
                     resolved = [lyr for lyr in canvas.layers() if lyr is not None]
                 else:
-                    # The layer tree lists top first, as a map item does.
-                    resolved = [node.layer() for node in project.layerTreeRoot().findLayers()
-                                if node.isVisible() and node.layer() is not None]
+                    # Use the renderer's order so custom layer ordering is honored.
+                    resolved = self._visible_layers_in_render_order()
             if not resolved:
                 # QGIS falls back to the whole project behind an empty layer list,
                 # which would print layers the user has turned off.
@@ -4735,21 +4734,39 @@ class QgisToolkit:
     _LAYOUT_MAX_BAND_SHARE = 0.45
 
     def _stack_like_canvas(self, layers):
-        """Order ``layers`` as the canvas stacks them, top first.
+        """Order ``layers`` like the canvas, then by the project's render order.
 
-        A layer the canvas does not show keeps its place among the others
-        and goes below them.
+        Layers shown on the canvas stay top first. Requested layers the canvas
+        does not show follow in the project's rendering order, which includes
+        hidden layers. Without a canvas, visible layers lead in that same order.
+        Layers absent from both orders remain stable at the end.
         """
         from qgis.core import QgsProject
 
+        project = QgsProject.instance()
+        # The project's rendering order includes layers hidden on the canvas.
+        render_order = [layer for layer in project.layerTreeRoot().layerOrder() if layer is not None]
         canvas = self.iface.mapCanvas() if self.iface is not None else None
         if canvas is not None:
             shown = [layer for layer in canvas.layers() if layer is not None]
         else:
-            shown = [node.layer() for node in QgsProject.instance().layerTreeRoot().findLayers()
-                     if node.layer() is not None]
-        rank = {layer.id(): index for index, layer in enumerate(shown)}
+            shown = self._visible_layers_in_render_order()
+        shown_ids = {layer.id() for layer in shown}
+        stacked = shown + [layer for layer in render_order if layer.id() not in shown_ids]
+        rank = {layer.id(): index for index, layer in enumerate(stacked)}
         return sorted(layers, key=lambda layer: rank.get(layer.id(), len(rank)))
+
+    def _visible_layers_in_render_order(self):
+        """Return visible project layers in the order the renderer uses.
+
+        The Layers panel order can differ from a custom rendering order, so
+        visibility is collected separately from ``layerOrder()``.
+        """
+        from qgis.core import QgsProject
+
+        root = QgsProject.instance().layerTreeRoot()
+        visible_ids = {node.layerId() for node in root.findLayers() if node.isVisible()}
+        return [layer for layer in root.layerOrder() if layer is not None and layer.id() in visible_ids]
 
     def _layout_view(self, project, layers):
         """Return ``(crs, extent)`` for a new layout map.
